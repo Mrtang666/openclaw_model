@@ -1,7 +1,5 @@
 package com.example.spring.command;
 
-import com.example.spring.exception.CommandException;
-import com.example.spring.exception.WeatherServiceException;
 import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
@@ -33,10 +31,8 @@ public class CommandDispatcher {
                 return DEFAULT_ASSISTANT_REPLY;
             }
             return command.execute(arguments);
-        } catch (CommandException | WeatherServiceException exception) {
-            return "错误：" + exception.getMessage();
         } catch (Exception exception) {
-            return "错误：程序执行失败";
+            return ErrorMessageFormatter.format(exception);
         }
     }
 }

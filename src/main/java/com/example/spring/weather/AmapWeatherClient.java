@@ -49,7 +49,7 @@ public class AmapWeatherClient implements WeatherClient {
         } catch (WeatherServiceException exception) {
             throw exception;
         } catch (RestClientException exception) {
-            throw new WeatherServiceException("高德天气服务暂时不可用");
+            throw new WeatherServiceException("天气服务暂时不可用");
         }
     }
 
@@ -66,10 +66,10 @@ public class AmapWeatherClient implements WeatherClient {
                 .retrieve()
                 .body(DistrictResponse.class);
 
-        validateAmapResponse(response, "高德城市解析服务错误");
+        validateAmapResponse(response, "城市解析服务错误");
         List<District> districts = response.districts() == null ? List.of() : response.districts();
         if (districts.isEmpty()) {
-            throw new WeatherServiceException("未找到城市：" + cityName + "，目前高德天气仅支持中国城市");
+            throw new WeatherServiceException("未找到城市：" + cityName + "，目前天气仅支持中国城市");
         }
 
         return districts.stream()
@@ -98,10 +98,10 @@ public class AmapWeatherClient implements WeatherClient {
                 .retrieve()
                 .body(LiveWeatherResponse.class);
 
-        validateAmapResponse(response, "高德天气服务错误");
+        validateAmapResponse(response, "天气服务错误");
         List<LiveWeather> lives = response.lives() == null ? List.of() : response.lives();
         if (lives.isEmpty()) {
-            throw new WeatherServiceException("高德天气服务未返回实时天气");
+            throw new WeatherServiceException("天气服务未返回实时天气");
         }
         return lives.get(0);
     }
@@ -118,7 +118,7 @@ public class AmapWeatherClient implements WeatherClient {
                 .retrieve()
                 .body(ForecastResponse.class);
 
-        validateAmapResponse(response, "高德天气预报服务错误");
+        validateAmapResponse(response, "天气预报服务错误");
         List<ForecastBlock> forecasts = response.forecasts() == null ? List.of() : response.forecasts();
         if (forecasts.isEmpty() || forecasts.get(0).casts() == null) {
             return List.of();
@@ -140,7 +140,7 @@ public class AmapWeatherClient implements WeatherClient {
 
     private void validateConfiguration() {
         if (key == null || key.isBlank()) {
-            throw new WeatherServiceException("未配置高德天气 KEY");
+            throw new WeatherServiceException("未配置天气 KEY");
         }
     }
 
@@ -187,7 +187,7 @@ public class AmapWeatherClient implements WeatherClient {
         if (hasDistrict) {
             return new WeatherServiceException("请输入城市名，不要输入区县：" + cityName);
         }
-        return new WeatherServiceException("未找到城市：" + cityName + "，目前高德天气仅支持中国城市");
+        return new WeatherServiceException("未找到城市：" + cityName + "，目前天气仅支持中国城市");
     }
 
     private interface AmapResponse {

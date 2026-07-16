@@ -10,6 +10,8 @@ import java.util.List;
 @Component
 public class CommandDispatcher {
 
+    private static final String DEFAULT_ASSISTANT_REPLY = "你好，我是你的AI助手";
+
     private final CommandRegistry registry;
 
     public CommandDispatcher(CommandRegistry registry) {
@@ -26,8 +28,10 @@ public class CommandDispatcher {
         List<String> arguments = Arrays.asList(parts).subList(1, parts.length);
 
         try {
-            Command command = registry.find(commandName)
-                    .orElseThrow(() -> new CommandException("未知命令：" + commandName));
+            Command command = registry.find(commandName).orElse(null);
+            if (command == null) {
+                return DEFAULT_ASSISTANT_REPLY;
+            }
             return command.execute(arguments);
         } catch (CommandException | WeatherServiceException exception) {
             return "错误：" + exception.getMessage();
@@ -36,4 +40,3 @@ public class CommandDispatcher {
         }
     }
 }
-

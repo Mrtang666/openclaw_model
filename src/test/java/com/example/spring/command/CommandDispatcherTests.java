@@ -36,7 +36,6 @@ class CommandDispatcherTests {
         CommandDispatcher dispatcher = new CommandDispatcher(new CommandRegistry(List.of()));
 
         assertThat(dispatcher.dispatch("missing"))
-                .isEqualTo("错误：未知命令：missing");
+                .isEqualTo("你好，我是你的AI助手");
     }
 }
-

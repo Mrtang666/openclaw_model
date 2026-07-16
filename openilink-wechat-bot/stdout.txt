@@ -1,0 +1,2 @@
+23:24:53.332 [main] INFO  com.example.WechatBot - 请扫码登录微信: https://liteapp.weixin.qq.com/q/7GiQu1?qrcode=7607d60327ac3947023340d98c67f6b4&bot_type=3
+23:24:53.499 [main] INFO  com.example.WechatBot - 二维码已保存至: D:\桌面\openilink-wechat-bot\wechat_qrcode.png

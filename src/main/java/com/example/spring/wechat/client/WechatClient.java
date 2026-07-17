@@ -1,4 +1,4 @@
-package com.example.spring.wechat;
+package com.example.spring.wechat.client;
 
 import java.io.IOException;
 import java.util.List;
@@ -13,6 +13,8 @@ public interface WechatClient extends AutoCloseable {
     List<WechatIncomingMessage> getUpdates() throws IOException;
 
     void sendText(String toUserId, String text) throws IOException;
+
+    void sendImage(String toUserId, byte[] imageBytes, String fileName, String caption) throws IOException;
 
     @Override
     void close();

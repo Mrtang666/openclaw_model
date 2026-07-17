@@ -9,17 +9,24 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 class ConsoleRunnerTests {
 
     @Test
     void readsCommandsUntilExit() {
         AgentService agentService = mock(AgentService.class);
-        when(agentService.handle("status")).thenReturn("状态：RUNNING");
+        doAnswer(invocation -> {
+            com.example.spring.agent.ReplyEmitter emitter = invocation.getArgument(1);
+            emitter.emit("状态：");
+            emitter.emit("RUNNING");
+            return null;
+        }).when(agentService).handleStreaming(eq("/status"), any());
         ByteArrayInputStream input = new ByteArrayInputStream(
-                "status\nexit\n".getBytes(StandardCharsets.UTF_8));
+                "/status\nexit\n".getBytes(StandardCharsets.UTF_8));
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         ConsoleRunner runner = new ConsoleRunner(
                 agentService, input, new PrintStream(output, true, StandardCharsets.UTF_8));

@@ -28,9 +28,11 @@ public class HelpCommand implements Command {
     @Override
     public String execute(List<String> arguments) {
         String commands = registryProvider.getObject().findAll().stream()
-                .map(command -> command.name() + " - " + command.description())
+                .map(command -> "/" + command.name() + " - " + command.description())
                 .collect(Collectors.joining(System.lineSeparator()));
-        return "可用命令：" + System.lineSeparator() + commands + System.lineSeparator() + "exit - 退出程序";
+        return "可用命令：" + System.lineSeparator()
+                + commands + System.lineSeparator()
+                + "直接输入普通文字 - 与大模型对话" + System.lineSeparator()
+                + "exit - 退出程序";
     }
 }
-

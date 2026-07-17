@@ -1,9 +1,9 @@
 package com.example.spring.command;
 
-import com.example.spring.wechat.WechatBotService;
-import com.example.spring.wechat.WechatBotState;
-import com.example.spring.wechat.WechatBotStatus;
-import com.example.spring.wechat.WechatStartResult;
+import com.example.spring.wechat.bot.WechatBotService;
+import com.example.spring.wechat.bot.WechatBotState;
+import com.example.spring.wechat.bot.WechatBotStatus;
+import com.example.spring.wechat.bot.WechatStartResult;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

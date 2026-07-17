@@ -30,27 +30,40 @@ public class ConsoleRunner implements CommandLineRunner {
     @Override
     public void run(String... args) {
         if (args.length > 0) {
-            output.println(agentService.handle(String.join(" ", args)));
+            printStreaming(String.join(" ", args));
             return;
         }
 
-        output.println("OpenClaw CLI 已启动，输入 help 查看命令，输入 exit 退出。");
+        output.println("OpenClaw CLI 已启动，直接输入内容可与大模型对话；输入 /help 查看命令；输入 exit 退出。");
         Scanner scanner = new Scanner(input);
         while (true) {
             output.print("> ");
             if (!scanner.hasNextLine()) {
                 break;
             }
+
             String input = scanner.nextLine().trim();
             if (input.equalsIgnoreCase("exit") || input.equalsIgnoreCase("quit")) {
                 output.println("程序已退出");
                 break;
             }
 
-            String output = agentService.handle(input);
-            if (!output.isBlank()) {
-                this.output.println(output);
+            printStreaming(input);
+        }
+    }
+
+    private void printStreaming(String input) {
+        StringBuilder collected = new StringBuilder();
+        agentService.handleStreaming(input, chunk -> {
+            if (chunk != null) {
+                collected.append(chunk);
+                output.print(chunk);
+                output.flush();
             }
+        });
+
+        if (collected.length() > 0) {
+            output.println();
         }
     }
 }

@@ -2,6 +2,7 @@ package com.example.spring.command;
 
 import com.example.spring.exception.CommandException;
 import com.example.spring.exception.WeatherServiceException;
+import com.example.spring.chat.ChatServiceException;
 
 final class ErrorMessageFormatter {
 
@@ -17,6 +18,10 @@ final class ErrorMessageFormatter {
 
         if (exception instanceof WeatherServiceException) {
             return "天气服务异常：" + messageOrDefault(exception, "天气查询失败");
+        }
+
+        if (exception instanceof ChatServiceException) {
+            return "大模型异常：" + messageOrDefault(exception, "对话生成失败");
         }
 
         return "系统异常：" + rootMessageOrDefault(exception);

@@ -140,7 +140,7 @@ public class AmapWeatherClient implements WeatherClient {
 
     private void validateConfiguration() {
         if (key == null || key.isBlank()) {
-            throw new WeatherServiceException("未配置天气 KEY");
+            throw new WeatherServiceException("未配置高德天气 KEY");
         }
     }
 

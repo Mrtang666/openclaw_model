@@ -15,5 +15,8 @@ public class AgentService {
     public String handle(String input) {
         return dispatcher.dispatch(input);
     }
-}
 
+    public void handleStreaming(String input, ReplyEmitter emitter) {
+        dispatcher.dispatchStreaming(input, emitter);
+    }
+}

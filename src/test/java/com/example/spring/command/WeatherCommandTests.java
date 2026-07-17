@@ -18,7 +18,7 @@ class WeatherCommandTests {
         WeatherCommand command = createCommand(city -> sampleResult(city));
         CommandDispatcher dispatcher = new CommandDispatcher(new CommandRegistry(List.of(command)));
 
-        assertThat(dispatcher.dispatch("weather"))
+        assertThat(dispatcher.dispatch("/weather"))
                 .isEqualTo("输入有问题：缺少城市名，用法：weather <城市名>");
     }
 

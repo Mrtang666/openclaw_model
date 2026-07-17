@@ -23,7 +23,7 @@ public class WeatherCommand implements Command {
 
     @Override
     public String description() {
-        return "查询天气，用法：weather <城市名>";
+        return "查询天气，用法：/weather <城市名>";
     }
 
     @Override
@@ -36,4 +36,3 @@ public class WeatherCommand implements Command {
         return tools.execute("weather", Map.of("city", city));
     }
 }
-

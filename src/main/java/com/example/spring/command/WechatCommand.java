@@ -1,9 +1,9 @@
 package com.example.spring.command;
 
 import com.example.spring.exception.CommandException;
-import com.example.spring.wechat.WechatBotService;
-import com.example.spring.wechat.WechatBotStatus;
-import com.example.spring.wechat.WechatStartResult;
+import com.example.spring.wechat.bot.WechatBotService;
+import com.example.spring.wechat.bot.WechatBotStatus;
+import com.example.spring.wechat.bot.WechatStartResult;
 import org.springframework.stereotype.Component;
 
 import java.util.List;

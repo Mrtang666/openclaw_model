@@ -1,4 +1,4 @@
-package com.example.spring.wechat;
+package com.example.spring.wechat.bot;
 
 public enum WechatBotState {
     STOPPED,

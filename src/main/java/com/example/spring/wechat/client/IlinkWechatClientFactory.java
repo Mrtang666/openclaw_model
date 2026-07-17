@@ -1,4 +1,4 @@
-package com.example.spring.wechat;
+package com.example.spring.wechat.client;
 
 import org.springframework.stereotype.Component;
 

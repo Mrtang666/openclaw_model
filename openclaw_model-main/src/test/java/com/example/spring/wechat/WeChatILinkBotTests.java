@@ -3,6 +3,8 @@ package com.example.spring.wechat;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.github.wechat.ilink.sdk.core.model.MessageItem;
+import com.github.wechat.ilink.sdk.core.model.ImageItem;
+import com.github.wechat.ilink.sdk.core.model.VoiceItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -11,9 +13,10 @@ class WeChatILinkBotTests {
     @Test
     void recognizesNonBlankTextMessages() {
         WeixinMessage message = new WeixinMessage();
-        message.setItem_list(List.of(MessageItem.text("hello")));
+        message.setItem_list(List.of(MessageItem.text("hello"), MessageItem.text("world")));
 
         assertThat(WeChatILinkBot.containsText(message)).isTrue();
+        assertThat(WeChatILinkBot.extractText(message)).isEqualTo("hello\nworld");
     }
 
     @Test
@@ -27,5 +30,33 @@ class WeChatILinkBotTests {
         assertThat(WeChatILinkBot.containsText(blankText)).isFalse();
         assertThat(WeChatILinkBot.containsText(noItems)).isFalse();
         assertThat(WeChatILinkBot.containsText(null)).isFalse();
+    }
+
+    @Test
+    void recognizesImagesAndVoiceTranscription() {
+        MessageItem image = new MessageItem();
+        image.setImage_item(new ImageItem());
+        MessageItem voice = new MessageItem();
+        VoiceItem voiceItem = new VoiceItem();
+        voiceItem.setText("查询无锡天气");
+        voice.setVoice_item(voiceItem);
+
+        WeixinMessage message = new WeixinMessage();
+        message.setItem_list(List.of(image, voice));
+
+        WeChatILinkBot.MessageSummary summary = WeChatILinkBot.summarize(message);
+        assertThat(summary.text()).isEqualTo("查询无锡天气");
+        assertThat(summary.imageItems()).hasSize(1);
+        assertThat(summary.hasProcessableContent()).isTrue();
+    }
+
+    @Test
+    void enablesHeartbeatAndAutomaticReconnect() {
+        var config = WeChatILinkBot.createILinkConfig();
+
+        assertThat(config.isHeartbeatEnabled()).isTrue();
+        assertThat(config.getHeartbeatIntervalMs()).isEqualTo(30_000);
+        assertThat(config.isAutoReconnectEnabled()).isTrue();
+        assertThat(config.getReconnectMaxAttempts()).isEqualTo(5);
     }
 }

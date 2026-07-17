@@ -2,3 +2,15 @@ target/
 .idea/
 *.iml
 .vscode/
+.env
+.env.*
+!.env.example
+.evn
+.evn.*
+!.evn.example
+*.key
+*.pem
+src/main/resources/application-local.properties
+src/main/resources/application-local.yml
+src/main/resources/application-local.yaml
+runtime-data/

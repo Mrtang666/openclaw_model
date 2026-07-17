@@ -1,0 +1,13 @@
+# Copy this file to .evn and replace the placeholder values.
+# The real .evn file is ignored by Git.
+BAILIAN_API_KEY=replace_with_your_bailian_key
+BAILIAN_COMPATIBLE_BASE_URL=https://your-workspace-id.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+BAILIAN_CHAT_MODEL=qwen-plus
+BAILIAN_VISION_MODEL=qwen3-vl-plus
+BAILIAN_IMAGE_MODEL=wanx-v1
+BAILIAN_IMAGE_EDIT_MODEL=qwen-image-2.0
+# Optional. When blank, it is derived from BAILIAN_COMPATIBLE_BASE_URL.
+BAILIAN_IMAGE_EDIT_URL=
+
+WEATHER_API_KEY=replace_with_your_qweather_key
+WEATHER_API_HOST=https://your-api-host.qweatherapi.com

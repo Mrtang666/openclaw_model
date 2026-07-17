@@ -1,6 +1,7 @@
 package com.example.spring.wechat;
 
 import java.time.Duration;
+import java.nio.file.Path;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
@@ -8,9 +9,10 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "ilink.bot")
 public class WeChatBotProperties {
     private boolean enabled = true;
-    private String fixedReply = "你好，我已收到你的消息。";
     private Duration retryDelay = Duration.ofSeconds(2);
-    private String qrCodeOutput = "target/ilink-login-qr.png";
+    private String modelErrorReply = "抱歉，处理消息时出现错误，请稍后再试。";
+    private Path lockFile = Path.of(
+        System.getProperty("user.home"), ".openclaw-model", "wechat-ilink.lock");
 
     public boolean isEnabled() {
         return enabled;
@@ -18,14 +20,6 @@ public class WeChatBotProperties {
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
-    }
-
-    public String getFixedReply() {
-        return fixedReply;
-    }
-
-    public void setFixedReply(String fixedReply) {
-        this.fixedReply = fixedReply;
     }
 
     public Duration getRetryDelay() {
@@ -36,11 +30,19 @@ public class WeChatBotProperties {
         this.retryDelay = retryDelay;
     }
 
-    public String getQrCodeOutput() {
-        return qrCodeOutput;
+    public String getModelErrorReply() {
+        return modelErrorReply;
     }
 
-    public void setQrCodeOutput(String qrCodeOutput) {
-        this.qrCodeOutput = qrCodeOutput;
+    public void setModelErrorReply(String modelErrorReply) {
+        this.modelErrorReply = modelErrorReply;
+    }
+
+    public Path getLockFile() {
+        return lockFile;
+    }
+
+    public void setLockFile(Path lockFile) {
+        this.lockFile = lockFile;
     }
 }

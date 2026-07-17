@@ -1,0 +1,6 @@
+17:26:02.225 [main] INFO  com.example.WechatBot - 请扫码登录微信: https://liteapp.weixin.qq.com/q/7GiQu1?qrcode=2dbc1f25dcbfb244110b71915ae39751&bot_type=3
+17:28:06.013 [main] WARN  com.example.WechatBot - 二维码已过期，正在刷新 (2/3)
+17:28:06.635 [main] INFO  com.example.WechatBot - 请扫码登录微信: https://liteapp.weixin.qq.com/q/7GiQu1?qrcode=0f89a962ed197d0dbab62aaf36690b5f&bot_type=3
+17:30:07.032 [main] WARN  com.example.WechatBot - 二维码已过期，正在刷新 (3/3)
+17:30:07.250 [main] INFO  com.example.WechatBot - 请扫码登录微信: https://liteapp.weixin.qq.com/q/7GiQu1?qrcode=68910cd86146a8c42032a6b7a1c75b86&bot_type=3
+17:32:09.146 [main] ERROR com.example.WechatBot - 登录失败: QR code expired too many times

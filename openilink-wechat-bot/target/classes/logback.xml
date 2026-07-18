@@ -20,8 +20,11 @@
 
     <!-- 打开 MediaHelper 的 DEBUG 日志，方便调试 -->
     <logger name="com.example.MediaHelper" level="DEBUG"/>
-    <logger name="com.example.AudioService" level="DEBUG"/>
+    <logger name="com.example.speech" level="DEBUG"/>
+    <logger name="com.example.routegen" level="DEBUG"/>
+    <logger name="com.example.map" level="DEBUG"/>
     <logger name="com.example.WechatBot" level="DEBUG"/>
+    <logger name="com.example.WeatherService" level="DEBUG"/>
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>

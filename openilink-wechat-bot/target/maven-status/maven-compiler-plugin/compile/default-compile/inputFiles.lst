@@ -1,7 +1,10 @@
 D:\桌面\openclaw_model\openilink-wechat-bot\src\main\java\com\example\AudioService.java
 D:\桌面\openclaw_model\openilink-wechat-bot\src\main\java\com\example\imagegen\ImageGenService.java
 D:\桌面\openclaw_model\openilink-wechat-bot\src\main\java\com\example\LocalLLMService.java
+D:\桌面\openclaw_model\openilink-wechat-bot\src\main\java\com\example\map\BaiduMapService.java
 D:\桌面\openclaw_model\openilink-wechat-bot\src\main\java\com\example\MediaHelper.java
+D:\桌面\openclaw_model\openilink-wechat-bot\src\main\java\com\example\routegen\RouteMapService.java
+D:\桌面\openclaw_model\openilink-wechat-bot\src\main\java\com\example\speech\SpeechRecognitionService.java
 D:\桌面\openclaw_model\openilink-wechat-bot\src\main\java\com\example\vision\VisionService.java
 D:\桌面\openclaw_model\openilink-wechat-bot\src\main\java\com\example\WeatherService.java
 D:\桌面\openclaw_model\openilink-wechat-bot\src\main\java\com\example\WechatBot.java

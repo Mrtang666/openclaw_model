@@ -97,6 +97,9 @@ public class LocalLLMService {
         Config(Properties props) { this.props = props; }
         public String getApiKey() { return props.getProperty("llm.api.key", ""); }
         public String getApiUrl() { return props.getProperty("llm.api.url", "https://api.siliconflow.cn/v1/chat/completions"); }
+        public String getModel() {
+            return props.getProperty("llm.model", "Qwen/Qwen2.5-7B-Instruct");
+        }
         public String getTranscriptionUrl() {
             return props.getProperty("llm.transcription.url", "https://api.siliconflow.cn/v1/audio/transcriptions");
         }
@@ -109,6 +112,9 @@ public class LocalLLMService {
         public String getImageGenModel() {
             return props.getProperty("llm.imagegen.model", "Qwen/Qwen-Image");
         }
+        public String getBaiduMapAk() {
+            return props.getProperty("map.baidu.ak", "");
+        }
     }
 
     private static final Config cachedConfig = new Config(configProps);
@@ -120,7 +126,11 @@ public class LocalLLMService {
                     .computeIfAbsent(userId, k -> {
                         List<Map<String, String>> list = new ArrayList<>();
                         list.add(Map.of("role", "system", "content",
-                                "你是一个友好的微信聊天机器人助手，请用简洁自然的语气回复用户的消息。"));
+                                "你是一个友好的微信聊天机器人助手，具备图片生成能力。"
+                                + "如果用户要求生成/画/创建/绘制一张图片，你在回复最后加上标记 [IMAGE_GEN:用户的图片描述]。"
+                                + "例如：\"好的，为您生成一张猫的图片[IMAGE_GEN:一只可爱的橘猫坐在窗台上]\"。"
+                                + "图片生成标记必须严格使用英文方括号，不要加粗，不要换成 Markdown。"
+                                + "不要拒绝画图请求，直接生成即可。用简洁自然的语气回复。"));
                         return list;
                     });
 

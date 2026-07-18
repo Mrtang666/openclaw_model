@@ -52,6 +52,8 @@ class DashScopeChatClientTests {
                 .andExpect(jsonPath("$.extra_body.enable_thinking").value(true))
                 .andExpect(jsonPath("$.messages[0].role").value("system"))
                 .andExpect(jsonPath("$.messages[0].content").value(containsString("天气")))
+                .andExpect(jsonPath("$.messages[0].content").value(containsString("图片生成")))
+                .andExpect(jsonPath("$.messages[0].content").value(containsString("语音识别")))
                 .andExpect(jsonPath("$.messages[1].role").value("user"))
                 .andExpect(jsonPath("$.messages[1].content").value("你是谁"))
                 .andRespond(withSuccess(streamBody, new MediaType("text", "event-stream", StandardCharsets.UTF_8)));

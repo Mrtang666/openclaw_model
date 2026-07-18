@@ -146,6 +146,39 @@ class WechatBotServiceTests {
         service.stop();
     }
 
+    @Test
+    void sendsOptimizedPromptTextBeforeGeneratedImage() throws Exception {
+        FakeWechatClient client = new FakeWechatClient(3);
+        WechatConversationService conversationService = mock(WechatConversationService.class);
+        when(conversationService.handleWechat(any())).thenReturn(WechatReply.textsAndImage(
+                List.of("优化后的图片提示词：\n一只小猫躺在沙发上，暖色自然光。"),
+                "我已经帮你生成好了，图片如下：",
+                new ImageGenerationResult(
+                        "一只小猫躺在沙发上，暖色自然光。",
+                        "https://cdn.example.com/cat.png",
+                        "PNG".getBytes(),
+                        "cat.png",
+                        "image/png",
+                        null,
+                        null)));
+        @SuppressWarnings("unchecked")
+        ObjectProvider<WechatConversationService> provider = mock(ObjectProvider.class);
+        when(provider.getObject()).thenReturn(conversationService);
+        WechatBotService service = new WechatBotService(() -> client, provider);
+
+        service.start();
+        client.loginFuture.complete(new WechatLoginInfo("bot-1"));
+        client.updates.add(List.of(new WechatIncomingMessage("user@im.wechat", "先优化提示词，再生成图片")));
+
+        assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
+        assertThat(new ArrayList<>(client.sentTexts)).containsExactly(
+                THINKING_MESSAGE,
+                "优化后的图片提示词：\n一只小猫躺在沙发上，暖色自然光。");
+        assertThat(client.sentImages).hasSize(1);
+        assertThat(client.sentImages.peek().caption()).isEqualTo("我已经帮你生成好了，图片如下：");
+        service.stop();
+    }
+
     private static final class FakeWechatClient implements WechatClient {
         private final CompletableFuture<WechatLoginInfo> loginFuture = new CompletableFuture<>();
         private final Queue<List<WechatIncomingMessage>> updates = new ConcurrentLinkedQueue<>();

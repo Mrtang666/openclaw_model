@@ -164,18 +164,20 @@ public class WechatBotService {
 
         boolean hasText = message.text() != null && !message.text().isBlank();
         boolean hasImages = message.images() != null && !message.images().isEmpty();
-        if (!hasText && !hasImages) {
+        boolean hasVoices = message.voices() != null && !message.voices().isEmpty();
+        if (!hasText && !hasImages && !hasVoices) {
             return;
         }
 
         String text = hasText ? message.text().strip() : "";
         log.info(
-                "微信收到消息，fromUserId={}, text={}, imageCount={}",
+                "微信收到消息，fromUserId={}, text={}, imageCount={}, voiceCount={}",
                 message.fromUserId(),
                 preview(text),
-                hasImages ? message.images().size() : 0);
+                hasImages ? message.images().size() : 0,
+                hasVoices ? message.voices().size() : 0);
         try {
-            String thinkingMessage = thinkingMessage(text, hasImages);
+            String thinkingMessage = thinkingMessage(text, hasImages, hasVoices);
             if (thinkingMessage != null) {
                 sendText(activeClient, message.fromUserId(), thinkingMessage);
             }
@@ -195,8 +197,8 @@ public class WechatBotService {
         }
     }
 
-    private String thinkingMessage(String text, boolean hasImages) {
-        if (hasImages) {
+    private String thinkingMessage(String text, boolean hasImages, boolean hasVoices) {
+        if (hasImages || hasVoices) {
             return THINKING_MESSAGE;
         }
         if (text == null || text.isBlank() || text.startsWith("/")) {
@@ -218,7 +220,10 @@ public class WechatBotService {
                     message.images() == null ? 0 : message.images().size());
             WechatReply reply = messageHandler.handle(message);
             String text = reply == null || reply.text() == null ? "" : reply.text().strip();
-            if (reply != null && reply.hasImage()) {
+            if (reply != null && reply.parts() != null && !reply.parts().isEmpty()) {
+                sendReplyParts(activeClient, message.fromUserId(), reply.parts());
+            } else if (reply != null && reply.hasImage()) {
+                sendPreImageTexts(activeClient, message.fromUserId(), reply.preImageTexts());
                 sendImage(activeClient, message.fromUserId(), reply.image(), text);
             } else {
                 sendReplyChunks(activeClient, message.fromUserId(), text);
@@ -231,6 +236,36 @@ public class WechatBotService {
             lastError = rootMessage(exception);
             log.warn("微信消息处理失败，fromUserId={}, error={}", message.fromUserId(), lastError);
             sendUserFacingError(activeClient, message.fromUserId(), lastError);
+        }
+    }
+
+    private void sendReplyParts(WechatClient activeClient, String userId, List<WechatReply.Part> parts) {
+        for (int index = 0; index < parts.size(); index++) {
+            WechatReply.Part part = parts.get(index);
+            if (part == null) {
+                continue;
+            }
+
+            if (part.hasImage()) {
+                sendImage(activeClient, userId, part.image(), part.text());
+            } else {
+                sendReplyChunks(activeClient, userId, part.text());
+            }
+
+            if (index < parts.size() - 1) {
+                pauseBetweenChunks();
+            }
+        }
+    }
+
+    private void sendPreImageTexts(WechatClient activeClient, String userId, List<String> preImageTexts) {
+        if (preImageTexts == null || preImageTexts.isEmpty()) {
+            return;
+        }
+
+        for (String preImageText : preImageTexts) {
+            sendReplyChunks(activeClient, userId, preImageText);
+            pauseBetweenChunks();
         }
     }
 

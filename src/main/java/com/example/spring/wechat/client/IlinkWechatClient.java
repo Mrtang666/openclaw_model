@@ -82,7 +82,9 @@ public class IlinkWechatClient implements WechatClient {
 
         StringBuilder text = new StringBuilder();
         List<WechatIncomingImage> images = new ArrayList<>();
+        List<WechatIncomingVoice> voices = new ArrayList<>();
         int imageIndex = 0;
+        int voiceIndex = 0;
         for (MessageItem item : message.getItem_list()) {
             if (item == null) {
                 continue;
@@ -119,28 +121,69 @@ public class IlinkWechatClient implements WechatClient {
                             rootMessage(exception));
                 }
             }
+
+            if (item.getVoice_item() != null) {
+                String sourceReference = buildVoiceSourceReference(message, voiceIndex);
+                String fileName = buildVoiceFileName(message, voiceIndex, item);
+                Integer durationMs = item.getVoice_item().getPlaytime();
+                Integer sampleRate = item.getVoice_item().getSample_rate();
+                String format = formatForVoice(item);
+                String mimeType = mimeTypeForVoice(item);
+                String embeddedText = item.getVoice_item().getText();
+                try {
+                    byte[] voiceBytes = delegate.downloadVoiceFromMessageItem(item);
+                    voices.add(new WechatIncomingVoice(
+                            VoiceSourceType.WECHAT_ATTACHMENT,
+                            sourceReference,
+                            voiceBytes,
+                            mimeType,
+                            fileName,
+                            durationMs,
+                            sampleRate,
+                            format,
+                            embeddedText));
+                } catch (Exception exception) {
+                    log.warn("iLink 语音下载失败，messageId={}, fromUserId={}, error={}",
+                            valueOrUnknown(String.valueOf(message.getMessage_id())),
+                            valueOrUnknown(message.getFrom_user_id()),
+                            rootMessage(exception));
+                    voices.add(new WechatIncomingVoice(
+                            VoiceSourceType.WECHAT_ATTACHMENT,
+                            sourceReference,
+                            null,
+                            mimeType,
+                            fileName,
+                            durationMs,
+                            sampleRate,
+                            format,
+                            embeddedText));
+                }
+                voiceIndex++;
+            }
         }
 
         String normalizedText = text.toString().strip();
-        if (normalizedText.isBlank() && images.isEmpty()) {
-            log.debug("iLink 消息没有可用文本或图片，messageId={}", valueOrUnknown(String.valueOf(message.getMessage_id())));
+        if (normalizedText.isBlank() && images.isEmpty() && voices.isEmpty()) {
+            log.debug("iLink 消息没有可用文本、图片或语音，messageId={}", valueOrUnknown(String.valueOf(message.getMessage_id())));
             return null;
         }
 
         log.info(
-                "iLink 收到消息，messageId={}, fromUserId={}, contextToken={}, text={}, imageCount={}",
+                "iLink 收到消息，messageId={}, fromUserId={}, contextToken={}, text={}, imageCount={}, voiceCount={}",
                 valueOrUnknown(String.valueOf(message.getMessage_id())),
                 valueOrUnknown(message.getFrom_user_id()),
                 valueOrUnknown(message.getContext_token()),
                 preview(normalizedText),
-                images.size());
+                images.size(),
+                voices.size());
 
         return new WechatIncomingMessage(
                 message.getMessage_id() == null ? null : String.valueOf(message.getMessage_id()),
                 message.getFrom_user_id(),
                 message.getContext_token(),
                 normalizedText,
-                images);
+                images,
+                voices);
     }
 
     private WechatLoginInfo toLoginInfo(LoginContext context) {
@@ -151,8 +194,39 @@ public class IlinkWechatClient implements WechatClient {
         return "wechat://" + valueOrUnknown(String.valueOf(message.getMessage_id())) + "/image/" + (imageIndex + 1);
     }
 
+    private String buildVoiceSourceReference(WeixinMessage message, int voiceIndex) {
+        return "wechat://" + valueOrUnknown(String.valueOf(message.getMessage_id())) + "/voice/" + (voiceIndex + 1);
+    }
+
     private String buildFileName(WeixinMessage message, int imageIndex) {
         return "wechat-" + valueOrUnknown(String.valueOf(message.getMessage_id())) + "-image-" + (imageIndex + 1) + ".png";
+    }
+
+    private String buildVoiceFileName(WeixinMessage message, int voiceIndex, MessageItem item) {
+        return "wechat-"
+                + valueOrUnknown(String.valueOf(message.getMessage_id()))
+                + "-voice-"
+                + (voiceIndex + 1)
+                + "."
+                + formatForVoice(item);
+    }
+
+    private String formatForVoice(MessageItem item) {
+        if (item == null || item.getVoice_item() == null || item.getVoice_item().getEncode_type() == null) {
+            return "silk";
+        }
+        return switch (item.getVoice_item().getEncode_type()) {
+            case 6 -> "silk";
+            default -> "voice";
+        };
+    }
+
+    private String mimeTypeForVoice(MessageItem item) {
+        String format = formatForVoice(item);
+        return switch (format) {
+            case "silk" -> "audio/silk";
+            default -> "application/octet-stream";
+        };
     }
 
     private String preview(String value) {

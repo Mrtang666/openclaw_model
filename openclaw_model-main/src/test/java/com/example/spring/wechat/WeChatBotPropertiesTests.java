@@ -28,6 +28,8 @@ class WeChatBotPropertiesTests {
     void bindsExternalConfigurationAndChineseText() {
         assertThat(botProperties.getModelErrorReply())
             .isEqualTo("抱歉，处理消息时出现错误，请稍后再试。");
+        assertThat(botProperties.isTypingIndicatorEnabled()).isTrue();
+        assertThat(botProperties.getTypingPreviewDelay()).isEqualTo(java.time.Duration.ofMillis(600));
         assertThat(bailianProperties.isConfigured()).isTrue();
         assertThat(bailianProperties.getApiKey()).isEqualTo("test-runtime-key");
         assertThat(bailianProperties.getVisionModel()).isEqualTo("qwen3-vl-plus");

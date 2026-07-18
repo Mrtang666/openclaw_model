@@ -19,7 +19,10 @@ public class BailianProperties {
     private String taskUrl = "https://dashscope.aliyuncs.com/api/v1/tasks";
     private String imageSize = "1024*1024";
     private String systemPrompt =
-        "你是一个通过微信与用户交流的智能助手。请理解用户发来的全部信息，并使用简洁、准确、自然的中文回答。";
+        "你是一个通过微信与用户交流的智能助手。请理解用户发来的全部信息，并使用简洁、准确、自然的中文回答。"
+            + "用户使用“这段、这个、上面、它”等指代时，应结合最近对话历史理解。"
+            + "如果历史中没有被引用内容，应请用户重新发送，不得假装已经看到。"
+            + "如果当前调用没有返回真实图片，不得声称图片已经生成、制作或发送。";
     private Duration connectTimeout = Duration.ofSeconds(10);
     private Duration requestTimeout = Duration.ofSeconds(90);
     private Duration imageTimeout = Duration.ofMinutes(3);

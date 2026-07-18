@@ -5,9 +5,13 @@ import com.example.spring.agent.AgentPlan;
 import com.example.spring.agent.AgentRequest;
 import com.example.spring.agent.AgentResponse;
 import com.example.spring.agent.AgentRouter;
+import com.example.spring.agent.AgentType;
 import com.example.spring.agent.ImageAsset;
 import com.example.spring.bailian.BailianProperties;
 import com.example.spring.memory.ConversationMemoryService;
+import com.example.spring.task.ImageTaskDecision;
+import com.example.spring.task.ImageTaskOrchestrator;
+import com.example.spring.task.TaskDecisionAction;
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.ILinkClientBuilder;
 import com.github.wechat.ilink.sdk.core.config.ILinkConfig;
@@ -37,6 +41,7 @@ public class WeChatILinkBot implements SmartLifecycle {
     private final AgentRouter agentRouter;
     private final AgentCoordinator agentCoordinator;
     private final ConversationMemoryService memoryService;
+    private final ImageTaskOrchestrator imageTaskOrchestrator;
     private final BotInstanceLock instanceLock;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean everLoggedIn = new AtomicBoolean(false);
@@ -54,12 +59,14 @@ public class WeChatILinkBot implements SmartLifecycle {
         AgentRouter agentRouter,
         AgentCoordinator agentCoordinator,
         ConversationMemoryService memoryService,
+        ImageTaskOrchestrator imageTaskOrchestrator,
         BotInstanceLock instanceLock) {
         this.properties = properties;
         this.bailianProperties = bailianProperties;
         this.agentRouter = agentRouter;
         this.agentCoordinator = agentCoordinator;
         this.memoryService = memoryService;
+        this.imageTaskOrchestrator = imageTaskOrchestrator;
         this.instanceLock = instanceLock;
     }
 
@@ -205,6 +212,8 @@ public class WeChatILinkBot implements SmartLifecycle {
                 List.of(),
                 summary.imageItems().size()));
             AgentPlan plan = agentRouter.route(previewRequest);
+            boolean activeImageTask = imageTaskOrchestrator.hasActiveSession(userId);
+            boolean recentImageContext = imageTaskOrchestrator.hasRecentImageContext(previewRequest);
             log.info(
                 "微信消息已路由，userId={}，messageId={}，steps={}",
                 userId,
@@ -213,9 +222,10 @@ public class WeChatILinkBot implements SmartLifecycle {
             sendTextSafely(
                 activeClient,
                 userId,
-                agentRouter.processingMessage(plan),
+                processingMessage(plan, activeImageTask, recentImageContext),
                 message.getMessage_id());
 
+            startTypingSafely(activeClient, userId, message.getMessage_id());
             processMessage(activeClient, message, summary, previewRequest, plan);
         }
     }
@@ -235,25 +245,74 @@ public class WeChatILinkBot implements SmartLifecycle {
                 summary.text(),
                 images,
                 summary.imageItems().size()));
-            AgentResponse response = agentCoordinator.execute(plan, request);
+            if (imageTaskOrchestrator.requiresSourceImage(userId)
+                || imageTaskOrchestrator.hasRecentImageContext(request)) {
+                request = memoryService.attachLatestImage(request);
+            }
+            ImageTaskDecision taskDecision = imageTaskOrchestrator.decide(request, plan);
+            log.info(
+                "图片任务编排完成，userId={}，messageId={}，action={}，steps={}",
+                userId,
+                message.getMessage_id(),
+                taskDecision.action(),
+                taskDecision.plan().steps());
+            if (taskDecision.action() == TaskDecisionAction.REPLY) {
+                AgentResponse guidance = AgentResponse.text(taskDecision.reply());
+                memoryService.rememberUserRequest(request);
+                memoryService.rememberAgentResult(
+                    AgentType.CHAT, request, guidance);
+                stopTypingSafely(activeClient, userId, message.getMessage_id());
+                sendResponse(activeClient, userId, guidance, message.getMessage_id());
+                return;
+            }
+            if (taskDecision.action() == TaskDecisionAction.EXECUTE) {
+                // Preserve the user's original wording before the text Agent's refined prompt.
+                memoryService.rememberUserRequest(request);
+            }
+            AgentResponse response = agentCoordinator.execute(
+                taskDecision.plan(), taskDecision.request());
             log.info(
                 "Agent 处理完成，userId={}，messageId={}，textReplyLength={}，imageReplyCount={}",
                 userId,
                 message.getMessage_id(),
                 response.text().length(),
                 response.images().size());
+            stopTypingSafely(activeClient, userId, message.getMessage_id());
             sendResponse(activeClient, userId, response, message.getMessage_id());
+            if (taskDecision.action() == TaskDecisionAction.EXECUTE) {
+                imageTaskOrchestrator.complete(userId);
+            }
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
         } catch (Exception exception) {
             log.error("消息处理失败，userId={}，messageId={}",
                 userId, message.getMessage_id(), exception);
+            stopTypingSafely(activeClient, userId, message.getMessage_id());
             sendTextSafely(
                 activeClient,
                 userId,
                 properties.getModelErrorReply(),
                 message.getMessage_id());
+        } finally {
+            stopTypingSafely(activeClient, userId, message.getMessage_id());
         }
+    }
+
+    private String processingMessage(
+        AgentPlan plan,
+        boolean activeImageTask,
+        boolean recentImageContext) {
+        if (plan.primaryType() == AgentType.WEATHER) {
+            return agentRouter.processingMessage(plan);
+        }
+        if (activeImageTask
+            || plan.steps().contains(AgentType.IMAGE_GENERATION)) {
+            return "我正在理解并整理你的图片需求，请稍等。";
+        }
+        if (recentImageContext) {
+            return "我正在结合之前的内容理解你的需求，请稍等。";
+        }
+        return agentRouter.processingMessage(plan);
     }
 
     private List<ImageAsset> downloadImages(
@@ -281,21 +340,72 @@ public class WeChatILinkBot implements SmartLifecycle {
         String userId,
         AgentResponse response,
         Long messageId) {
+        if (response.images().isEmpty()) {
+            if (!response.text().isBlank()) {
+                sendTextSafely(activeClient, userId, response.text(), messageId);
+            }
+            return;
+        }
+
         if (!response.text().isBlank()) {
             sendTextSafely(activeClient, userId, response.text(), messageId);
         }
+        boolean allImagesSent = true;
         for (ImageAsset image : response.images()) {
+            if (!sendImageSafely(activeClient, userId, image, messageId)) {
+                allImagesSent = false;
+            }
+        }
+        if (!allImagesSent) {
+            sendTextSafely(
+                activeClient,
+                userId,
+                "图片已经生成，但发送失败，请稍后再次发送刚才的修改要求。",
+                messageId);
+        }
+    }
+
+    private boolean sendImageSafely(
+        ILinkClient activeClient,
+        String userId,
+        ImageAsset image,
+        Long messageId) {
+        for (int attempt = 1; attempt <= 2; attempt++) {
             try {
                 synchronized (sendMonitor) {
                     activeClient.sendImage(
                         userId, image.data(), image.fileName(), "");
                 }
-                log.info("已向用户发送图片，userId={}，messageId={}", userId, messageId);
+                log.info(
+                    "已向用户发送图片，userId={}，messageId={}，attempt={}，bytes={}，mediaType={}",
+                    userId,
+                    messageId,
+                    attempt,
+                    image.data().length,
+                    image.mediaType());
+                return true;
             } catch (IOException | RuntimeException exception) {
-                log.error("微信图片发送失败，userId={}，messageId={}",
-                    userId, messageId, exception);
-                sendTextSafely(activeClient, userId, "图片已经生成，但发送失败，请稍后重试。", messageId);
+                log.warn(
+                    "微信图片发送失败，userId={}，messageId={}，attempt={}",
+                    userId,
+                    messageId,
+                    attempt,
+                    exception);
+                if (attempt < 2 && !sleepImageRetry()) {
+                    break;
+                }
             }
+        }
+        return false;
+    }
+
+    private boolean sleepImageRetry() {
+        try {
+            Thread.sleep(800);
+            return true;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 
@@ -306,13 +416,62 @@ public class WeChatILinkBot implements SmartLifecycle {
         Long messageId) {
         try {
             synchronized (sendMonitor) {
-                activeClient.sendText(userId, text);
+                if (properties.isTypingIndicatorEnabled()) {
+                    activeClient.sendTextWithTyping(
+                        userId, text, typingPreviewDelayMillis());
+                } else {
+                    activeClient.sendText(userId, text);
+                }
             }
             log.info("已回复用户，userId={}，messageId={}", userId, messageId);
         } catch (IOException | RuntimeException exception) {
             log.error("微信文字消息发送失败，userId={}，messageId={}",
                 userId, messageId, exception);
         }
+    }
+
+    private void startTypingSafely(
+        ILinkClient activeClient,
+        String userId,
+        Long messageId) {
+        if (!properties.isTypingIndicatorEnabled()) {
+            return;
+        }
+        try {
+            synchronized (sendMonitor) {
+                activeClient.startTyping(userId);
+            }
+            log.debug("已开启微信输入状态，userId={}，messageId={}", userId, messageId);
+        } catch (IOException | RuntimeException exception) {
+            log.warn("开启微信输入状态失败，将继续正常处理消息，userId={}，messageId={}",
+                userId, messageId, exception);
+        }
+    }
+
+    private void stopTypingSafely(
+        ILinkClient activeClient,
+        String userId,
+        Long messageId) {
+        if (!properties.isTypingIndicatorEnabled()) {
+            return;
+        }
+        try {
+            synchronized (sendMonitor) {
+                activeClient.stopTyping(userId);
+            }
+            log.debug("已停止微信输入状态，userId={}，messageId={}", userId, messageId);
+        } catch (IOException | RuntimeException exception) {
+            log.warn("停止微信输入状态失败，userId={}，messageId={}",
+                userId, messageId, exception);
+        }
+    }
+
+    private long typingPreviewDelayMillis() {
+        if (properties.getTypingPreviewDelay() == null
+            || properties.getTypingPreviewDelay().isNegative()) {
+            return 0;
+        }
+        return properties.getTypingPreviewDelay().toMillis();
     }
 
     static MessageSummary summarize(WeixinMessage message) {

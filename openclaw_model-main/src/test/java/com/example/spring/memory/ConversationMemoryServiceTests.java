@@ -49,6 +49,16 @@ class ConversationMemoryServiceTests {
             .anyMatch(value -> value.contains("已经记住"));
         assertThat(prepared.referencedImages()).hasSize(1);
         assertThat(prepared.referencedImages().get(0).data()).containsExactly(1, 2, 3);
+
+        AgentRequest activeEditReply = restarted.attachLatestImage(new AgentRequest(
+            "user-1", 102L, "科技感，方形", List.of(), 0));
+        assertThat(activeEditReply.referencedImages()).hasSize(1);
+        assertThat(activeEditReply.referencedImages().get(0).fileName())
+            .isEqualTo("product.png");
+
+        AgentRequest semanticEdit = restarted.prepare(new AgentRequest(
+            "user-1", 103L, "去除里面的人群", List.of(), 0));
+        assertThat(semanticEdit.referencedImages()).hasSize(1);
     }
 
     @Test

@@ -33,9 +33,11 @@ import org.springframework.stereotype.Service;
 public class ConversationMemoryService implements InitializingBean {
     private static final Logger log = LoggerFactory.getLogger(ConversationMemoryService.class);
     private static final Pattern IMAGE_REFERENCE = Pattern.compile(
-        "(刚才|上一张|上张|之前|那张|这张|原图|历史图片|它|继续|再|第[一二三四五六七八九十1-9]张)" );
+        "(刚才|上一张|上张|之前|那张|这张|这幅|这个画面|图中|里面|原图|历史图片|引用|"
+            + "它|继续|再|第[一二三四五六七八九十1-9]张)" );
     private static final Pattern IMAGE_EDIT = Pattern.compile(
-        "(修改|改成|改为|加工|编辑|调整|换成|变成|添加|增加|删除|去掉|保留|风格|背景|颜色)" );
+        "(修改|改成|改为|加工|编辑|调整|换成|变成|添加|增加|删除|删掉|去掉|去除|"
+            + "移除|擦除|消除|抹掉|保留|增强|减弱|风格|背景|颜色|色调|亮度|清晰度)" );
     private static final Pattern ORDINAL = Pattern.compile("第([一二三四五六七八九十1-9])张");
 
     private final MemoryProperties properties;
@@ -77,6 +79,20 @@ public class ConversationMemoryService implements InitializingBean {
             return request.withMemory(history, referencedImages);
         } catch (Exception exception) {
             log.warn("读取用户对话记忆失败，userId={}", request.userId(), exception);
+            return request;
+        }
+    }
+
+    public AgentRequest attachLatestImage(AgentRequest request) {
+        if (!properties.isEnabled() || request == null
+            || !request.images().isEmpty() || !request.referencedImages().isEmpty()) {
+            return request;
+        }
+        try {
+            return request.withMemory(
+                request.history(), loadReferencedImages(request.userId(), "上一张图片"));
+        } catch (Exception exception) {
+            log.warn("读取图片任务参考图失败，userId={}", request.userId(), exception);
             return request;
         }
     }

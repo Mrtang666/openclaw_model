@@ -1,0 +1,79 @@
+flowchart TD
+    A["启动 DemoApplication"] --> B["加载 .evn 外部配置"]
+    B --> C["初始化 Spring Boot 组件"]
+    C --> D["初始化 SQLite 对话记忆"]
+    C --> E["创建微信 iLink 机器人"]
+
+    E --> F{"获取单实例锁"}
+    F -- "失败：已有机器人运行" --> G["记录错误并停止微信连接"]
+    F -- "成功" --> H{"存在历史会话 ResumeContext"}
+
+    H -- "否" --> I["创建 iLink 客户端"]
+    I --> J["生成微信 iLink 登录链接"]
+    J --> K["打开系统浏览器"]
+    K --> L["用户扫码登录"]
+    L --> M["保存 ResumeContext"]
+
+    H -- "是" --> N["使用历史会话恢复连接"]
+    M --> O["进入唯一机器人线程"]
+    N --> O
+
+    O --> P["轮询微信消息"]
+    P --> Q{"是否收到新消息"}
+    Q -- "否" --> P
+    Q -- "是" --> R["消息去重"]
+    R --> S{"是否已处理"}
+    S -- "是" --> P
+    S -- "否" --> T["提取文本、图片和不支持的消息类型"]
+
+    T --> U{"是否存在可处理内容"}
+    U -- "否" --> V["回复不支持的消息提示"]
+    V --> P
+    U -- "是" --> W["读取用户历史对话和历史图片"]
+    W --> X["AgentRouter 判断功能类型"]
+    X --> Y["先回复：模型正在思考"]
+
+    Y --> Z["下载微信图片或图片 URL"]
+    Z --> AA["AgentCoordinator 顺序执行"]
+    AA --> AB{"Agent 类型"}
+
+    AB -- "ChatAgent 对话模块" --> AC["百炼 qwen-plus"]
+    AB -- "WeatherAgent 天气模块" --> AD["和风天气 GeoAPI + 实时天气 API"]
+    AB -- "VisionAgent 图片识别模块" --> AE["百炼 qwen3-vl-plus"]
+    AB -- "ImageGenerationAgent 图片生成模块" --> AF["百炼 wanx-v1"]
+    AB -- "历史图片编辑" --> AG["百炼 qwen-image-2.0"]
+
+    AC --> AH["生成文本回复"]
+    AD --> AH
+    AE --> AH
+    AF --> AI["生成图片结果"]
+    AG --> AI
+
+    AH --> AJ["保存用户请求和 Agent 结果"]
+    AI --> AJ
+    AJ --> AK{"回复内容类型"}
+    AK -- "文本" --> AL["微信 sendText"]
+    AK -- "图片" --> AM["微信 sendImage"]
+    AK -- "文本 + 图片" --> AL
+    AL --> AN["记录回复日志"]
+    AM --> AN
+    AN --> P
+
+    subgraph AGENT["四类功能 Agent"]
+        AC
+        AD
+        AE
+        AF
+        AG
+    end
+
+    subgraph MEMORY["ConversationMemoryService"]
+        W
+        AJ
+        AO["SQLite memory.db"]
+        AP["runtime-data/images"]
+    end
+
+    W --> AO
+    AJ --> AO
+    AJ --> AP

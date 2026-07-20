@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 class WeatherAgentTests {
     @Test
     void extractsCityDistrictAndCountyNamesFromNaturalLanguage() {
+        assertThat(WeatherAgent.extractRegion("那呢")).isBlank();
         assertThat(WeatherAgent.extractRegion("请帮我查询江苏无锡滨湖区现在的天气"))
             .isEqualTo("江苏无锡滨湖区");
         assertThat(WeatherAgent.extractRegion("今天北京多少度？"))

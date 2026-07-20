@@ -14,3 +14,5 @@ src/main/resources/application-local.properties
 src/main/resources/application-local.yml
 src/main/resources/application-local.yaml
 runtime-data/
+tools/silk-encoder/node_modules/
+tools/silk-encoder/*.tgz

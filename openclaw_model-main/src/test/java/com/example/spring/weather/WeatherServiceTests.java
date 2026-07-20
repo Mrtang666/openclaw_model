@@ -11,6 +11,7 @@ import java.net.http.HttpClient;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.GZIPOutputStream;
 import org.junit.jupiter.api.AfterEach;
@@ -67,6 +68,35 @@ class WeatherServiceTests {
         assertThatThrownBy(() -> service().resolveLocation("鼓楼区"))
             .isInstanceOf(WeatherException.class)
             .hasMessageContaining("地区名称存在重复", "南京市", "徐州市");
+    }
+
+    @Test
+    void queriesForecastForRelativeFutureDate() throws Exception {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/geo/v2/city/lookup", exchange -> respond(exchange, """
+            {"code":"200","location":[{"id":"101190202","name":"滨湖区",
+            "adm2":"无锡市","adm1":"江苏省","country":"中国"}]}
+            """));
+        server.createContext("/v7/weather/7d", exchange -> respond(exchange, """
+            {"code":"200","updateTime":"2026-07-20T14:00+08:00","daily":[
+            {"fxDate":"2026-07-22","tempMax":"32","tempMin":"25",
+            "textDay":"多云","textNight":"阵雨","humidity":"70",
+            "windDirDay":"东南风","windScaleDay":"3","windSpeedDay":"14",
+            "precip":"1.2","uvIndex":"6"}]}
+            """));
+        server.start();
+
+        var answer = service().weather(
+            "无锡滨湖区",
+            LocalDate.of(2026, 7, 20),
+            LocalDate.of(2026, 7, 22),
+            "后天",
+            false);
+
+        assertThat(answer.current()).isNull();
+        assertThat(answer.forecast().targetDate()).isEqualTo(LocalDate.of(2026, 7, 22));
+        assertThat(answer.forecast().maximumTemperature()).isEqualTo(32);
+        assertThat(answer.forecast().daytimeDescription()).isEqualTo("多云");
     }
 
     private WeatherService service() {

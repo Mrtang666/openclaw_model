@@ -3,11 +3,11 @@ package com.example.spring.bailian;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
 
-final class BailianResponseParser {
+public final class BailianResponseParser {
     private BailianResponseParser() {
     }
 
-    static String assistantText(JsonNode root) throws IOException {
+    public static String assistantText(JsonNode root) throws IOException {
         JsonNode content = root.path("choices").path(0).path("message").path("content");
         if (content.isTextual() && !content.asText().isBlank()) {
             return content.asText().trim();

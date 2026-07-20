@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@breezystack/lamejs": "^1.2.7",
+    "silk-wasm": "^3.7.1"
+  }
+}

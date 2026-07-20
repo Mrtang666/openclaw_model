@@ -44,19 +44,36 @@ public class BailianChatService {
         String userId,
         String userText,
         List<MemoryMessage> history) throws IOException, InterruptedException {
+        return chat(userId, userText, history, "");
+    }
+
+    public String chat(
+        String userId,
+        String userText,
+        List<MemoryMessage> history,
+        String dynamicSystemContext) throws IOException, InterruptedException {
         requireConfigured();
         if (userText == null || userText.isBlank()) {
             throw new IllegalArgumentException("用户消息不能为空");
         }
 
-        return callApi(history == null ? List.of() : history, userText.trim());
+        return callApi(
+            history == null ? List.of() : history,
+            userText.trim(),
+            dynamicSystemContext);
     }
 
-    private String callApi(List<MemoryMessage> history, String userText)
+    private String callApi(
+        List<MemoryMessage> history,
+        String userText,
+        String dynamicSystemContext)
         throws IOException, InterruptedException {
         List<Map<String, String>> messages = new ArrayList<>();
         if (properties.getSystemPrompt() != null && !properties.getSystemPrompt().isBlank()) {
             messages.add(message("system", properties.getSystemPrompt()));
+        }
+        if (dynamicSystemContext != null && !dynamicSystemContext.isBlank()) {
+            messages.add(message("system", dynamicSystemContext.trim()));
         }
         for (MemoryMessage item : history) {
             if (item != null && item.content() != null && !item.content().isBlank()) {

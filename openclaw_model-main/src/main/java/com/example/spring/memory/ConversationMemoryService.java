@@ -4,6 +4,8 @@ import com.example.spring.agent.AgentRequest;
 import com.example.spring.agent.AgentResponse;
 import com.example.spring.agent.AgentType;
 import com.example.spring.agent.ImageAsset;
+import com.example.spring.speech.voice.VoicePreference;
+import com.example.spring.wechat.ReplyMode;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -80,6 +82,156 @@ public class ConversationMemoryService implements InitializingBean {
         } catch (Exception exception) {
             log.warn("读取用户对话记忆失败，userId={}", request.userId(), exception);
             return request;
+        }
+    }
+
+    public ReplyMode getReplyMode(String userId) {
+        if (!properties.isEnabled() || userId == null || userId.isBlank()) {
+            return ReplyMode.TEXT;
+        }
+        String sql = "SELECT reply_mode FROM user_preferences WHERE user_id = ?";
+        try {
+            synchronized (databaseMonitor) {
+                try (Connection connection = connection();
+                     PreparedStatement statement = connection.prepareStatement(sql)) {
+                    statement.setString(1, userId);
+                    try (ResultSet result = statement.executeQuery()) {
+                        if (result.next()) {
+                            try {
+                                return ReplyMode.valueOf(result.getString(1));
+                            } catch (IllegalArgumentException ignored) {
+                                return ReplyMode.TEXT;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (SQLException exception) {
+            log.warn("读取用户回复模式失败，userId={}", userId, exception);
+        }
+        return ReplyMode.TEXT;
+    }
+
+    public boolean setReplyMode(String userId, ReplyMode mode) {
+        if (!properties.isEnabled() || userId == null || userId.isBlank() || mode == null) {
+            return false;
+        }
+        String sql = """
+            INSERT INTO user_preferences(user_id, reply_mode, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                reply_mode = excluded.reply_mode,
+                updated_at = excluded.updated_at
+            """;
+        try {
+            synchronized (databaseMonitor) {
+                try (Connection connection = connection();
+                     PreparedStatement statement = connection.prepareStatement(sql)) {
+                    statement.setString(1, userId);
+                    statement.setString(2, mode.name());
+                    statement.setLong(3, Instant.now().toEpochMilli());
+                    statement.executeUpdate();
+                    return true;
+                }
+            }
+        } catch (SQLException exception) {
+            log.warn("保存用户回复模式失败，userId={}，mode={}", userId, mode, exception);
+            return false;
+        }
+    }
+
+    public VoicePreference getVoicePreference(String userId) {
+        if (!properties.isEnabled() || userId == null || userId.isBlank()) {
+            return null;
+        }
+        String sql = """
+            SELECT tts_voice, tts_voice_name, tts_language
+            FROM user_preferences WHERE user_id = ?
+            """;
+        try {
+            synchronized (databaseMonitor) {
+                try (Connection connection = connection();
+                     PreparedStatement statement = connection.prepareStatement(sql)) {
+                    statement.setString(1, userId);
+                    try (ResultSet result = statement.executeQuery()) {
+                        if (result.next()) {
+                            String voiceId = result.getString("tts_voice");
+                            if (voiceId == null || voiceId.isBlank()) {
+                                return null;
+                            }
+                            return new VoicePreference(
+                                voiceId,
+                                result.getString("tts_voice_name"),
+                                result.getString("tts_language"));
+                        }
+                    }
+                }
+            }
+        } catch (SQLException exception) {
+            log.warn("读取用户音色偏好失败，userId={}", userId, exception);
+        }
+        return null;
+    }
+
+    public boolean setVoicePreference(String userId, VoicePreference preference) {
+        if (!properties.isEnabled() || userId == null || userId.isBlank() || preference == null
+            || preference.voiceId() == null || preference.voiceId().isBlank()) {
+            return false;
+        }
+        String sql = """
+            INSERT INTO user_preferences(
+                user_id, reply_mode, tts_voice, tts_voice_name, tts_language, updated_at)
+            VALUES (?, 'TEXT', ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                tts_voice = excluded.tts_voice,
+                tts_voice_name = excluded.tts_voice_name,
+                tts_language = excluded.tts_language,
+                updated_at = excluded.updated_at
+            """;
+        try {
+            synchronized (databaseMonitor) {
+                try (Connection connection = connection();
+                     PreparedStatement statement = connection.prepareStatement(sql)) {
+                    statement.setString(1, userId);
+                    statement.setString(2, preference.voiceId());
+                    statement.setString(3, preference.displayName());
+                    statement.setString(4, preference.languageType());
+                    statement.setLong(5, Instant.now().toEpochMilli());
+                    return statement.executeUpdate() > 0;
+                }
+            }
+        } catch (SQLException exception) {
+            log.warn("保存用户音色偏好失败，userId={}，voice={}",
+                userId, preference.voiceId(), exception);
+            return false;
+        }
+    }
+
+    public boolean clearVoicePreference(String userId) {
+        if (!properties.isEnabled() || userId == null || userId.isBlank()) {
+            return false;
+        }
+        String sql = """
+            UPDATE user_preferences SET
+                tts_voice = NULL,
+                tts_voice_name = NULL,
+                tts_language = NULL,
+                updated_at = ?
+            WHERE user_id = ?
+            """;
+        try {
+            synchronized (databaseMonitor) {
+                try (Connection connection = connection();
+                     PreparedStatement statement = connection.prepareStatement(sql)) {
+                    statement.setLong(1, Instant.now().toEpochMilli());
+                    statement.setString(2, userId);
+                    statement.executeUpdate();
+                    return true;
+                }
+            }
+        } catch (SQLException exception) {
+            log.warn("清除用户音色偏好失败，userId={}", userId, exception);
+            return false;
         }
     }
 
@@ -194,6 +346,32 @@ public class ConversationMemoryService implements InitializingBean {
         return messages;
     }
 
+    public String getLatestAssistantText(String userId) {
+        if (!properties.isEnabled() || userId == null || userId.isBlank()) {
+            return "";
+        }
+        String sql = """
+            SELECT text FROM memory_entries
+            WHERE user_id = ? AND role = 'assistant'
+                AND text IS NOT NULL AND trim(text) <> ''
+            ORDER BY id DESC LIMIT 1
+            """;
+        try {
+            synchronized (databaseMonitor) {
+                try (Connection connection = connection();
+                     PreparedStatement statement = connection.prepareStatement(sql)) {
+                    statement.setString(1, userId);
+                    try (ResultSet result = statement.executeQuery()) {
+                        return result.next() ? result.getString(1) : "";
+                    }
+                }
+            }
+        } catch (SQLException exception) {
+            log.warn("读取最近一条机器人回复失败，userId={}", userId, exception);
+            return "";
+        }
+    }
+
     List<ImageAsset> loadReferencedImages(String userId, String userText)
         throws SQLException, IOException {
         List<StoredImage> storedImages = new ArrayList<>();
@@ -282,6 +460,42 @@ public class ConversationMemoryService implements InitializingBean {
                     CREATE INDEX IF NOT EXISTS idx_memory_images_user
                     ON memory_images(user_id, created_at DESC)
                     """);
+                statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS user_preferences (
+                        user_id TEXT PRIMARY KEY,
+                        reply_mode TEXT NOT NULL DEFAULT 'TEXT',
+                        tts_voice TEXT,
+                        tts_voice_name TEXT,
+                        tts_language TEXT,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """);
+                ensureColumn(connection, "user_preferences", "tts_voice", "TEXT");
+                ensureColumn(connection, "user_preferences", "tts_voice_name", "TEXT");
+                ensureColumn(connection, "user_preferences", "tts_language", "TEXT");
+            }
+        }
+    }
+
+    private static void ensureColumn(
+        Connection connection,
+        String table,
+        String column,
+        String definition) throws SQLException {
+        boolean exists = false;
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery("PRAGMA table_info(" + table + ")")) {
+            while (result.next()) {
+                if (column.equalsIgnoreCase(result.getString("name"))) {
+                    exists = true;
+                    break;
+                }
+            }
+        }
+        if (!exists) {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate(
+                    "ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition);
             }
         }
     }

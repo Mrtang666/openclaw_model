@@ -132,6 +132,125 @@ java -jar openclaw_model-main\target\spring-startup-logging-0.0.1-SNAPSHOT.jar -
 取消
 ```
 
+## Voice recognition
+
+Voice messages with a transcript supplied by iLink are used directly. If the
+transcript is blank, the bot downloads the temporary audio and sends it to the
+Alibaba Cloud Bailian compatible speech endpoint. The recognized text then
+enters the same AgentRouter path as a normal text message, so it can trigger
+chat, weather, image understanding, image generation, or image editing.
+
+Add these values to the local `.evn` file when voice fallback recognition is
+needed (the file is ignored by Git):
+
+```properties
+SPEECH_ENABLED=true
+SPEECH_API_KEY=your-bailian-api-key
+SPEECH_COMPATIBLE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+SPEECH_MODEL=qwen-audio-turbo
+SPEECH_MAX_DURATION_SECONDS=60
+SPEECH_MAX_BYTES=10485760
+```
+
+WeChat commonly sends SILK audio. If the downloaded payload starts with a SILK
+header, configure an executable decoder whose command shape is
+`decoder input.silk output.wav`:
+
+```properties
+SPEECH_SILK_DECODER_PATH=C:/tools/silk-decoder.exe
+```
+
+Audio is held in temporary files only during decoding and is not written to
+conversation memory. Only the resulting transcript is persisted. The model
+name and endpoint must match the models enabled in the Bailian account.
+
+## Voice reply mode
+
+Send `开启语音对话` or `以后请用语音回复` to enable voice replies for the
+current WeChat user. Send `关闭语音对话` or `恢复文字回复` to switch back.
+The setting is stored per user in SQLite and survives application restarts.
+
+When voice mode is enabled, the final text answer is synthesized with Bailian
+TTS and sent through iLink `sendVoice`. The existing status messages remain,
+and `对方正在说话中...` is sent immediately before synthesis/send. Generated
+or edited images are still sent as image messages after the voice explanation.
+If TTS is unavailable or fails, the bot automatically falls back to text.
+
+Configure the TTS model and endpoint in the local `.evn` file:
+
+```properties
+SPEECH_TTS_ENABLED=true
+SPEECH_TTS_API_KEY=your-bailian-api-key
+SPEECH_TTS_ENDPOINT=
+SPEECH_TTS_MODEL=qwen3-tts-flash
+SPEECH_TTS_VOICE=
+SPEECH_TTS_FORMAT=wav
+SPEECH_TTS_SAMPLE_RATE=16000
+SPEECH_SILK_ENCODER_PATH=C:/tools/silk-encoder.exe
+```
+
+The encoder must accept `encoder input.wav output.silk` and produce a valid
+SILK V3 file. iLink marks voice uploads as `encode_type=6`, so uploading the
+raw WAV returned by TTS will not create a playable WeChat voice bubble. Voice
+answers are split at sentence boundaries when a generated segment exceeds 60
+seconds. If encoding, validation, or upload fails, the original answer is
+sent as text with the failure reason.
+
+The current iLink Bot protocol accepts `sendVoice` without an error but WeChat
+does not render Bot voice bubbles. This behavior is also confirmed in upstream
+SDK issues 9 and 11. The application therefore keeps the voice-bubble request
+for forward compatibility and also sends each synthesized segment as a compact
+MP3 file so the user always receives playable audio without large WAV uploads.
+
+The default endpoint targets Bailian native multimodal generation. If the
+account exposes a different TTS endpoint or model, set `SPEECH_TTS_ENDPOINT`
+and `SPEECH_TTS_MODEL` accordingly.
+
+## Voice selection
+
+Voice selection is opt-in. Ordinary conversation never opens the selection
+questions and uses the configured default voice. Send an explicit request such
+as `修改音色`, `换声音`, `换成温柔女声`, or `想用男声` to start the guided flow.
+
+The bot asks only for missing criteria, recommends up to 10 compatible Bailian
+Qwen3-TTS voices by local recommendation weight, and accepts a list number,
+Chinese display name, or Bailian voice ID. Send `试听3`, `试听苏瑶`, or a
+corresponding voice ID to generate a temporary audio preview without changing
+the saved voice. The selected voice is stored per
+WeChat user in SQLite and remains active after reconnects and application
+restarts. Send `查看当前音色` to inspect it or `恢复默认音色` to remove the
+user override. Selecting a voice does not automatically enable voice reply
+mode; it is applied whenever voice reply mode is active.
+
+## Read-aloud requests and ordered voice delivery
+
+Requests such as `朗读下面的文字：...`, `帮我念一下这段内容`, or
+`朗读上面的回复` produce a one-time voice response even when voice reply mode
+is disabled. After a successful one-time reading, the bot asks whether voice
+reply mode should be enabled. A substantive new question dismisses that offer
+and is processed normally.
+
+Arabic and Chinese ordinal forms are accepted throughout voice selection,
+including `3`, `第3个`, `第三个`, `选择第3项`, and `试听第三个`.
+
+Multiple voice segments are delivered strictly in order. The bot retries a
+failed voice bubble or MP3 packet before moving to the next segment, with a
+configurable delay between successful segments. When immediate retries are
+exhausted, the failed and remaining audio files are stored under
+`runtime-data/pending-voice-replies` and retried after the iLink connection is
+restored. Successfully delivered packet types are not intentionally resent.
+After every segment and its MP3 fallback have succeeded, the bot sends a final
+text confirmation containing the number of completed segments. Text messages
+also retry with plain `sendText`, avoiding the extra prepare calls made by
+`sendTextWithTyping` during congested voice delivery.
+
+```properties
+SPEECH_VOICE_SEND_INTERVAL=2500ms
+SPEECH_VOICE_RETRY_MAX_ATTEMPTS=5
+SPEECH_VOICE_RETRY_BASE_DELAY=1500ms
+SPEECH_VOICE_RETRY_MAX_DELAY=10s
+```
+
 ## 测试
 
 测试使用本地模拟服务，不调用真实百炼或和风天气 API：

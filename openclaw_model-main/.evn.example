@@ -1,5 +1,6 @@
 # Copy this file to .evn and replace the placeholder values.
 # The real .evn file is ignored by Git.
+APP_TIME_ZONE=Asia/Shanghai
 BAILIAN_API_KEY=replace_with_your_bailian_key
 BAILIAN_COMPATIBLE_BASE_URL=https://your-workspace-id.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
 BAILIAN_CHAT_MODEL=qwen-plus
@@ -8,6 +9,27 @@ BAILIAN_IMAGE_MODEL=wanx-v1
 BAILIAN_IMAGE_EDIT_MODEL=qwen-image-2.0
 # Optional. When blank, it is derived from BAILIAN_COMPATIBLE_BASE_URL.
 BAILIAN_IMAGE_EDIT_URL=
+
+# Optional voice fallback recognition. It reuses BAILIAN_API_KEY when omitted.
+SPEECH_ENABLED=true
+SPEECH_API_KEY=
+SPEECH_COMPATIBLE_BASE_URL=
+SPEECH_MODEL=qwen-audio-turbo
+SPEECH_ENDPOINT=
+SPEECH_SILK_DECODER_PATH=
+SPEECH_SILK_ENCODER_PATH=tools/silk-encoder/silk-encoder.cmd
+SPEECH_TTS_ENABLED=true
+SPEECH_TTS_API_KEY=
+SPEECH_TTS_ENDPOINT=
+SPEECH_TTS_MODEL=qwen3-tts-flash
+SPEECH_TTS_VOICE=Cherry
+SPEECH_TTS_LANGUAGE_TYPE=Chinese
+SPEECH_TTS_FORMAT=wav
+SPEECH_TTS_SAMPLE_RATE=16000
+SPEECH_VOICE_SEND_INTERVAL=2500ms
+SPEECH_VOICE_RETRY_MAX_ATTEMPTS=5
+SPEECH_VOICE_RETRY_BASE_DELAY=1500ms
+SPEECH_VOICE_RETRY_MAX_DELAY=10s
 
 WEATHER_API_KEY=replace_with_your_qweather_key
 WEATHER_API_HOST=https://your-api-host.qweatherapi.com

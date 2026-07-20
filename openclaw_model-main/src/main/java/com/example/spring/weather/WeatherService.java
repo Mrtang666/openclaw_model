@@ -1,10 +1,14 @@
 package com.example.spring.weather;
 
 import com.example.spring.weather.WeatherModels.CityLookupResponse;
+import com.example.spring.weather.WeatherModels.Daily;
+import com.example.spring.weather.WeatherModels.DailyForecastReport;
+import com.example.spring.weather.WeatherModels.DailyForecastResponse;
 import com.example.spring.weather.WeatherModels.Location;
 import com.example.spring.weather.WeatherModels.Now;
 import com.example.spring.weather.WeatherModels.WeatherNowResponse;
 import com.example.spring.weather.WeatherModels.WeatherReport;
+import com.example.spring.weather.WeatherModels.WeatherAnswer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -14,6 +18,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -62,6 +67,79 @@ public class WeatherService {
             throw apiError(response == null ? null : response.code());
         }
         return toReport(location, response);
+    }
+
+    public WeatherAnswer weather(
+        String region,
+        LocalDate currentDate,
+        LocalDate targetDate,
+        String dateExpression,
+        boolean currentMoment) throws IOException, InterruptedException {
+        if (targetDate.isBefore(currentDate)) {
+            throw new WeatherException("暂不支持查询历史天气：" + targetDate);
+        }
+        long days = java.time.temporal.ChronoUnit.DAYS.between(currentDate, targetDate);
+        if (days > 6) {
+            throw new WeatherException(
+                "当前天气接口只能查询未来 7 天，目标日期为 " + targetDate);
+        }
+        Location location = resolveLocation(region.trim());
+        WeatherReport current = null;
+        DailyForecastReport forecast = null;
+        if (currentMoment || targetDate.equals(currentDate)) {
+            current = currentWeather(location);
+        }
+        if (!currentMoment || !targetDate.equals(currentDate)) {
+            forecast = forecast(location, targetDate);
+        }
+        return new WeatherAnswer(
+            currentDate, targetDate, dateExpression, current, forecast);
+    }
+
+    private WeatherReport currentWeather(Location location)
+        throws IOException, InterruptedException {
+        WeatherNowResponse response = get(
+            "/v7/weather/now?location=" + encode(location.id())
+                + "&lang=zh&unit=m",
+            WeatherNowResponse.class);
+        if (response == null || !SUCCESS_CODE.equals(response.code()) || response.now() == null) {
+            throw apiError(response == null ? null : response.code());
+        }
+        return toReport(location, response);
+    }
+
+    private DailyForecastReport forecast(Location location, LocalDate targetDate)
+        throws IOException, InterruptedException {
+        DailyForecastResponse response = get(
+            "/v7/weather/7d?location=" + encode(location.id())
+                + "&lang=zh&unit=m",
+            DailyForecastResponse.class);
+        if (response == null || !SUCCESS_CODE.equals(response.code())
+            || response.daily() == null) {
+            throw apiError(response == null ? null : response.code());
+        }
+        Daily daily = response.daily().stream()
+            .filter(item -> targetDate.toString().equals(item.fxDate()))
+            .findFirst()
+            .orElseThrow(() -> new WeatherException("天气接口没有返回日期 " + targetDate + " 的预报"));
+        try {
+            return new DailyForecastReport(
+                location,
+                targetDate,
+                response.updateTime(),
+                Double.parseDouble(daily.tempMax()),
+                Double.parseDouble(daily.tempMin()),
+                daily.textDay(),
+                daily.textNight(),
+                Integer.parseInt(daily.humidity()),
+                daily.windDirDay(),
+                daily.windScaleDay(),
+                Double.parseDouble(daily.windSpeedDay()),
+                parseDouble(daily.precip()),
+                daily.uvIndex());
+        } catch (NullPointerException | NumberFormatException exception) {
+            throw new WeatherException("天气预报数据不完整", exception);
+        }
     }
 
     Location resolveLocation(String query) throws IOException, InterruptedException {
@@ -138,6 +216,10 @@ public class WeatherService {
         } catch (NullPointerException | NumberFormatException exception) {
             throw new WeatherException("天气服务返回的数据不完整", exception);
         }
+    }
+
+    private static double parseDouble(String value) {
+        return value == null || value.isBlank() ? 0 : Double.parseDouble(value);
     }
 
     private String baseUrl() {

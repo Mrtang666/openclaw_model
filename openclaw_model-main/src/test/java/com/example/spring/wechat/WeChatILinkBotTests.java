@@ -47,6 +47,20 @@ class WeChatILinkBotTests {
         WeChatILinkBot.MessageSummary summary = WeChatILinkBot.summarize(message);
         assertThat(summary.text()).isEqualTo("查询无锡天气");
         assertThat(summary.imageItems()).hasSize(1);
+        assertThat(summary.voiceItems()).isEmpty();
+        assertThat(summary.hasProcessableContent()).isTrue();
+    }
+
+    @Test
+    void keepsBlankVoiceForExternalRecognition() {
+        MessageItem voice = new MessageItem();
+        voice.setVoice_item(new VoiceItem());
+
+        WeixinMessage message = new WeixinMessage();
+        message.setItem_list(List.of(voice));
+
+        WeChatILinkBot.MessageSummary summary = WeChatILinkBot.summarize(message);
+        assertThat(summary.voiceItems()).containsExactly(voice);
         assertThat(summary.hasProcessableContent()).isTrue();
     }
 

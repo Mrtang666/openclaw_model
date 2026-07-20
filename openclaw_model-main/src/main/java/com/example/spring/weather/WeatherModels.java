@@ -2,6 +2,7 @@ package com.example.spring.weather;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import java.util.List;
+import java.time.LocalDate;
 import java.util.stream.Stream;
 
 public final class WeatherModels {
@@ -54,5 +55,48 @@ public final class WeatherModels {
         String windDirection,
         String windScale,
         double windSpeed) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record DailyForecastResponse(String code, String updateTime, List<Daily> daily) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Daily(
+        String fxDate,
+        String tempMax,
+        String tempMin,
+        String textDay,
+        String textNight,
+        String humidity,
+        String windDirDay,
+        String windScaleDay,
+        String windSpeedDay,
+        String precip,
+        String uvIndex) {
+    }
+
+    public record DailyForecastReport(
+        Location location,
+        LocalDate targetDate,
+        String updateTime,
+        double maximumTemperature,
+        double minimumTemperature,
+        String daytimeDescription,
+        String nighttimeDescription,
+        int humidity,
+        String windDirection,
+        String windScale,
+        double windSpeed,
+        double precipitation,
+        String uvIndex) {
+    }
+
+    public record WeatherAnswer(
+        LocalDate currentDate,
+        LocalDate targetDate,
+        String dateExpression,
+        WeatherReport current,
+        DailyForecastReport forecast) {
     }
 }

@@ -1,5 +1,9 @@
 package com.example.spring.cli;
 
+
+/**
+ * 命令行交互层组件，负责读取输入并输出结果。
+ */
 import com.example.spring.agent.AgentService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.CommandLineRunner;
@@ -67,3 +71,4 @@ public class ConsoleRunner implements CommandLineRunner {
         }
     }
 }
+

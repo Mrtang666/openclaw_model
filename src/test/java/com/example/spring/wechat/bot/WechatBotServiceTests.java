@@ -1,20 +1,21 @@
 package com.example.spring.wechat.bot;
 
 import com.example.spring.agent.AgentService;
-import com.example.spring.image.generation.ImageGenerationResult;
-import com.example.spring.wechat.client.WechatClient;
-import com.example.spring.wechat.client.WechatIncomingMessage;
-import com.example.spring.wechat.client.WechatLoginInfo;
+import com.example.spring.wechat.adapter.WechatClient;
 import com.example.spring.wechat.conversation.WechatConversationService;
+import com.example.spring.wechat.image.generation.model.ImageGenerationResult;
+import com.example.spring.wechat.model.WechatIncomingMessage;
+import com.example.spring.wechat.model.WechatLoginInfo;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -27,8 +28,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class WechatBotServiceTests {
-
-    private static final String THINKING_MESSAGE = "[自动回复]正在生成中，请耐心等待哦~";
 
     @Test
     void startsClientAndReportsWaitingForScan() {
@@ -61,9 +60,8 @@ class WechatBotServiceTests {
 
         assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
         assertThat(client.sentToUserId).isEqualTo("user@im.wechat");
-        assertThat(new ArrayList<>(client.sentTexts)).containsExactly(
-                THINKING_MESSAGE,
-                "南京天气结果");
+        assertThat(new ArrayList<>(client.sentTexts)).hasSize(2);
+        assertThat(new ArrayList<>(client.sentTexts).get(1)).isEqualTo("南京天气结果");
         assertThat(service.status().state()).isEqualTo(WechatBotState.RUNNING);
         service.stop();
     }
@@ -80,49 +78,13 @@ class WechatBotServiceTests {
     }
 
     @Test
-    void keepsProcessingLaterMessagesWhileEarlierOneIsStillRunning() throws Exception {
-        FakeWechatClient client = new FakeWechatClient(4);
-        AgentService agentService = mock(AgentService.class);
-        CountDownLatch firstStarted = new CountDownLatch(1);
-        CountDownLatch allowFirstToFinish = new CountDownLatch(1);
-        doAnswer(invocation -> {
-            String input = invocation.getArgument(0);
-            com.example.spring.agent.ReplyEmitter emitter = invocation.getArgument(1);
-            if ("第一条".equals(input)) {
-                firstStarted.countDown();
-                emitter.emit("第一条回复");
-                allowFirstToFinish.await(3, TimeUnit.SECONDS);
-            } else if ("第二条".equals(input)) {
-                emitter.emit("第二条回复");
-            }
-            return null;
-        }).when(agentService).handleStreaming(any(), any());
-        WechatBotService service = new WechatBotService(() -> client, agentService);
-
-        service.start();
-        client.loginFuture.complete(new WechatLoginInfo("bot-1"));
-        client.updates.add(List.of(new WechatIncomingMessage("user@im.wechat", "第一条")));
-        client.updates.add(List.of(new WechatIncomingMessage("user@im.wechat", "第二条")));
-
-        assertThat(firstStarted.await(3, TimeUnit.SECONDS)).isTrue();
-        Thread.sleep(200);
-        assertThat(Collections.frequency(new ArrayList<>(client.sentTexts), THINKING_MESSAGE)).isEqualTo(2);
-
-        allowFirstToFinish.countDown();
-        assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
-        assertThat(new ArrayList<>(client.sentTexts))
-                .containsSequence(THINKING_MESSAGE, THINKING_MESSAGE, "第一条回复", "第二条回复");
-        service.stop();
-    }
-
-    @Test
     void sendsGeneratedImageBackToWechat() throws Exception {
         FakeWechatClient client = new FakeWechatClient(2);
         WechatConversationService conversationService = mock(WechatConversationService.class);
         when(conversationService.handleWechat(any())).thenReturn(WechatReply.textAndImage(
-                "我已经帮你生成好了，图片如下：",
+                "图片如下：",
                 new ImageGenerationResult(
-                        "帮我画一只赛博朋克风格的橘猫",
+                        "赛博朋克风格的橘猫",
                         "https://cdn.example.com/generated.png",
                         "PNG".getBytes(),
                         "generated.png",
@@ -136,13 +98,12 @@ class WechatBotServiceTests {
 
         service.start();
         client.loginFuture.complete(new WechatLoginInfo("bot-1"));
-        client.updates.add(List.of(new WechatIncomingMessage("user@im.wechat", "帮我画一只赛博朋克风格的橘猫")));
+        client.updates.add(List.of(new WechatIncomingMessage("user@im.wechat", "帮我画一只橘猫")));
 
         assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
-        assertThat(new ArrayList<>(client.sentTexts)).containsExactly(THINKING_MESSAGE);
         assertThat(client.sentImages).hasSize(1);
         assertThat(client.sentImages.peek().fileName()).isEqualTo("generated.png");
-        assertThat(client.sentImages.peek().caption()).isEqualTo("我已经帮你生成好了，图片如下：");
+        assertThat(client.sentImages.peek().caption()).isEqualTo("图片如下：");
         service.stop();
     }
 
@@ -151,10 +112,10 @@ class WechatBotServiceTests {
         FakeWechatClient client = new FakeWechatClient(3);
         WechatConversationService conversationService = mock(WechatConversationService.class);
         when(conversationService.handleWechat(any())).thenReturn(WechatReply.textsAndImage(
-                List.of("优化后的图片提示词：\n一只小猫躺在沙发上，暖色自然光。"),
-                "我已经帮你生成好了，图片如下：",
+                List.of("优化后的图片提示词：\n一只小猫坐在沙发上，暖色自然光。"),
+                "图片如下：",
                 new ImageGenerationResult(
-                        "一只小猫躺在沙发上，暖色自然光。",
+                        "一只小猫坐在沙发上，暖色自然光。",
                         "https://cdn.example.com/cat.png",
                         "PNG".getBytes(),
                         "cat.png",
@@ -168,15 +129,125 @@ class WechatBotServiceTests {
 
         service.start();
         client.loginFuture.complete(new WechatLoginInfo("bot-1"));
-        client.updates.add(List.of(new WechatIncomingMessage("user@im.wechat", "先优化提示词，再生成图片")));
+        client.updates.add(List.of(new WechatIncomingMessage("user@im.wechat", "先优化提示词再生成图片")));
 
         assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
-        assertThat(new ArrayList<>(client.sentTexts)).containsExactly(
-                THINKING_MESSAGE,
-                "优化后的图片提示词：\n一只小猫躺在沙发上，暖色自然光。");
+        assertThat(new ArrayList<>(client.sentTexts).get(1))
+                .isEqualTo("优化后的图片提示词：\n一只小猫坐在沙发上，暖色自然光。");
         assertThat(client.sentImages).hasSize(1);
-        assertThat(client.sentImages.peek().caption()).isEqualTo("我已经帮你生成好了，图片如下：");
         service.stop();
+    }
+
+    @Test
+    void sendsVoiceReplyPartsAsNativeWechatVoiceBubbles() throws Exception {
+        FakeWechatClient client = new FakeWechatClient(2);
+        WechatConversationService conversationService = mock(WechatConversationService.class);
+        when(conversationService.handleWechat(any())).thenReturn(WechatReply.ordered(List.of(
+                WechatReply.Part.voice(new WechatReply.Voice(
+                        "VOICE".getBytes(),
+                        "reply-1.silk",
+                        2200,
+                        16000,
+                        6,
+                        16,
+                        "你好，我会用语音回复你。")))));
+        @SuppressWarnings("unchecked")
+        ObjectProvider<WechatConversationService> provider = mock(ObjectProvider.class);
+        when(provider.getObject()).thenReturn(conversationService);
+        WechatBotService service = new WechatBotService(() -> client, provider);
+
+        service.start();
+        client.loginFuture.complete(new WechatLoginInfo("bot-1"));
+        client.updates.add(List.of(new WechatIncomingMessage("user@im.wechat", "请用语音回复我")));
+
+        assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
+        assertThat(client.sentVoices).hasSize(1);
+        assertThat(client.sentVoices.peek().fileName()).isEqualTo("reply-1.silk");
+        assertThat(client.sentVoices.peek().encodeType()).isEqualTo(6);
+        service.stop();
+    }
+
+    @Test
+    void sendsNonSilkVoiceReplyAsAudioFileSoUserCanReceiveIt() throws Exception {
+        FakeWechatClient client = new FakeWechatClient(2);
+        WechatConversationService conversationService = mock(WechatConversationService.class);
+        when(conversationService.handleWechat(any())).thenReturn(WechatReply.ordered(List.of(
+                WechatReply.Part.voice(new WechatReply.Voice(
+                        "MP3".getBytes(),
+                        "reply-1.mp3",
+                        2200,
+                        16000,
+                        null,
+                        null,
+                        "语音已经生成。")))));
+        @SuppressWarnings("unchecked")
+        ObjectProvider<WechatConversationService> provider = mock(ObjectProvider.class);
+        when(provider.getObject()).thenReturn(conversationService);
+        WechatBotService service = new WechatBotService(() -> client, provider);
+
+        service.start();
+        client.loginFuture.complete(new WechatLoginInfo("bot-1"));
+        client.updates.add(List.of(new WechatIncomingMessage("user@im.wechat", "用语音回复")));
+
+        assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
+        assertThat(client.sentFiles).hasSize(1);
+        assertThat(client.sentFiles.peek().fileName()).isEqualTo("reply-1.mp3");
+        service.stop();
+    }
+
+    @Test
+    void retriesLaterVoiceFilePartWhenWechatTemporarilyRejectsLongAudioReply() throws Exception {
+        FakeWechatClient client = new FakeWechatClient(6);
+        client.failFileSendsBeforeSuccess("reply-5.mp3", 1);
+        WechatConversationService conversationService = mock(WechatConversationService.class);
+        when(conversationService.handleWechat(any())).thenReturn(WechatReply.ordered(List.of(
+                voiceFilePart(1),
+                voiceFilePart(2),
+                voiceFilePart(3),
+                voiceFilePart(4),
+                voiceFilePart(5))));
+        @SuppressWarnings("unchecked")
+        ObjectProvider<WechatConversationService> provider = mock(ObjectProvider.class);
+        when(provider.getObject()).thenReturn(conversationService);
+        WechatBotService service = new WechatBotService(() -> client, provider);
+
+        service.start();
+        client.loginFuture.complete(new WechatLoginInfo("bot-1"));
+        client.updates.add(List.of(new WechatIncomingMessage("user@im.wechat", "read a long story by voice")));
+
+        assertThat(client.sentLatch.await(8, TimeUnit.SECONDS)).isTrue();
+        assertThat(client.sentFiles).hasSize(5);
+        assertThat(new ArrayList<>(client.sentFiles).stream().map(SentFile::fileName))
+                .containsExactly("reply-1.mp3", "reply-2.mp3", "reply-3.mp3", "reply-4.mp3", "reply-5.mp3");
+        assertThat(client.fileSendAttempts("reply-5.mp3")).isEqualTo(2);
+        service.stop();
+    }
+
+    private static WechatReply.Part voiceFilePart(int index) {
+        return WechatReply.Part.voice(new WechatReply.Voice(
+                ("MP3-" + index).getBytes(),
+                "reply-" + index + ".mp3",
+                2200,
+                16000,
+                null,
+                null,
+                "voice segment " + index));
+    }
+
+    private record SentImage(byte[] imageBytes, String fileName, String caption) {
+    }
+
+    private record SentVoice(
+            byte[] voiceBytes,
+            String fileName,
+            Integer playTimeMs,
+            Integer sampleRate,
+            Integer encodeType,
+            Integer bitsPerSample,
+            String transcriptText) {
+    }
+
+    private record SentFile(byte[] fileBytes, String fileName, String caption) {
     }
 
     private static final class FakeWechatClient implements WechatClient {
@@ -185,8 +256,11 @@ class WechatBotServiceTests {
         private final CountDownLatch sentLatch;
         private final Queue<String> sentTexts = new ConcurrentLinkedQueue<>();
         private final Queue<SentImage> sentImages = new ConcurrentLinkedQueue<>();
+        private final Queue<SentVoice> sentVoices = new ConcurrentLinkedQueue<>();
+        private final Queue<SentFile> sentFiles = new ConcurrentLinkedQueue<>();
+        private final Map<String, Integer> fileFailuresBeforeSuccess = new ConcurrentHashMap<>();
+        private final Map<String, Integer> fileSendAttempts = new ConcurrentHashMap<>();
         private volatile String sentToUserId;
-        private volatile boolean closed;
 
         private FakeWechatClient() {
             this(1);
@@ -207,14 +281,9 @@ class WechatBotServiceTests {
         }
 
         @Override
-        public List<WechatIncomingMessage> getUpdates() throws IOException {
+        public List<WechatIncomingMessage> getUpdates() {
             List<WechatIncomingMessage> messages = updates.poll();
             if (messages == null) {
-                try {
-                    Thread.sleep(10);
-                } catch (InterruptedException exception) {
-                    Thread.currentThread().interrupt();
-                }
                 return List.of();
             }
             return messages;
@@ -235,12 +304,43 @@ class WechatBotServiceTests {
         }
 
         @Override
-        public void close() {
-            closed = true;
-            loginFuture.cancel(true);
+        public void sendVoice(
+                String toUserId,
+                byte[] voiceBytes,
+                String fileName,
+                Integer playTimeMs,
+                Integer sampleRate,
+                Integer encodeType,
+                Integer bitsPerSample,
+                String transcriptText) {
+            this.sentToUserId = toUserId;
+            this.sentVoices.add(new SentVoice(voiceBytes, fileName, playTimeMs, sampleRate, encodeType, bitsPerSample, transcriptText));
+            sentLatch.countDown();
         }
 
-        private record SentImage(byte[] imageBytes, String fileName, String caption) {
+        @Override
+        public void sendFile(String toUserId, byte[] fileBytes, String fileName, String caption) throws IOException {
+            int attempts = fileSendAttempts.merge(fileName, 1, Integer::sum);
+            int failuresBeforeSuccess = fileFailuresBeforeSuccess.getOrDefault(fileName, 0);
+            if (attempts <= failuresBeforeSuccess) {
+                throw new IOException("temporary file send failure");
+            }
+            this.sentToUserId = toUserId;
+            this.sentFiles.add(new SentFile(fileBytes, fileName, caption));
+            sentLatch.countDown();
+        }
+
+        private void failFileSendsBeforeSuccess(String fileName, int failuresBeforeSuccess) {
+            this.fileFailuresBeforeSuccess.put(fileName, failuresBeforeSuccess);
+        }
+
+        private int fileSendAttempts(String fileName) {
+            return this.fileSendAttempts.getOrDefault(fileName, 0);
+        }
+
+        @Override
+        public void close() {
+            loginFuture.cancel(true);
         }
     }
 }

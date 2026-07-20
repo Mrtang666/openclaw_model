@@ -1,145 +1,73 @@
-# Image Generation Implementation Plan
+# 微信端图片生成模块实现计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> 现状更新：图片生成能力已经从 CLI 端移除，只保留在微信端。图片生成相关代码统一放在 `com.example.spring.wechat.image.generation` 下，由微信工具 `ImageGenerationWechatTool` 调用。
 
-**Goal:** Add a shared image-generation module for CLI and WeChat, with `/image` in CLI and natural-language image generation in WeChat.
+## 目标
 
-**Architecture:** Build one shared DashScope client and service under `com.example.spring.image.generation`, then wire it into the command layer and the WeChat conversation/bot flow. WeChat will return a structured reply so the bot can send either text or an actual image through iLink.
+- 微信端通过自然语言识别图片生成、图片修改、提示词优化等需求。
+- 图片生成前可以先调用文本大模型优化提示词。
+- 如果用户说“先别生成、等我确认”，只返回优化后的提示词。
+- 用户确认后再调用图片生成 API。
+- 生成完成后优先发送真实图片，发送失败时返回清晰错误信息。
 
-**Tech Stack:** Java 17, Spring Boot, RestClient, Jackson, JUnit 5, iLink SDK.
+## 当前调用链
 
----
-
-### Task 1: Add image-generation core and tests
-
-**Files:**
-- Create: `src/main/java/com/example/spring/image/generation/ImageGenerationRequest.java`
-- Create: `src/main/java/com/example/spring/image/generation/ImageGenerationResult.java`
-- Create: `src/main/java/com/example/spring/image/generation/ImageGenerationException.java`
-- Create: `src/main/java/com/example/spring/image/generation/ImageGenerationClient.java`
-- Create: `src/main/java/com/example/spring/image/generation/ImageGenerationService.java`
-- Create: `src/main/java/com/example/spring/image/generation/client/DashScopeImageGenerationClient.java`
-- Create: `src/test/java/com/example/spring/image/generation/client/DashScopeImageGenerationClientTests.java`
-- Create: `src/test/java/com/example/spring/image/generation/ImageGenerationServiceTests.java`
-
-- [ ] **Step 1: Write the failing test**
-
-Cover:
-
-- blank prompt rejected
-- request body includes model and prompt
-- successful response returns the first image URL
-- API error becomes `ImageGenerationException`
-
-- [ ] **Step 2: Run the tests and confirm they fail**
-
-Run:
-
-```powershell
-mvn test -Dtest=DashScopeImageGenerationClientTests,ImageGenerationServiceTests -q
+```text
+微信用户文本
+  ↓
+IlinkWechatClient
+  ↓
+WechatBotService
+  ↓
+WechatConversationService
+  ↓
+ToolCallPlanner / ImageGenerationIntentParser
+  ↓
+ImageGenerationWechatTool
+  ↓
+ImageGenerationService
+  ↓
+DashScopeImageGenerationClient
+  ↓
+WechatReply 图片回复
 ```
 
-- [ ] **Step 3: Implement the minimal client and service**
+## 核心文件
 
-Use `RestClient` with `dashscope.image-base-url`, `dashscope.image-model`, `dashscope.api-key`.
-
-- [ ] **Step 4: Re-run the tests**
-
-Expected: pass.
-
-### Task 2: Add `/image` CLI command
-
-**Files:**
-- Create: `src/main/java/com/example/spring/command/ImageCommand.java`
-- Modify: `src/main/java/com/example/spring/command/CommandRegistry.java`
-- Modify: `src/main/java/com/example/spring/command/CommandDispatcher.java`
-- Modify: `src/main/java/com/example/spring/command/HelpCommand.java`
-- Create: `src/test/java/com/example/spring/command/ImageCommandTests.java`
-- Modify: `src/test/java/com/example/spring/command/CommandDispatcherTests.java`
-
-- [ ] **Step 1: Write failing tests**
-
-Cover:
-
-- `/image` dispatches to the new command
-- blank args print usage
-- help output includes `/image`
-
-- [ ] **Step 2: Run tests and verify red**
-
-Run:
-
-```powershell
-mvn test -Dtest=ImageCommandTests,CommandDispatcherTests -q
+```text
+src/main/java/com/example/spring/wechat/conversation/tools/ImageGenerationWechatTool.java
+src/main/java/com/example/spring/wechat/image/generation/ImageGenerationClient.java
+src/main/java/com/example/spring/wechat/image/generation/ImageGenerationException.java
+src/main/java/com/example/spring/wechat/image/generation/client/DashScopeImageGenerationClient.java
+src/main/java/com/example/spring/wechat/image/generation/intent/ImageGenerationIntentParser.java
+src/main/java/com/example/spring/wechat/image/generation/model/ImageGenerationRequest.java
+src/main/java/com/example/spring/wechat/image/generation/model/ImageGenerationResult.java
+src/main/java/com/example/spring/wechat/image/generation/service/ImageGenerationService.java
 ```
 
-- [ ] **Step 3: Add the command implementation**
+## 测试文件
 
-Call `ImageGenerationService`, print URL/path, and keep the behavior deterministic.
-
-- [ ] **Step 4: Re-run the tests**
-
-Expected: pass.
-
-### Task 3: Add WeChat image generation and image sending
-
-**Files:**
-- Create: `src/main/java/com/example/spring/wechat/bot/WechatReply.java`
-- Modify: `src/main/java/com/example/spring/wechat/client/WechatClient.java`
-- Modify: `src/main/java/com/example/spring/wechat/client/IlinkWechatClient.java`
-- Create: `src/main/java/com/example/spring/image/generation/ImageGenerationIntentParser.java`
-- Modify: `src/main/java/com/example/spring/wechat/conversation/WechatConversationService.java`
-- Modify: `src/main/java/com/example/spring/wechat/bot/WechatBotService.java`
-- Create: `src/test/java/com/example/spring/image/generation/ImageGenerationIntentParserTests.java`
-- Create: `src/test/java/com/example/spring/wechat/conversation/WechatImageGenerationConversationTests.java`
-- Modify: `src/test/java/com/example/spring/wechat/bot/WechatBotServiceTests.java`
-
-- [ ] **Step 1: Write failing tests**
-
-Cover:
-
-- image-generation keywords route to image generation before weather
-- structured WeChat reply includes an image
-- `WechatClient.sendImage(...)` is called
-- send-image fallback uses text when image transfer fails
-
-- [ ] **Step 2: Run tests and confirm they fail**
-
-Run:
-
-```powershell
-mvn test -Dtest=ImageGenerationIntentParserTests,WechatImageGenerationConversationTests,WechatBotServiceTests -q
+```text
+src/test/java/com/example/spring/wechat/image/generation/client/DashScopeImageGenerationClientTests.java
+src/test/java/com/example/spring/wechat/image/generation/intent/ImageGenerationIntentParserTests.java
+src/test/java/com/example/spring/wechat/image/generation/service/ImageGenerationServiceTests.java
+src/test/java/com/example/spring/wechat/conversation/WechatImageConversationServiceTests.java
+src/test/java/com/example/spring/wechat/bot/WechatBotServiceTests.java
+src/test/java/com/example/spring/ApplicationContextTests.java
 ```
 
-- [ ] **Step 3: Implement structured reply flow**
+其中 `ApplicationContextTests` 额外验证 CLI 不再注册 `image` 命令。
 
-Keep chat streaming for text, but use a `WechatReply` object for image generation so the bot can send the real image.
+## 错误处理要求
 
-- [ ] **Step 4: Re-run the tests**
+- 提示词为空：提示用户说明想生成什么图片。
+- API Key 未配置：提示图片生成服务未配置。
+- API 没有返回图片：提示生成失败，稍后重试。
+- 图片下载失败：返回明确失败信息。
+- 微信图片发送失败：由发送层记录日志，避免整条消息静默失败。
 
-Expected: pass.
-
-### Task 4: Update config and docs
-
-**Files:**
-- Modify: `src/main/resources/application.properties`
-- Modify: `README.md`
-- Modify: `docs/PROJECT_STRUCTURE.md` if needed
-
-- [ ] **Step 1: Add image-generation properties**
-
-Include image base URL, model, size, and watermark settings.
-
-- [ ] **Step 2: Document CLI and WeChat usage**
-
-Add `/image` examples and explain the WeChat trigger words.
-
-- [ ] **Step 3: Run the full test suite**
-
-Run:
+## 验证命令
 
 ```powershell
-mvn test -q
+mvn clean test
 ```
-
-Expected: all tests pass.

@@ -1,8 +1,12 @@
 package com.example.spring.wechat.image.service;
 
+
+/**
+ * 微信图片处理服务层，负责图片输入解析和理解流程。
+ */
 import com.example.spring.agent.ReplyEmitter;
-import com.example.spring.wechat.client.WechatIncomingMessage;
-import com.example.spring.wechat.image.ImageUnderstandingException;
+import com.example.spring.wechat.model.WechatIncomingMessage;
+import com.example.spring.wechat.image.exception.ImageUnderstandingException;
 import com.example.spring.wechat.image.client.ImageUnderstandingClient;
 import com.example.spring.wechat.image.model.ImageAnalysisRequest;
 import org.springframework.stereotype.Service;
@@ -39,3 +43,4 @@ public class DefaultImageUnderstandingService implements ImageUnderstandingServi
         client.streamReply(request, emitter);
     }
 }
+

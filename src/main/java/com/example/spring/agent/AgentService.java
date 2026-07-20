@@ -1,6 +1,10 @@
 package com.example.spring.agent;
 
-import com.example.spring.command.CommandDispatcher;
+
+/**
+ * Agent 入口层组件，负责协调 CLI 输入和回复输出。
+ */
+import com.example.spring.cli.command.core.CommandDispatcher;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -20,3 +24,4 @@ public class AgentService {
         dispatcher.dispatchStreaming(input, emitter);
     }
 }
+

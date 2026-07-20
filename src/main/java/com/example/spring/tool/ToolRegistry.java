@@ -1,5 +1,9 @@
 package com.example.spring.tool;
 
+
+/**
+ * CLI 工具封装层，负责统一封装本地工具能力。
+ */
 import com.example.spring.exception.CommandException;
 import org.springframework.stereotype.Component;
 
@@ -26,4 +30,5 @@ public class ToolRegistry {
         return tool.execute(arguments);
     }
 }
+
 

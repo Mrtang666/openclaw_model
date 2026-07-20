@@ -2,11 +2,11 @@ package com.example.spring.wechat.bot;
 
 import com.example.spring.agent.AgentService;
 import com.example.spring.agent.ReplyEmitter;
-import com.example.spring.image.generation.ImageGenerationResult;
-import com.example.spring.wechat.client.WechatClient;
-import com.example.spring.wechat.client.WechatClientFactory;
-import com.example.spring.wechat.client.WechatIncomingMessage;
-import com.example.spring.wechat.client.WechatLoginInfo;
+import com.example.spring.wechat.image.generation.model.ImageGenerationResult;
+import com.example.spring.wechat.adapter.WechatClient;
+import com.example.spring.wechat.adapter.WechatClientFactory;
+import com.example.spring.wechat.model.WechatIncomingMessage;
+import com.example.spring.wechat.model.WechatLoginInfo;
 import com.example.spring.wechat.conversation.WechatConversationService;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -28,12 +28,21 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 
+/**
+ * 微信 Bot 的生命周期与消息收发入口。
+ * 负责启动 iLink 客户端、监听登录状态、接收用户消息、排队交给会话服务处理，
+ * 并把文本、图片和语音等回复内容发送回微信用户。
+ */
 @Service
 public class WechatBotService {
 
     private static final Logger log = LoggerFactory.getLogger(WechatBotService.class);
     private static final String THINKING_MESSAGE = "[自动回复]正在生成中，请耐心等待哦~";
     private static final int MAX_WECHAT_MESSAGE_LENGTH = 800;
+    private static final int MEDIA_SEND_MAX_ATTEMPTS = 3;
+    private static final long MEDIA_SEND_RETRY_DELAY_MS = 600;
+    private static final long TEXT_CHUNK_PAUSE_MS = 50;
+    private static final long VOICE_PART_PAUSE_MS = 1_000;
 
     private final WechatClientFactory clientFactory;
     private final WechatMessageHandler messageHandler;
@@ -146,7 +155,7 @@ public class WechatBotService {
             }
         } catch (CancellationException exception) {
             if (!stopRequested) {
-                moveToError(activeClient, "登录已取消");
+                moveToError(activeClient, "消息循环被取消");
             }
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
@@ -190,10 +199,10 @@ public class WechatBotService {
             currentExecutor.submit(() -> processMessage(activeClient, message));
         } catch (RejectedExecutionException exception) {
             lastError = rootMessage(exception);
-            log.warn("微信消息提交失败，fromUserId={}, error={}", message.fromUserId(), lastError);
+            log.warn("微信消息入队失败，fromUserId={}, error={}", message.fromUserId(), lastError);
         } catch (Exception exception) {
             lastError = rootMessage(exception);
-            log.warn("微信消息准备阶段异常，fromUserId={}, error={}", message.fromUserId(), lastError);
+            log.warn("微信消息接收处理失败，fromUserId={}, error={}", message.fromUserId(), lastError);
         }
     }
 
@@ -252,8 +261,12 @@ public class WechatBotService {
                 sendReplyChunks(activeClient, userId, part.text());
             }
 
+            if (part.hasVoice()) {
+                sendVoice(activeClient, userId, part.voice());
+            }
+
             if (index < parts.size() - 1) {
-                pauseBetweenChunks();
+                pauseAfterReplyPart(part);
             }
         }
     }
@@ -326,6 +339,88 @@ public class WechatBotService {
         }
     }
 
+    private void sendVoice(WechatClient activeClient, String userId, WechatReply.Voice voice) {
+        if (voice == null || voice.audioBytes() == null || voice.audioBytes().length == 0) {
+            return;
+        }
+
+        if (!isWechatNativeVoiceFile(voice.fileName())) {
+            sendVoiceAsFile(activeClient, userId, voice);
+            return;
+        }
+
+        try {
+            sendMediaWithRetry(
+                    "语音气泡",
+                    userId,
+                    voice.fileName(),
+                    () -> activeClient.sendVoice(
+                            userId,
+                            voice.audioBytes(),
+                            voice.fileName(),
+                            voice.durationMs(),
+                            voice.sampleRate(),
+                            voice.encodeType(),
+                            voice.bitsPerSample(),
+                            voice.transcriptText()));
+        } catch (IOException | UnsupportedOperationException exception) {
+            sendVoiceAsFile(activeClient, userId, voice);
+        }
+    }
+
+    private boolean isWechatNativeVoiceFile(String fileName) {
+        return fileName != null && fileName.toLowerCase(java.util.Locale.ROOT).endsWith(".silk");
+    }
+
+    private void sendVoiceAsFile(WechatClient activeClient, String userId, WechatReply.Voice voice) {
+        try {
+            sendMediaWithRetry(
+                    "语音文件",
+                    userId,
+                    voice.fileName(),
+                    () -> activeClient.sendFile(userId, voice.audioBytes(), voice.fileName(), "语音已生成，请点击文件播放"));
+        } catch (IOException | UnsupportedOperationException exception) {
+            if (voice.transcriptText() != null && !voice.transcriptText().isBlank()) {
+                sendText(activeClient, userId, "语音文件发送失败，文字内容如下：\n" + voice.transcriptText());
+            } else {
+                throw new WechatSendException(exception);
+            }
+        }
+    }
+
+    private void sendMediaWithRetry(String mediaType, String userId, String fileName, IoSendOperation operation) throws IOException {
+        IOException lastException = null;
+        for (int attempt = 1; attempt <= MEDIA_SEND_MAX_ATTEMPTS; attempt++) {
+            try {
+                operation.send();
+                return;
+            } catch (IOException exception) {
+                lastException = exception;
+                log.warn(
+                        "微信{}发送失败，准备重试，userId={}, fileName={}, attempt={}/{}, error={}",
+                        mediaType,
+                        userId,
+                        fileName,
+                        attempt,
+                        MEDIA_SEND_MAX_ATTEMPTS,
+                        rootMessage(exception));
+                if (attempt < MEDIA_SEND_MAX_ATTEMPTS) {
+                    pauseBeforeMediaRetry();
+                }
+            }
+        }
+
+        throw lastException == null ? new IOException(mediaType + "发送失败") : lastException;
+    }
+
+    private void pauseAfterReplyPart(WechatReply.Part part) {
+        if (part != null && part.hasVoice()) {
+            pause(VOICE_PART_PAUSE_MS);
+            return;
+        }
+        pauseBetweenChunks();
+    }
+
     private void sendUserFacingError(WechatClient activeClient, String userId, String errorMessage) {
         String message = "抱歉，刚刚处理消息时出了点问题：" + errorMessage;
         try {
@@ -336,8 +431,16 @@ public class WechatBotService {
     }
 
     private void pauseBetweenChunks() {
+        pause(TEXT_CHUNK_PAUSE_MS);
+    }
+
+    private void pauseBeforeMediaRetry() {
+        pause(MEDIA_SEND_RETRY_DELAY_MS);
+    }
+
+    private void pause(long millis) {
         try {
-            Thread.sleep(50);
+            Thread.sleep(millis);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
         }
@@ -399,4 +502,11 @@ public class WechatBotService {
             super(cause);
         }
     }
+
+    @FunctionalInterface
+    private interface IoSendOperation {
+
+        void send() throws IOException;
+    }
 }
+

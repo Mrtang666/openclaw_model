@@ -1,7 +1,7 @@
 package com.example.spring.wechat.image.client;
 
-import com.example.spring.wechat.client.ImageSourceType;
-import com.example.spring.wechat.client.WechatIncomingImage;
+import com.example.spring.wechat.model.ImageSourceType;
+import com.example.spring.wechat.model.WechatIncomingImage;
 import com.example.spring.wechat.image.model.ImageAnalysisRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;

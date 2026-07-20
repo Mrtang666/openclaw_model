@@ -1,9 +1,13 @@
 package com.example.spring.wechat.image.service;
 
-import com.example.spring.wechat.client.ImageSourceType;
-import com.example.spring.wechat.client.WechatIncomingImage;
-import com.example.spring.wechat.client.WechatIncomingMessage;
-import com.example.spring.wechat.image.ImageUnderstandingException;
+
+/**
+ * 微信图片处理服务层，负责图片输入解析和理解流程。
+ */
+import com.example.spring.wechat.model.ImageSourceType;
+import com.example.spring.wechat.model.WechatIncomingImage;
+import com.example.spring.wechat.model.WechatIncomingMessage;
+import com.example.spring.wechat.image.exception.ImageUnderstandingException;
 import com.example.spring.wechat.image.model.ImageAnalysisRequest;
 import org.springframework.stereotype.Component;
 
@@ -227,3 +231,4 @@ public class ImageInputResolver {
     private record ParsedDataUri(String mimeType, byte[] bytes) {
     }
 }
+

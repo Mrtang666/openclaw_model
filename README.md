@@ -1,123 +1,221 @@
-# OpenClaw CLI
+# OpenClaw CLI / WeChat Agent
 
-一个基于 Java 17 和 Spring Boot 的 CLI + 微信 Agent 项目。
+OpenClaw 是一个基于 Java 17 + Spring Boot 的智能助手项目，支持 CLI 命令行入口和微信 iLink 入口。当前项目重点是微信端 Agent：微信端可以接收文本、图片、语音消息，并根据用户需求调用天气、图片生成、图片理解、语音识别、语音合成和大模型对话等工具。
 
-当前能力：
+## 当前功能
 
-- CLI 普通文本默认调用阿里百炼大模型
-- `/help`、`/version`、`/status`、`/weather 城市`、`/wechat` 等本地命令
-- 高德天气 API 查询，并由大模型整理成自然回复和出门建议
-- 微信图片识别：支持微信附件图片、图片链接和 data URI，先描述图片内容，再继续对话
-- 图片生成：支持 CLI `/image` 命令和微信自然语言生成图片，生成后会下载图片并发回微信
-- 微信 iLink 接入，支持扫码登录、接收消息、发送回复
-- 微信端按 `from_user_id` 保存最近 6 轮上下文，支持连续对话
-- iLink 接收日志，可排查消息是否进入 `getUpdates()`
-- CLI 流式输出；微信端先发送“我在整理答案，请稍等一下～”，最终回复自动分段发送
+- CLI 普通对话：直接输入文本时调用阿里百炼大模型。
+- CLI 基础命令：`/help`、`/version`、`/status`、`/weather`、`/wechat`。
+- 微信 iLink 接入：扫码登录、接收消息、发送文本/图片/语音文件回复。
+- 大模型对话：接入阿里百炼 DashScope，文本模型配置为 `qwen3.7-max-2026-06-08`。
+- 天气查询：接入高德天气 API，再由大模型整理成自然回复和出行建议。
+- 微信图片识别：支持微信附件图片、图片链接、data URI 图片。
+- 微信图片生成：图片生成能力只保留在微信端工具中，支持提示词优化、确认后生成、上下文修改图片。
+- 微信语音识别：支持微信语音下载、格式检测、必要时 ffmpeg 转码，再调用 ASR。
+- 微信语音合成：支持把回答文本转成语音文件发送，长文本会拆段。
+- 微信音色修改：支持按“温柔女声、沉稳男声、适合讲故事”等需求筛选 `qwen3-tts-flash` 官方音色，试听后确认保存到内存偏好。
+- 上下文记忆：微信端按 `fromUserId` 保存最近多轮对话。
+- 多需求拆解：一句话包含多个需求时，由结构化工具计划拆分并按用户表达顺序执行。
+- 工具插件化：微信端工具统一注册到 `WechatToolRegistry`，后续新增地图、新闻、日程、文件分析等工具时，不需要重写主流程。
 
-## 快速理解
-
-```text
-用户输入
-  |-- CLI 终端
-  |     `-- AgentService -> CommandDispatcher -> 命令 / 大模型
-  |
-  `-- 微信 iLink
-        `-- IlinkWechatClient -> WechatBotService -> WechatConversationService
-              |-- 天气问题 -> 高德天气 API -> 阿里百炼整理回复
-              `-- 普通对话 -> 上下文历史 -> 阿里百炼回复
-```
-
-## 项目结构
+## 整体架构
 
 ```text
-src/main/java/com/example/spring
-|-- AgentClawApplication.java          # Spring Boot 启动类
-|-- agent                              # Agent 统一入口
-|   |-- AgentService.java
-|   `-- ReplyEmitter.java
-|-- chat                               # 阿里百炼大模型接入
-|   |-- ChatClient.java
-|   |-- ChatReply.java
-|   |-- ChatService.java
-|   |-- ChatServiceException.java
-|   `-- DashScopeChatClient.java
-|-- cli                                # CLI 输入输出
-|   `-- ConsoleRunner.java
-|-- command                            # 本地命令系统
-|   |-- Command.java
-|   |-- CommandDispatcher.java
-|   |-- CommandRegistry.java
-|   |-- ErrorMessageFormatter.java
-|   |-- HelpCommand.java
-|   |-- StatusCommand.java
-|   |-- VersionCommand.java
-|   |-- WeatherCommand.java
-|   `-- WechatCommand.java
-|-- exception                          # 业务异常
-|   |-- CommandException.java
-|   `-- WeatherServiceException.java
-|-- tool                               # Agent 工具封装
-|   |-- AgentTool.java
-|   |-- ToolRegistry.java
-|   `-- WeatherTool.java
-|-- weather                            # 高德天气 API
-|   |-- AmapWeatherClient.java
-|   |-- WeatherClient.java
-|   |-- WeatherResult.java
-|   `-- WeatherService.java
-|-- image                              # 图片生成模块
-|   `-- generation
-|       |-- ImageGenerationClient.java
-|       |-- ImageGenerationException.java
-|       |-- ImageGenerationIntentParser.java
-|       |-- ImageGenerationRequest.java
-|       |-- ImageGenerationResult.java
-|       |-- ImageGenerationService.java
-|       `-- client
-|           `-- DashScopeImageGenerationClient.java
-`-- wechat                             # 微信 iLink 接入和会话处理
-    |-- bot                            # Bot 生命周期、状态、消息调度
-    |   |-- WechatBotService.java
-    |   |-- WechatBotState.java
-    |   |-- WechatBotStatus.java
-    |   `-- WechatReply.java
-    |   `-- WechatStartResult.java
-    |-- client                         # iLink SDK 适配层和微信客户端抽象
-    |   |-- IlinkWechatClient.java
-    |   |-- IlinkWechatClientFactory.java
-    |   |-- WechatClient.java
-    |   |-- WechatClientFactory.java
-    |   |-- WechatIncomingMessage.java
-    |   `-- WechatLoginInfo.java
-    `-- conversation                   # 微信自然语言会话、上下文和意图识别
-        |-- WeatherIntentParser.java
-        `-- WechatConversationService.java
+用户入口层
+  ├─ CLI 终端
+  └─ 微信 iLink
+
+入口适配层
+  ├─ ConsoleRunner
+  └─ IlinkWechatClient / WechatBotService
+
+会话编排层
+  └─ WechatConversationService
+       ├─ 上下文记忆
+       ├─ 多需求拆解
+       ├─ 结构化工具计划
+       ├─ 规则兜底路由
+       └─ 有序回复组合
+
+工具协议层
+  ├─ ToolCallPlanner
+  ├─ ToolCallPlanParser
+  ├─ WechatTool
+  └─ WechatToolRegistry
+
+工具能力层
+  ├─ ChatWechatTool
+  ├─ WeatherWechatTool
+  ├─ ImageGenerationWechatTool
+  ├─ VoiceRecognitionWechatTool
+  ├─ VoiceSynthesisWechatTool
+  └─ VoiceStyleWechatTool
+
+外部服务层
+  ├─ 阿里百炼文本大模型
+  ├─ 阿里百炼图片理解模型
+  ├─ 阿里百炼图片生成模型
+  ├─ 阿里百炼语音识别/合成模型
+  ├─ 高德天气 API
+  └─ 微信 iLink SDK
 ```
 
-更详细的结构说明见 [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)。
+## 核心流程
 
-## 配置
+### CLI 流程
 
-复制 `.env.example` 为 `.env`，并填写自己的 Key：
+```text
+用户在命令行输入
+  ↓
+ConsoleRunner
+  ↓
+AgentService
+  ↓
+CommandDispatcher
+  ├─ /help、/version、/status 本地命令
+  ├─ /weather 调用天气服务
+  ├─ /wechat 控制微信 Bot
+  └─ 普通文本调用大模型对话
+```
+
+注意：CLI 端已经移除图片生成命令，不再提供 `/image`。
+
+### 微信文本消息流程
+
+```text
+微信用户发送文本
+  ↓
+iLink SDK 拉取消息
+  ↓
+IlinkWechatClient 转换成 WechatIncomingMessage
+  ↓
+WechatBotService 发送等待提示并进入消息队列
+  ↓
+WechatConversationService
+  ├─ 调用 ToolCallPlanner 让大模型输出 JSON 工具计划
+  ├─ ToolCallPlanParser 解析计划
+  ├─ WechatToolRegistry 找到对应工具
+  └─ 按用户表达顺序执行工具并组合回复
+  ↓
+WechatBotService 按顺序发送文本、图片或语音
+```
+
+### 微信图片消息流程
+
+```text
+微信用户发送图片
+  ↓
+IlinkWechatClient 下载图片二进制
+  ↓
+ImageInputResolver 识别图片来源和格式
+  ↓
+DefaultImageUnderstandingService
+  ↓
+DashScopeImageUnderstandingClient
+  ↓
+先描述图片内容，再结合用户问题回答
+  ↓
+把图片描述写入会话上下文，支持后续“按刚才那张图修改”
+```
+
+### 微信图片生成流程
+
+```text
+用户提出图片生成/修改需求
+  ↓
+ToolCallPlanner 识别为 image_generation 工具
+  ↓
+ImageGenerationWechatTool
+  ├─ 必要时先调用文本大模型优化提示词
+  ├─ 如果用户要求“等我确认”，只返回优化后的提示词
+  └─ 否则调用 ImageGenerationService
+  ↓
+DashScopeImageGenerationClient 请求阿里百炼图片模型
+  ↓
+ImageGenerationService 下载图片二进制
+  ↓
+WechatBotService 发送图片给用户
+```
+
+### 微信语音流程
+
+```text
+微信用户发送语音
+  ↓
+IlinkWechatClient 下载语音
+  ↓
+DefaultVoiceRecognitionService
+  ├─ 优先使用 iLink 已带的 embeddedText
+  ├─ 否则检测音频格式
+  ├─ 必要时调用 ffmpeg 转 wav
+  └─ 调用 DashScopeVoiceRecognitionClient
+  ↓
+得到文字后重新进入微信文本消息流程
+```
+
+语音合成时，`VoiceSynthesisWechatTool` 会把需要朗读的文本交给 TTS 服务，生成音频文件后由微信发送层发送给用户。如果用户已经通过音色修改工具保存过偏好，会优先使用该用户保存的音色；否则使用默认音色 `Cherry`。
+
+音色修改时，`VoiceStyleWechatTool` 会根据用户描述筛选官方音色：如果用户说“换一个温柔的女声”，系统会展示候选音色；如果用户说“试听第一个”，系统会生成试听语音；如果用户说“就用这个”，系统会在内存中保存该用户的音色偏好。当前没有接入数据库，所以重启项目后偏好会丢失，后续可以把 `VoicePreferenceService` 替换为数据库实现。
+
+## 主要目录职责
+
+```text
+src/main/java/com/example/spring/
+  ├─ agent/                         # CLI 默认对话入口
+  ├─ chat/                          # 阿里百炼文本大模型接入
+  ├─ cli/                           # 控制台入口
+  ├─ cli/command/core/              # CLI 命令接口、注册、分发、错误格式化
+  ├─ cli/command/impl/              # CLI 命令实现：help/version/status/weather/wechat
+  ├─ tool/                          # 早期简单工具封装
+  ├─ tool/protocol/                 # 结构化工具调用协议
+  ├─ weather/                       # 高德天气 API 能力
+  └─ wechat/
+      ├─ adapter/                   # 微信客户端抽象与 iLink 适配
+      ├─ bot/                       # 微信 Bot 生命周期、队列、发送逻辑
+      ├─ conversation/              # 微信会话编排
+      ├─ conversation/tools/        # 微信插件化工具
+      ├─ image/                     # 微信图片理解
+      ├─ image/generation/          # 微信端图片生成能力
+      ├─ model/                     # 微信入站消息、图片、语音等模型
+      └─ voice/                     # 微信语音识别、语音合成与音色偏好
+```
+
+图片生成相关文件现在都内嵌在微信包内：
+
+```text
+src/main/java/com/example/spring/wechat/image/generation/
+  ├─ ImageGenerationClient.java
+  ├─ ImageGenerationException.java
+  ├─ client/DashScopeImageGenerationClient.java
+  ├─ intent/ImageGenerationIntentParser.java
+  ├─ model/ImageGenerationRequest.java
+  ├─ model/ImageGenerationResult.java
+  └─ service/ImageGenerationService.java
+```
+
+## 配置说明
+
+复制 `.env.example` 为 `.env`，填写自己的 Key：
 
 ```properties
 AMAP_WEATHER_KEY=你的高德 Web 服务 API KEY
 DASHSCOPE_API_KEY=你的阿里百炼 API KEY
 ```
 
-默认大模型配置在 `src/main/resources/application.properties`：
+主要模型配置在 `src/main/resources/application.properties`：
 
 ```properties
 dashscope.base-url=https://ws-6gncy95g9skiwjfi.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
-dashscope.model=qwen3.7-plus
+openclaw.dashscope.model=qwen3.7-max-2026-06-08
 dashscope.vision-model=qwen3.7-plus
-dashscope.enable-thinking=true
-dashscope.image-base-url=https://ws-6gncy95g9skiwjfi.cn-beijing.maas.aliyuncs.com/api/v1
-dashscope.image-model=qwen-image-2.0-pro
-image.output-dir=generated-images
+openclaw.dashscope.image-model=qwen-image-2.0-pro
+dashscope.voice-model=qwen3-asr-flash
+openclaw.dashscope.tts-model=qwen3-tts-flash
 ```
 
-## 运行
+说明：`dashscope.voice-model` 当前用于语音识别 ASR；`qwen3-tts-flash` 是语音合成 TTS 模型，所以配置在 `openclaw.dashscope.tts-model`。
+
+## 运行方式
 
 如果本机还没有安装微信 iLink SDK，先执行：
 
@@ -133,74 +231,78 @@ cd C:\Users\Lenovo\Desktop\openclaw_model
 mvn spring-boot:run
 ```
 
-常用输入：
+CLI 常用输入：
 
 ```text
-你是谁              -> 默认走阿里百炼大模型聊天
-/help              -> 查看帮助
-/version           -> 查看版本
-/status            -> 查看状态
-/weather 北京      -> 查询北京天气
-/image 一只赛博朋克风格的橘猫 -> 生成图片
-/wechat start      -> 启动微信 Bot
-/wechat status     -> 查看微信 Bot 状态
-/wechat stop       -> 停止微信 Bot
-exit               -> 退出程序
+你是谁
+/help
+/version
+/status
+/weather 北京
+/wechat start
+/wechat status
+/wechat stop
+exit
 ```
 
-也可以将命令作为启动参数执行：
-
-```powershell
-mvn spring-boot:run "-Dspring-boot.run.arguments=/status"
-```
-
-## 微信接入说明
-
-微信入口复用 Agent 能力，但多了一层微信会话处理：
-
-- 普通文本默认进入阿里百炼大模型
-- 天气类自然语言会先解析城市，再调用高德天气 API
-- 图片生成类自然语言会先提取提示词，再调用阿里百炼文生图 API
-- 每个 `from_user_id` 保存最近 6 轮上下文
-- 发送消息依赖 iLink 的 `contextToken`，这个 token 来自 `getUpdates()` 拉到的入站消息
-
-示例：
+## 微信端示例
 
 ```text
-用户：我想出去玩
-助手：你偏好什么类型？
-用户：可以，偏好美食
-助手：会结合前文继续推荐，而不是把这句话当成孤立输入
+用户：帮我生成一张赛博朋克风格的橘猫图片
+系统：先优化提示词，再调用图片生成工具，并把生成的图片发回微信
+```
+
+```text
+用户：帮我查看今天杭州天气，然后用语音读一遍
+系统：先调用天气工具，再调用语音合成工具发送语音文件
+```
+
+```text
+用户：换一个温柔的女声
+系统：调用音色修改工具，展示 3-5 个候选音色
+用户：试听第一个
+系统：用第一个候选音色生成试听语音
+用户：就用这个
+系统：保存该用户音色偏好，后续语音回复优先使用该音色
 ```
 
 ## 日志排查
 
-iLink 接收日志会打印：
+iLink 接收日志：
 
 ```text
-iLink 收到文本消息：messageId=..., fromUserId=..., contextToken=..., text=...
+iLink 收到消息，messageId=..., fromUserId=..., contextToken=..., text=..., imageCount=..., voiceCount=...
 ```
 
-微信处理日志会打印：
+微信 Bot 处理日志：
 
 ```text
-微信收到消息，fromUserId=..., text=...
-微信会话收到消息，userId=..., text=...
-微信回复发送完成，fromUserId=..., replyLength=...
+微信收到消息，fromUserId=..., text=..., imageCount=..., voiceCount=...
+微信消息进入处理队列，fromUserId=...
+微信开始生成回复，fromUserId=..., text=...
+微信回复发送完成，fromUserId=..., replyLength=..., hasImage=...
 ```
 
-如果用户说“微信没有反应”，优先看日志里是否出现：
+如果微信端没有回复，按顺序排查：
 
-1. `iLink 收到文本消息`
-2. `微信收到消息`
-3. `微信会话收到消息`
-4. `微信回复发送完成`
-
-缺在哪一步，就重点排查哪一层。
+```text
+1. 是否出现 iLink 收到消息
+2. 是否出现 微信收到消息
+3. 是否进入 微信消息处理队列
+4. 是否出现 微信开始生成回复
+5. 是否出现 微信回复发送完成
+```
 
 ## 测试与构建
 
+运行测试：
+
 ```powershell
 mvn test
-mvn clean package
+```
+
+干净构建：
+
+```powershell
+mvn clean test
 ```

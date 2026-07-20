@@ -1,268 +1,69 @@
-# Image Generation Implementation Plan
+# 微信端图片生成模块设计
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+## 设计结论
 
-**Goal:** Add an image generation module that works in CLI and WeChat: CLI uses an `/image` command, and WeChat can recognize image-generation intent, call Alibaba Bailian, and send the generated picture back.
+图片生成能力只保留在微信端，不再作为 CLI 命令暴露。这样做的原因是：当前图片生成的主要交互场景是微信聊天，用户需要直接收到图片，而 CLI 更适合作为调试、基础命令和普通文本对话入口。
 
-**Architecture:** A shared `image.generation` service will call Alibaba Bailian’s image-generation API, normalize the result into a small domain model, and download the generated image bytes when needed. CLI will consume the service through a new command, while WeChat will route generation intent through the conversation layer, return a structured reply, and let the bot decide whether to send text, an image, or both.
+## 功能边界
 
-**Tech Stack:** Java 17, Spring Boot, RestClient, Jackson, Alibaba Bailian compatible API, iLink SDK.
+微信端图片生成支持：
 
----
+- 直接生成图片，例如“帮我生成一张赛博朋克风格的橘猫”。
+- 先优化提示词，再生成图片。
+- 用户要求确认时，只返回优化后的提示词。
+- 根据最近一次图片生成结果或用户刚发送的图片进行修改。
+- 结合上下文理解“把刚才那张图改成暖色调”等追问。
 
-## Scope
+CLI 端不支持：
 
-This feature adds one new capability:
+- 不再支持 `/image` 命令。
+- 不再保存生成图片到 CLI 本地目录。
 
-- generate an image from a text prompt
-
-It does not replace the existing text chat, weather, or image-understanding paths.
-
-## User-facing behavior
-
-### CLI
-
-- `/image <prompt>` generates an image.
-- If the prompt is blank, the command returns a clear usage message.
-- If generation succeeds, CLI prints:
-  - the prompt used
-  - the returned image URL
-  - the local file path if the image is downloaded and saved
-
-### WeChat
-
-- Normal chat still works as before.
-- If a message looks like an image-generation request, the bot:
-  1. sends a short “I’m generating” status message
-  2. calls the image-generation API
-  3. sends the generated image back through iLink
-  4. falls back to a text link if image sending fails
-
-### Intent examples
-
-- “帮我画一只戴着耳机的橘猫”
-- “生成一张国风海报”
-- “做一张产品宣传图”
-
-## Non-goals
-
-- Do not change the existing image-understanding module.
-- Do not add a web UI.
-- Do not add multi-image editing or inpainting.
-- Do not add user image uploads as input to image generation.
-
-## Proposed file layout
-
-### New files
-
-- `src/main/java/com/example/spring/image/generation/ImageGenerationClient.java`
-- `src/main/java/com/example/spring/image/generation/ImageGenerationException.java`
-- `src/main/java/com/example/spring/image/generation/ImageGenerationService.java`
-- `src/main/java/com/example/spring/image/generation/ImageGenerationIntentParser.java`
-- `src/main/java/com/example/spring/image/generation/ImageGenerationResult.java`
-- `src/main/java/com/example/spring/image/generation/ImageGenerationRequest.java`
-- `src/main/java/com/example/spring/image/generation/client/DashScopeImageGenerationClient.java`
-- `src/main/java/com/example/spring/command/ImageCommand.java`
-- `src/main/java/com/example/spring/wechat/bot/WechatReply.java`
-
-### Modify existing files
-
-- `src/main/java/com/example/spring/command/CommandRegistry.java`
-- `src/main/java/com/example/spring/command/CommandDispatcher.java`
-- `src/main/java/com/example/spring/command/HelpCommand.java`
-- `src/main/java/com/example/spring/cli/ConsoleRunner.java`
-- `src/main/java/com/example/spring/wechat/client/WechatClient.java`
-- `src/main/java/com/example/spring/wechat/client/IlinkWechatClient.java`
-- `src/main/java/com/example/spring/wechat/conversation/WechatConversationService.java`
-- `src/main/java/com/example/spring/wechat/bot/WechatBotService.java`
-- `src/main/resources/application.properties`
-- `README.md`
-
-## API design
-
-### ImageGenerationRequest
-
-Carries the raw user prompt plus optional options.
-
-Fields:
-
-- `prompt`
-- `styleHint`
-- `width`
-- `height`
-- `watermark`
-
-### ImageGenerationResult
-
-Carries the normalized output of generation.
-
-Fields:
-
-- `prompt`
-- `imageUrl`
-- `imageBytes`
-- `fileName`
-- `contentType`
-- `width`
-- `height`
-
-### WechatReply
-
-Carries what the bot should send back to WeChat.
-
-Fields:
-
-- `text`
-- `image` (`ImageGenerationResult`, optional)
-- `imageCaption`
-
-### ImageGenerationClient
-
-Single responsibility: talk to Alibaba Bailian and return a normalized result.
-
-### ImageGenerationService
-
-Single responsibility: validate the prompt, call the client, download the image, and return a result suitable for CLI or WeChat.
-
-## Flow
-
-### CLI flow
+## 模块位置
 
 ```text
-User types /image prompt
-  -> CommandDispatcher
-  -> ImageCommand
-  -> ImageGenerationService
-  -> DashScopeImageGenerationClient
-  -> download image bytes
-  -> print URL/path to console
+com.example.spring.wechat.image.generation
 ```
 
-### WeChat flow
+该包内聚在 `wechat` 下，表示图片生成是微信端多模态能力的一部分。
+
+## 关键对象
 
 ```text
-User sends message
-  -> IlinkWechatClient
-  -> WechatBotService
-  -> WechatConversationService
-  -> ImageGenerationIntentParser
-  -> ImageGenerationService
-  -> WechatReply
-  -> WechatBotService
-  -> WechatClient.sendImage(...)
+ImageGenerationClient
+ImageGenerationException
+DashScopeImageGenerationClient
+ImageGenerationIntentParser
+ImageGenerationRequest
+ImageGenerationResult
+ImageGenerationService
+ImageGenerationWechatTool
 ```
 
-## Intent routing rules
+## 调用流程
 
-WeChat should detect image generation before falling back to weather detection or normal chat.
+```text
+用户发送图片生成需求
+  ↓
+WechatConversationService
+  ↓
+优先走结构化工具计划
+  ↓
+如果模型计划失败，则用 ImageGenerationIntentParser 兜底
+  ↓
+ImageGenerationWechatTool 处理提示词优化、确认逻辑、上下文图片修改
+  ↓
+ImageGenerationService 调用图片生成客户端并下载图片二进制
+  ↓
+WechatReply 返回图片 part
+  ↓
+WechatBotService 发送到微信
+```
 
-Recommended keyword set:
+## 验收标准
 
-- 画
-- 生成图片
-- 做图
-- 海报
-- 插画
-- 头像
-- 表情包
-- 设计图
-
-If the message contains one of those keywords and a usable prompt, route to image generation.
-
-If the prompt is too vague, respond with a short clarification request instead of calling the API.
-
-## Alibaba Bailian integration
-
-Use the current `DASHSCOPE_API_KEY` from `.env`.
-
-Recommended model:
-
-- `qwen-image-2.0-pro`
-
-Recommended endpoint:
-
-- `https://ws-6gncy95g9skiwjfi.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation`
-
-Request rules:
-
-- use JSON
-- pass the prompt directly
-- keep prompt enhancement enabled
-- keep watermark configurable
-
-Response rules:
-
-- parse the first returned image URL
-- preserve the original API response for debugging only at trace level
-- do not log raw image bytes
-
-## WeChat sending rules
-
-The iLink client should support image sending, because text-only responses are not enough for this feature.
-
-Rules:
-
-- if `sendImage(...)` succeeds, send the image to the user
-- if `sendImage(...)` fails, send a text fallback containing the image URL
-- if generation itself fails, send a short user-facing error message
-
-## Error handling
-
-User-facing errors should be short and specific.
-
-Examples:
-
-- blank prompt -> “请告诉我你想生成什么图片”
-- API key missing -> “图片生成服务未配置”
-- API returned no image -> “图片生成失败，请稍后重试”
-- download failed -> fall back to URL
-- WeChat image sending failed -> fall back to text URL
-
-## Testing plan
-
-### Parser tests
-
-Cover:
-
-- normal prompt detection
-- blank prompt rejection
-- vague prompt handling
-- keyword examples that should trigger generation
-
-### Client tests
-
-Cover:
-
-- request body construction
-- successful response parsing
-- no-image response failure
-- HTTP error response handling
-
-### Service tests
-
-Cover:
-
-- prompt validation
-- byte download
-- fallback behavior
-- exception mapping
-
-### CLI and WeChat integration tests
-
-Cover:
-
-- `/image` dispatch
-- help text includes the new command
-- WeChat intent routes to image generation
-- WeChat image send fallback works
-
-## Rollout order
-
-1. Add the image-generation domain model and client.
-2. Add the CLI command.
-3. Wire WeChat intent parsing and image sending.
-4. Update docs and tests.
-
-## Open implementation choices
-
-The only implementation choice that matters later is whether to save generated images to disk for CLI output. The recommended behavior is yes, because the API image URL may expire and local files are easier to inspect.
+- CLI 命令注册中心不包含 `image` 命令。
+- 微信端可以继续生成图片。
+- 微信端可以先优化提示词再生成图片。
+- 微信端可以结合上下文修改图片。
+- 完整测试通过。

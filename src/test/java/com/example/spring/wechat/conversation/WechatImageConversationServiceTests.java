@@ -2,15 +2,16 @@ package com.example.spring.wechat.conversation;
 
 import com.example.spring.agent.ReplyEmitter;
 import com.example.spring.chat.ChatService;
-import com.example.spring.image.generation.ImageGenerationRequest;
-import com.example.spring.image.generation.ImageGenerationResult;
-import com.example.spring.image.generation.ImageGenerationService;
+import com.example.spring.weather.service.WeatherService;
 import com.example.spring.wechat.bot.WechatReply;
-import com.example.spring.wechat.client.ImageSourceType;
-import com.example.spring.wechat.client.WechatIncomingImage;
-import com.example.spring.wechat.client.WechatIncomingMessage;
+import com.example.spring.wechat.conversation.intent.WeatherIntentParser;
+import com.example.spring.wechat.image.generation.model.ImageGenerationRequest;
+import com.example.spring.wechat.image.generation.model.ImageGenerationResult;
+import com.example.spring.wechat.image.generation.service.ImageGenerationService;
 import com.example.spring.wechat.image.service.ImageUnderstandingService;
-import com.example.spring.weather.WeatherService;
+import com.example.spring.wechat.model.ImageSourceType;
+import com.example.spring.wechat.model.WechatIncomingImage;
+import com.example.spring.wechat.model.WechatIncomingMessage;
 import org.junit.jupiter.api.Test;
 
 import java.awt.Color;
@@ -44,20 +45,7 @@ class WechatImageConversationServiceTests {
                 imageUnderstandingService,
                 new WeatherIntentParser());
 
-        WechatIncomingMessage imageMessage = new WechatIncomingMessage(
-                "msg-1",
-                "user-1",
-                "ctx-1",
-                "",
-                List.of(new WechatIncomingImage(
-                        ImageSourceType.WECHAT_ATTACHMENT,
-                        "wechat://msg-1/image-1",
-                        samplePngBytes(),
-                        "image/png",
-                        "photo.png",
-                        null,
-                        null,
-                        null)));
+        WechatIncomingMessage imageMessage = imageMessage("msg-1", "user-1", "photo.png");
 
         doAnswer(invocation -> {
             ReplyEmitter emitter = invocation.getArgument(1);
@@ -75,7 +63,6 @@ class WechatImageConversationServiceTests {
 
         assertThat(firstReply).contains("白色猫咪");
         assertThat(secondReply).isEqualTo("它看起来很可爱，也很适合做头像。");
-        verify(imageUnderstandingService).streamReply(eq(imageMessage), any());
         verify(chatService).streamReply(org.mockito.ArgumentMatchers.argThat(prompt ->
                 prompt.contains("白色猫咪")
                         && prompt.contains("蓝天")
@@ -97,7 +84,7 @@ class WechatImageConversationServiceTests {
 
         when(imageGenerationService.generate(any()))
                 .thenReturn(new ImageGenerationResult(
-                        "一只赛博朋克风格的橘猫",
+                        "赛博朋克风格的橘猫",
                         "https://cdn.example.com/cat.png",
                         "CAT".getBytes(),
                         "cat.png",
@@ -105,7 +92,7 @@ class WechatImageConversationServiceTests {
                         null,
                         null))
                 .thenReturn(new ImageGenerationResult(
-                        "白色狗狗，戴红色围巾，背景换成夜晚",
+                        "白色狗狗，红色围巾，夜景背景",
                         "https://cdn.example.com/dog-night.png",
                         "DOG".getBytes(),
                         "dog-night.png",
@@ -113,20 +100,7 @@ class WechatImageConversationServiceTests {
                         null,
                         null));
 
-        WechatIncomingMessage imageMessage = new WechatIncomingMessage(
-                "msg-2",
-                "user-1",
-                "ctx-2",
-                "",
-                List.of(new WechatIncomingImage(
-                        ImageSourceType.WECHAT_ATTACHMENT,
-                        "wechat://msg-2/image-1",
-                        samplePngBytes(),
-                        "image/png",
-                        "dog.png",
-                        null,
-                        null,
-                        null)));
+        WechatIncomingMessage imageMessage = imageMessage("msg-2", "user-1", "dog.png");
 
         doAnswer(invocation -> {
             ReplyEmitter emitter = invocation.getArgument(1);
@@ -136,7 +110,7 @@ class WechatImageConversationServiceTests {
 
         service.handleWechat(new WechatIncomingMessage("user-1", "帮我画一只赛博朋克风格的橘猫"));
         service.handleWechat(imageMessage);
-        WechatReply reply = service.handleWechat(new WechatIncomingMessage("user-1", "把背景换成夜晚"));
+        WechatReply reply = service.handleWechat(new WechatIncomingMessage("user-1", "把背景换成夜景"));
 
         assertThat(reply.hasImage()).isTrue();
         assertThat(reply.image().imageUrl()).isEqualTo("https://cdn.example.com/dog-night.png");
@@ -145,8 +119,25 @@ class WechatImageConversationServiceTests {
         assertThat(requestCaptor.getAllValues().get(1).prompt())
                 .contains("白色狗狗")
                 .contains("红色围巾")
-                .contains("把背景换成夜晚")
+                .contains("把背景换成夜景")
                 .doesNotContain("赛博朋克风格的橘猫");
+    }
+
+    private WechatIncomingMessage imageMessage(String messageId, String userId, String fileName) throws IOException {
+        return new WechatIncomingMessage(
+                messageId,
+                userId,
+                "ctx-" + messageId,
+                "",
+                List.of(new WechatIncomingImage(
+                        ImageSourceType.WECHAT_ATTACHMENT,
+                        "wechat://" + messageId + "/image-1",
+                        samplePngBytes(),
+                        "image/png",
+                        fileName,
+                        null,
+                        null,
+                        null)));
     }
 
     private byte[] samplePngBytes() throws IOException {

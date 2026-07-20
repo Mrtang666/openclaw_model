@@ -3,6 +3,7 @@ package com.example.spring.wechat.conversation;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import com.example.spring.wechat.conversation.intent.WeatherIntentParser;
 
 class WeatherIntentParserTests {
 

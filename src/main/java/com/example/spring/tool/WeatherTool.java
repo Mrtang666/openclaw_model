@@ -1,7 +1,11 @@
 package com.example.spring.tool;
 
-import com.example.spring.weather.WeatherResult;
-import com.example.spring.weather.WeatherService;
+
+/**
+ * CLI 工具封装层，负责统一封装本地工具能力。
+ */
+import com.example.spring.weather.model.WeatherResult;
+import com.example.spring.weather.service.WeatherService;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -87,3 +91,4 @@ public class WeatherTool implements AgentTool {
         };
     }
 }
+

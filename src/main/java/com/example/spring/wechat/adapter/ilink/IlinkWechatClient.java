@@ -18,6 +18,7 @@ import java.util.concurrent.CompletableFuture;
 import com.example.spring.wechat.adapter.WechatClient;
 import com.example.spring.wechat.model.ImageSourceType;
 import com.example.spring.wechat.model.VoiceSourceType;
+import com.example.spring.wechat.model.WechatIncomingFile;
 import com.example.spring.wechat.model.WechatIncomingImage;
 import com.example.spring.wechat.model.WechatIncomingMessage;
 import com.example.spring.wechat.model.WechatIncomingVoice;
@@ -121,8 +122,10 @@ public class IlinkWechatClient implements WechatClient {
         StringBuilder text = new StringBuilder();
         List<WechatIncomingImage> images = new ArrayList<>();
         List<WechatIncomingVoice> voices = new ArrayList<>();
+        List<WechatIncomingFile> files = new ArrayList<>();
         int imageIndex = 0;
         int voiceIndex = 0;
+        int fileIndex = 0;
         for (MessageItem item : message.getItem_list()) {
             if (item == null) {
                 continue;
@@ -198,22 +201,56 @@ public class IlinkWechatClient implements WechatClient {
                 }
                 voiceIndex++;
             }
+
+            if (item.getFile_item() != null) {
+                String sourceReference = buildFileSourceReference(message, fileIndex);
+                String fileName = item.getFile_item().getFile_name();
+                Long size = parseLong(item.getFile_item().getLen());
+                String md5 = item.getFile_item().getMd5();
+                try {
+                    byte[] fileBytes = delegate.downloadFileFromMessageItem(item);
+                    files.add(new WechatIncomingFile(
+                            sourceReference,
+                            fileName,
+                            mimeTypeForFile(fileName),
+                            fileBytes,
+                            size,
+                            md5,
+                            null));
+                } catch (Exception exception) {
+                    log.warn("iLink 文件下载失败，messageId={}, fromUserId={}, fileName={}, error={}",
+                            valueOrUnknown(String.valueOf(message.getMessage_id())),
+                            valueOrUnknown(message.getFrom_user_id()),
+                            valueOrUnknown(fileName),
+                            rootMessage(exception));
+                    files.add(new WechatIncomingFile(
+                            sourceReference,
+                            fileName,
+                            mimeTypeForFile(fileName),
+                            null,
+                            size,
+                            md5,
+                            null));
+                }
+                fileIndex++;
+            }
         }
 
         String normalizedText = text.toString().strip();
-        if (normalizedText.isBlank() && images.isEmpty() && voices.isEmpty()) {
-            log.debug("iLink 消息没有可用文本、图片或语音，messageId={}", valueOrUnknown(String.valueOf(message.getMessage_id())));
+        if (normalizedText.isBlank() && images.isEmpty() && voices.isEmpty() && files.isEmpty()) {
+            log.debug("iLink 消息没有可用文本、图片、语音或文件，messageId={}", valueOrUnknown(String.valueOf(message.getMessage_id())));
             return null;
         }
 
         log.info(
-                "iLink 收到消息，messageId={}, fromUserId={}, contextToken={}, text={}, imageCount={}, voiceCount={}",
+                "iLink 收到消息，messageId={}, fromUserId={}, contextToken={}, text={}, imageCount={}, voiceCount={}, fileCount={}",
                 valueOrUnknown(String.valueOf(message.getMessage_id())),
                 valueOrUnknown(message.getFrom_user_id()),
                 valueOrUnknown(message.getContext_token()),
                 preview(normalizedText),
                 images.size(),
-                voices.size());
+                voices.size(),
+                files.size());
 
         return new WechatIncomingMessage(
                 message.getMessage_id() == null ? null : String.valueOf(message.getMessage_id()),
@@ -221,7 +258,8 @@ public class IlinkWechatClient implements WechatClient {
                 message.getContext_token(),
                 normalizedText,
                 images,
-                voices);
+                voices,
+                files);
     }
 
     private WechatLoginInfo toLoginInfo(LoginContext context) {
@@ -234,6 +272,10 @@ public class IlinkWechatClient implements WechatClient {
 
     private String buildVoiceSourceReference(WeixinMessage message, int voiceIndex) {
         return "wechat://" + valueOrUnknown(String.valueOf(message.getMessage_id())) + "/voice/" + (voiceIndex + 1);
+    }
+
+    private String buildFileSourceReference(WeixinMessage message, int fileIndex) {
+        return "wechat://" + valueOrUnknown(String.valueOf(message.getMessage_id())) + "/file/" + (fileIndex + 1);
     }
 
     private String buildFileName(WeixinMessage message, int imageIndex) {
@@ -267,6 +309,43 @@ public class IlinkWechatClient implements WechatClient {
         };
     }
 
+    private String mimeTypeForFile(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return "application/octet-stream";
+        }
+        String lower = fileName.toLowerCase(java.util.Locale.ROOT);
+        if (lower.endsWith(".pdf")) {
+            return "application/pdf";
+        }
+        if (lower.endsWith(".docx")) {
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        }
+        if (lower.endsWith(".xlsx")) {
+            return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        }
+        if (lower.endsWith(".pptx")) {
+            return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+        }
+        if (lower.endsWith(".md")) {
+            return "text/markdown";
+        }
+        if (lower.endsWith(".txt")) {
+            return "text/plain";
+        }
+        return "application/octet-stream";
+    }
+
+    private Long parseLong(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Long.parseLong(value.strip());
+        } catch (NumberFormatException exception) {
+            return null;
+        }
+    }
+
     private String preview(String value) {
         if (value == null) {
             return "null";
@@ -290,4 +369,3 @@ public class IlinkWechatClient implements WechatClient {
         return value == null || value.isBlank() ? "null" : value;
     }
 }
-

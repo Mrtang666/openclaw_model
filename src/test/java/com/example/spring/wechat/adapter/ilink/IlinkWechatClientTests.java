@@ -2,6 +2,7 @@ package com.example.spring.wechat.adapter.ilink;
 
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.model.CDNMedia;
+import com.github.wechat.ilink.sdk.core.model.FileItem;
 import com.github.wechat.ilink.sdk.core.model.ImageItem;
 import com.github.wechat.ilink.sdk.core.model.MessageItem;
 import com.github.wechat.ilink.sdk.core.model.VoiceItem;
@@ -21,6 +22,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import com.example.spring.wechat.model.ImageSourceType;
 import com.example.spring.wechat.model.VoiceSourceType;
+import com.example.spring.wechat.model.WechatIncomingFile;
 import com.example.spring.wechat.model.WechatIncomingMessage;
 
 class IlinkWechatClientTests {
@@ -127,6 +129,44 @@ class IlinkWechatClientTests {
         assertThat(incoming.voices()).hasSize(1);
         assertThat(incoming.voices().get(0).hasBytes()).isFalse();
         assertThat(incoming.voices().get(0).sourceReference()).isEqualTo("wechat://300/voice/1");
+    }
+
+    @Test
+    void mapsFileItemsIntoIncomingMessage() throws IOException {
+        ILinkClient delegate = mock(ILinkClient.class);
+        IlinkWechatClient client = new IlinkWechatClient(delegate);
+
+        MessageItem fileMessageItem = new MessageItem();
+        FileItem fileItem = new FileItem();
+        fileItem.setFile_name("需求说明.pdf");
+        fileItem.setLen("12");
+        fileItem.setMd5("md5-value");
+        fileItem.setMedia(new CDNMedia());
+        fileMessageItem.setFile_item(fileItem);
+
+        WeixinMessage message = new WeixinMessage();
+        message.setMessage_id(400L);
+        message.setFrom_user_id("user-4");
+        message.setContext_token("ctx-4");
+        message.setItem_list(List.of(fileMessageItem));
+
+        byte[] fileBytes = "%PDF-content".getBytes();
+        when(delegate.getUpdates()).thenReturn(List.of(message));
+        when(delegate.downloadFileFromMessageItem(fileMessageItem)).thenReturn(fileBytes);
+
+        List<WechatIncomingMessage> updates = client.getUpdates();
+
+        assertThat(updates).hasSize(1);
+        WechatIncomingMessage incoming = updates.get(0);
+        assertThat(incoming.fromUserId()).isEqualTo("user-4");
+        assertThat(incoming.hasFiles()).isTrue();
+        assertThat(incoming.files()).hasSize(1);
+        WechatIncomingFile file = incoming.files().get(0);
+        assertThat(file.fileName()).isEqualTo("需求说明.pdf");
+        assertThat(file.bytes()).isEqualTo(fileBytes);
+        assertThat(file.size()).isEqualTo(12L);
+        assertThat(file.sourceReference()).isEqualTo("wechat://400/file/1");
+        assertThat(file.sha256()).isNotBlank();
     }
 
     private byte[] samplePngBytes() throws IOException {

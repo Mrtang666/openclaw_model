@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 
 import java.lang.reflect.Method;
 import java.time.Duration;
@@ -15,6 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.fail;
 
 @SpringBootTest(args = "/status")
+@ActiveProfiles("test")
 class MySqlWechatMemoryServiceTests {
 
     @Autowired
@@ -25,6 +27,7 @@ class MySqlWechatMemoryServiceTests {
 
     @BeforeEach
     void clearMemoryTables() {
+        TestDatabaseGuard.assertUsingTestDatabase(jdbcTemplate);
         jdbcTemplate.update("DELETE FROM tool_execution_logs");
         jdbcTemplate.update("DELETE FROM conversation_summaries");
         jdbcTemplate.update("DELETE FROM conversation_messages");

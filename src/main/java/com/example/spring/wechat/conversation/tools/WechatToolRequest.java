@@ -5,6 +5,7 @@ package com.example.spring.wechat.conversation.tools;
  * CLI 工具封装层，负责统一封装本地工具能力。
  */
 import com.example.spring.wechat.model.WechatIncomingVoice;
+import com.example.spring.wechat.model.WechatIncomingFile;
 
 import java.util.List;
 import java.util.Map;
@@ -15,6 +16,7 @@ public record WechatToolRequest(
         Map<String, String> arguments,
         String historyText,
         List<WechatIncomingVoice> voices,
+        List<WechatIncomingFile> files,
         PendingImagePromptRecorder pendingImagePromptRecorder,
         GeneratedImageRecorder generatedImageRecorder) {
 
@@ -24,6 +26,18 @@ public record WechatToolRequest(
         arguments = arguments == null ? Map.of() : Map.copyOf(arguments);
         historyText = historyText == null ? "" : historyText;
         voices = voices == null ? List.of() : List.copyOf(voices);
+        files = files == null ? List.of() : List.copyOf(files);
+    }
+
+    public WechatToolRequest(
+            String sessionKey,
+            String userText,
+            Map<String, String> arguments,
+            String historyText,
+            List<WechatIncomingVoice> voices,
+            PendingImagePromptRecorder pendingImagePromptRecorder,
+            GeneratedImageRecorder generatedImageRecorder) {
+        this(sessionKey, userText, arguments, historyText, voices, List.of(), pendingImagePromptRecorder, generatedImageRecorder);
     }
 
     public WechatToolRequest(
@@ -33,7 +47,7 @@ public record WechatToolRequest(
             String historyText,
             PendingImagePromptRecorder pendingImagePromptRecorder,
             GeneratedImageRecorder generatedImageRecorder) {
-        this(sessionKey, userText, arguments, historyText, List.of(), pendingImagePromptRecorder, generatedImageRecorder);
+        this(sessionKey, userText, arguments, historyText, List.of(), List.of(), pendingImagePromptRecorder, generatedImageRecorder);
     }
 
     public String argument(String name) {
@@ -74,4 +88,3 @@ public record WechatToolRequest(
         void record(String userText, String prompt);
     }
 }
-

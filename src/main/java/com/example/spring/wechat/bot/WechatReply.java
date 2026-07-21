@@ -66,22 +66,30 @@ public record WechatReply(String text, ImageGenerationResult image, List<String>
         return image != null && image.imageBytes() != null && image.imageBytes().length > 0;
     }
 
-    public record Part(String text, ImageGenerationResult image, Voice voice) {
+    public record Part(String text, ImageGenerationResult image, Voice voice, FileAttachment file) {
+
+        public Part(String text, ImageGenerationResult image, Voice voice) {
+            this(text, image, voice, null);
+        }
 
         public static Part text(String text) {
-            return new Part(text, null, null);
+            return new Part(text, null, null, null);
         }
 
         public static Part image(String caption, ImageGenerationResult image) {
-            return new Part(caption, image, null);
+            return new Part(caption, image, null, null);
         }
 
         public static Part voice(Voice voice) {
-            return new Part(null, null, voice);
+            return new Part(null, null, voice, null);
         }
 
         public static Part textAndVoice(String text, Voice voice) {
-            return new Part(text, null, voice);
+            return new Part(text, null, voice, null);
+        }
+
+        public static Part file(FileAttachment file) {
+            return new Part(file == null ? null : file.caption(), null, null, file);
         }
 
         public boolean hasImage() {
@@ -92,8 +100,33 @@ public record WechatReply(String text, ImageGenerationResult image, List<String>
             return voice != null && voice.audioBytes() != null && voice.audioBytes().length > 0;
         }
 
+        public boolean hasFile() {
+            return file != null && file.fileBytes() != null && file.fileBytes().length > 0;
+        }
+
         private boolean hasContent() {
-            return hasImage() || hasVoice() || (text != null && !text.isBlank());
+            return hasImage() || hasVoice() || hasFile() || (text != null && !text.isBlank());
+        }
+    }
+
+    public record FileAttachment(
+            byte[] fileBytes,
+            String fileName,
+            String contentType,
+            String caption) {
+
+        public FileAttachment {
+            if (fileBytes != null) {
+                fileBytes = fileBytes.clone();
+            }
+            fileName = fileName == null || fileName.isBlank() ? "document.bin" : fileName.strip();
+            contentType = contentType == null ? "application/octet-stream" : contentType.strip();
+            caption = caption == null ? "" : caption.strip();
+        }
+
+        @Override
+        public byte[] fileBytes() {
+            return fileBytes == null ? null : fileBytes.clone();
         }
     }
 

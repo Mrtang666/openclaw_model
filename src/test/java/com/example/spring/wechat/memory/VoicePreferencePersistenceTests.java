@@ -8,10 +8,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(args = "/status")
+@ActiveProfiles("test")
 class VoicePreferencePersistenceTests {
 
     @Autowired
@@ -25,6 +27,7 @@ class VoicePreferencePersistenceTests {
 
     @BeforeEach
     void clearPreferences() {
+        TestDatabaseGuard.assertUsingTestDatabase(jdbcTemplate);
         jdbcTemplate.update("DELETE FROM tool_execution_logs");
         jdbcTemplate.update("DELETE FROM conversation_summaries");
         jdbcTemplate.update("DELETE FROM conversation_messages");

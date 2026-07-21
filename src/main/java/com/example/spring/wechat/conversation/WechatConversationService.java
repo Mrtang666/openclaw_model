@@ -12,7 +12,11 @@ import com.example.spring.tool.protocol.ConversationIntentDecision;
 import com.example.spring.tool.protocol.ToolCall;
 import com.example.spring.tool.protocol.ToolCallPlanner;
 import com.example.spring.wechat.bot.WechatReply;
+import com.example.spring.wechat.document.model.ParsedDocument;
+import com.example.spring.wechat.document.service.DocumentArchiveService;
+import com.example.spring.wechat.document.service.DocumentParseService;
 import com.example.spring.wechat.model.WechatIncomingMessage;
+import com.example.spring.wechat.model.WechatIncomingFile;
 import com.example.spring.wechat.model.WechatIncomingVoice;
 import com.example.spring.wechat.conversation.tools.WechatToolRegistry;
 import com.example.spring.wechat.conversation.tools.WechatToolRequest;
@@ -68,6 +72,8 @@ public class WechatConversationService {
     private final ToolCallPlanner toolCallPlanner;
     private final WechatToolRegistry wechatToolRegistry;
     private final WechatMemoryService wechatMemoryService;
+    private final DocumentParseService documentParseService;
+    private final DocumentArchiveService documentArchiveService;
     private final Map<String, WechatConversationMemory> memories = new ConcurrentHashMap<>();
 
     @Autowired
@@ -82,7 +88,9 @@ public class WechatConversationService {
             ImageGenerationIntentParser imageGenerationIntentParser,
             ToolCallPlanner toolCallPlanner,
             WechatToolRegistry wechatToolRegistry,
-            WechatMemoryService wechatMemoryService) {
+            WechatMemoryService wechatMemoryService,
+            DocumentParseService documentParseService,
+            DocumentArchiveService documentArchiveService) {
         this.chatService = chatService;
         this.weatherService = weatherService;
         this.imageUnderstandingService = imageUnderstandingService;
@@ -94,17 +102,19 @@ public class WechatConversationService {
         this.toolCallPlanner = toolCallPlanner;
         this.wechatToolRegistry = wechatToolRegistry;
         this.wechatMemoryService = wechatMemoryService;
+        this.documentParseService = documentParseService == null ? DocumentParseService.defaultService() : documentParseService;
+        this.documentArchiveService = documentArchiveService == null ? new DocumentArchiveService() : documentArchiveService;
     }
 
     WechatConversationService(ChatService chatService, WeatherService weatherService) {
-        this(chatService, weatherService, null, null, null, new ImageInputResolver(), new WeatherIntentParser(), new ImageGenerationIntentParser(), null, null, localMemoryService());
+        this(chatService, weatherService, null, null, null, new ImageInputResolver(), new WeatherIntentParser(), new ImageGenerationIntentParser(), null, null, localMemoryService(), DocumentParseService.defaultService(), new DocumentArchiveService());
     }
 
     WechatConversationService(
             ChatService chatService,
             WeatherService weatherService,
             WeatherIntentParser weatherIntentParser) {
-        this(chatService, weatherService, null, null, null, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), null, null, localMemoryService());
+        this(chatService, weatherService, null, null, null, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), null, null, localMemoryService(), DocumentParseService.defaultService(), new DocumentArchiveService());
     }
 
     WechatConversationService(
@@ -112,7 +122,7 @@ public class WechatConversationService {
             WeatherService weatherService,
             ImageUnderstandingService imageUnderstandingService,
             WeatherIntentParser weatherIntentParser) {
-        this(chatService, weatherService, imageUnderstandingService, null, null, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), null, null, localMemoryService());
+        this(chatService, weatherService, imageUnderstandingService, null, null, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), null, null, localMemoryService(), DocumentParseService.defaultService(), new DocumentArchiveService());
     }
 
     WechatConversationService(
@@ -121,7 +131,7 @@ public class WechatConversationService {
             ImageUnderstandingService imageUnderstandingService,
             ImageGenerationService imageGenerationService,
             WeatherIntentParser weatherIntentParser) {
-        this(chatService, weatherService, imageUnderstandingService, imageGenerationService, null, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), null, null, localMemoryService());
+        this(chatService, weatherService, imageUnderstandingService, imageGenerationService, null, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), null, null, localMemoryService(), DocumentParseService.defaultService(), new DocumentArchiveService());
     }
 
     WechatConversationService(
@@ -131,7 +141,7 @@ public class WechatConversationService {
             ImageGenerationService imageGenerationService,
             VoiceRecognitionService voiceRecognitionService,
             WeatherIntentParser weatherIntentParser) {
-        this(chatService, weatherService, imageUnderstandingService, imageGenerationService, voiceRecognitionService, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), null, null, localMemoryService());
+        this(chatService, weatherService, imageUnderstandingService, imageGenerationService, voiceRecognitionService, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), null, null, localMemoryService(), DocumentParseService.defaultService(), new DocumentArchiveService());
     }
 
     WechatConversationService(
@@ -143,7 +153,24 @@ public class WechatConversationService {
             WeatherIntentParser weatherIntentParser,
             ToolCallPlanner toolCallPlanner,
             WechatToolRegistry wechatToolRegistry) {
-        this(chatService, weatherService, imageUnderstandingService, imageGenerationService, voiceRecognitionService, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), toolCallPlanner, wechatToolRegistry, localMemoryService());
+        this(chatService, weatherService, imageUnderstandingService, imageGenerationService, voiceRecognitionService, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), toolCallPlanner, wechatToolRegistry, localMemoryService(), DocumentParseService.defaultService(), new DocumentArchiveService());
+    }
+
+    WechatConversationService(
+            ChatService chatService,
+            WeatherService weatherService,
+            ImageUnderstandingService imageUnderstandingService,
+            ImageGenerationService imageGenerationService,
+            VoiceRecognitionService voiceRecognitionService,
+            ImageInputResolver imageInputResolver,
+            WeatherIntentParser weatherIntentParser,
+            ImageGenerationIntentParser imageGenerationIntentParser,
+            ToolCallPlanner toolCallPlanner,
+            WechatToolRegistry wechatToolRegistry,
+            WechatMemoryService wechatMemoryService) {
+        this(chatService, weatherService, imageUnderstandingService, imageGenerationService, voiceRecognitionService,
+                imageInputResolver, weatherIntentParser, imageGenerationIntentParser, toolCallPlanner, wechatToolRegistry,
+                wechatMemoryService, DocumentParseService.defaultService(), new DocumentArchiveService());
     }
 
     public String handle(String input) {
@@ -181,6 +208,17 @@ public class WechatConversationService {
                 return handleVoiceMessage(sessionKey, message);
             }
 
+            if (message.hasFiles()) {
+                rememberIncomingFiles(sessionKey, message.files());
+                String rawText = message.text() == null ? "" : message.text().strip();
+                if (rawText.isBlank()) {
+                    String reply = buildFileRequirementPrompt(message.files());
+                    memoryFor(sessionKey).record("发送文件", reply);
+                    rememberAssistantReply(sessionKey, reply);
+                    return WechatReply.text(reply);
+                }
+            }
+
             ImageAnalysisRequest request = imageInputResolver.resolve(message);
             String text = request.userText();
             boolean hasImages = request.hasImages();
@@ -195,7 +233,7 @@ public class WechatConversationService {
                 return WechatReply.text("");
             }
 
-            Optional<WechatReply> structuredReply = handleIntentPlan(sessionKey, text);
+            Optional<WechatReply> structuredReply = handleIntentPlan(sessionKey, text, message.files());
             if (structuredReply.isPresent()) {
                 return structuredReply.get();
             }
@@ -279,6 +317,10 @@ public class WechatConversationService {
     }
 
     private Optional<WechatReply> handleIntentPlan(String sessionKey, String text) {
+        return handleIntentPlan(sessionKey, text, List.of());
+    }
+
+    private Optional<WechatReply> handleIntentPlan(String sessionKey, String text, List<WechatIncomingFile> files) {
         if (toolCallPlanner == null || wechatToolRegistry == null) {
             return Optional.empty();
         }
@@ -300,10 +342,12 @@ public class WechatConversationService {
             return Optional.empty();
         }
 
+        List<ToolCall> tasks = intentDecision.tasks();
         List<WechatReply.Part> parts = new ArrayList<>();
         String rollingHistory = historyText(sessionKey);
         String previousToolReplyText = "";
-        for (ToolCall toolCall : intentDecision.tasks()) {
+        for (int index = 0; index < tasks.size(); index++) {
+            ToolCall toolCall = tasks.get(index);
             if (!wechatToolRegistry.contains(toolCall.tool())) {
                 log.warn("工具调用计划包含未注册工具，tool={}, userId={}", toolCall.tool(), sessionKey);
                 continue;
@@ -315,11 +359,15 @@ public class WechatConversationService {
                     text,
                     arguments,
                     rollingHistory,
+                    List.of(),
+                    files,
                     (userText, prompt) -> memoryFor(sessionKey).recordPendingImagePrompt(userText, prompt),
                     (userText, prompt) -> memoryFor(sessionKey).recordImage(userText, prompt));
             WechatReply reply = wechatToolRegistry.execute(toolCall.tool(), request);
             List<WechatReply.Part> replyParts = toReplyParts(reply);
-            parts.addAll(replyParts);
+            if (!isIntermediateDocumentAnalysis(toolCall, tasks, index)) {
+                parts.addAll(replyParts);
+            }
             String toolReplyText = replyMemoryText(replyParts);
             if (!DEFAULT_SESSION_KEY.equals(sessionKey)) {
                 wechatMemoryService.recordToolExecution(
@@ -358,7 +406,26 @@ public class WechatConversationService {
                 && !previousToolReplyText.isBlank()) {
             arguments.putIfAbsent("previous_result", previousToolReplyText.strip());
         }
+        if ("document_generation".equals(toolCall.tool())
+                && previousToolReplyText != null
+                && !previousToolReplyText.isBlank()) {
+            arguments.putIfAbsent("previous_result", previousToolReplyText.strip());
+        }
         return arguments;
+    }
+
+    private boolean isIntermediateDocumentAnalysis(ToolCall current, List<ToolCall> tasks, int currentIndex) {
+        if (current == null || !"document_analysis".equals(current.tool()) || tasks == null) {
+            return false;
+        }
+
+        for (int index = currentIndex + 1; index < tasks.size(); index++) {
+            ToolCall next = tasks.get(index);
+            if (next != null && "document_generation".equals(next.tool())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private WechatReply handleSingleTextTask(String sessionKey, String text) {
@@ -438,6 +505,11 @@ public class WechatConversationService {
             if (part.hasImage()) {
                 appendDistinctMemoryText(text, "[已发送图片]");
             }
+
+            if (part.hasFile()) {
+                String fileName = part.file() == null ? "" : part.file().fileName();
+                appendDistinctMemoryText(text, fileName.isBlank() ? "[已发送文件]" : "[已发送文件：" + fileName + "]");
+            }
         }
         return text.toString().strip();
     }
@@ -461,11 +533,14 @@ public class WechatConversationService {
 
     private String historyText(String sessionKey) {
         List<com.example.spring.wechat.memory.model.ConversationTurn> turns = memoryFor(sessionKey).snapshot();
-        if (turns.isEmpty()) {
-            return "?";
-        }
-
         StringBuilder history = new StringBuilder();
+        String fileContext = fileContext(sessionKey);
+        if (!fileContext.isBlank()) {
+            history.append(fileContext).append('\n');
+        }
+        if (turns.isEmpty()) {
+            return history.isEmpty() ? "?" : history.toString().strip();
+        }
         for (com.example.spring.wechat.memory.model.ConversationTurn turn : turns) {
             history.append("用户：").append(turn.userText()).append('\n')
                     .append("助手：").append(turn.assistantText()).append('\n');
@@ -489,10 +564,66 @@ public class WechatConversationService {
                 context.append("上一轮未完成需求：").append(text).append('\n'));
         memory.pendingClarificationQuestion().ifPresent(question ->
                 context.append("上一轮追问：").append(question).append('\n'));
+        String fileContext = fileContext(sessionKey);
+        if (!fileContext.isBlank()) {
+            context.append(fileContext).append('\n');
+        }
         String history = historyText(sessionKey);
         if (!history.isBlank()) {
             context.append("最近对话：").append('\n').append(history).append('\n');
         }
+        return context.toString().strip();
+    }
+
+    private void rememberIncomingFiles(String sessionKey, List<WechatIncomingFile> files) {
+        if (files == null || files.isEmpty()) {
+            return;
+        }
+        for (WechatIncomingFile file : files) {
+            if (file == null) {
+                continue;
+            }
+            try {
+                ParsedDocument parsed = documentParseService.parse(file);
+                documentArchiveService.archive(sessionKey, file, parsed);
+                memoryFor(sessionKey).recordFile(
+                        parsed.fileName(),
+                        parsed.format().name(),
+                        parsed.summary());
+            } catch (RuntimeException exception) {
+                memoryFor(sessionKey).recordFile(
+                        file.fileName(),
+                        "UNKNOWN",
+                        "文件已收到，但解析失败：" + rootMessage(exception));
+            }
+        }
+    }
+
+    private String buildFileRequirementPrompt(List<WechatIncomingFile> files) {
+        String fileName = files == null || files.isEmpty() || files.get(0) == null
+                ? "文件"
+                : files.get(0).fileName();
+        return """
+                我已经收到文件《%s》。
+
+                你想让我怎么处理它？可以直接说：
+                1. 总结全文
+                2. 提取重点
+                3. 提取表格
+                4. 生成汇报稿
+                5. 根据它生成新的 Word / PDF / Markdown 文档
+                """.formatted(fileName).strip();
+    }
+
+    private String fileContext(String sessionKey) {
+        WechatConversationMemory memory = memoryFor(sessionKey);
+        if (memory.lastFileName().isEmpty() && memory.lastFileSummary().isEmpty()) {
+            return "";
+        }
+        StringBuilder context = new StringBuilder("最近文件：");
+        memory.lastFileName().ifPresent(context::append);
+        memory.lastFileFormat().ifPresent(format -> context.append("，类型：").append(format));
+        memory.lastFileSummary().ifPresent(summary -> context.append('\n').append("文件摘要：").append(summary));
         return context.toString().strip();
     }
 
@@ -1030,7 +1161,7 @@ public class WechatConversationService {
     }
 
     private boolean acceptWechatMessage(String sessionKey, WechatIncomingMessage message) {
-        String contentType = message.hasVoices() ? "VOICE" : message.hasImages() ? "IMAGE" : "TEXT";
+        String contentType = message.hasVoices() ? "VOICE" : message.hasImages() ? "IMAGE" : message.hasFiles() ? "FILE" : "TEXT";
         boolean accepted = wechatMemoryService.acceptIncoming(
                 sessionKey,
                 message.messageId(),

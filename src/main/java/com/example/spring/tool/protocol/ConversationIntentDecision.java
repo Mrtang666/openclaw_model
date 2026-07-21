@@ -1,6 +1,7 @@
 package com.example.spring.tool.protocol;
 
 /**
+ * 大模型意图判断结果
  * 承载一次用户输入的任务拆解结果，包括是否需要追问以及按顺序排列的工具任务。
  */
 import java.util.List;

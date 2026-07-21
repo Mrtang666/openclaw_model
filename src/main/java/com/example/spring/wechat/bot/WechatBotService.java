@@ -174,19 +174,21 @@ public class WechatBotService {
         boolean hasText = message.text() != null && !message.text().isBlank();
         boolean hasImages = message.images() != null && !message.images().isEmpty();
         boolean hasVoices = message.voices() != null && !message.voices().isEmpty();
-        if (!hasText && !hasImages && !hasVoices) {
+        boolean hasFiles = message.files() != null && !message.files().isEmpty();
+        if (!hasText && !hasImages && !hasVoices && !hasFiles) {
             return;
         }
 
         String text = hasText ? message.text().strip() : "";
         log.info(
-                "微信收到消息，fromUserId={}, text={}, imageCount={}, voiceCount={}",
+                "微信收到消息，fromUserId={}, text={}, imageCount={}, voiceCount={}, fileCount={}",
                 message.fromUserId(),
                 preview(text),
                 hasImages ? message.images().size() : 0,
-                hasVoices ? message.voices().size() : 0);
+                hasVoices ? message.voices().size() : 0,
+                hasFiles ? message.files().size() : 0);
         try {
-            String thinkingMessage = thinkingMessage(text, hasImages, hasVoices);
+            String thinkingMessage = thinkingMessage(text, hasImages, hasVoices, hasFiles);
             if (thinkingMessage != null) {
                 sendText(activeClient, message.fromUserId(), thinkingMessage);
             }
@@ -206,8 +208,8 @@ public class WechatBotService {
         }
     }
 
-    private String thinkingMessage(String text, boolean hasImages, boolean hasVoices) {
-        if (hasImages || hasVoices) {
+    private String thinkingMessage(String text, boolean hasImages, boolean hasVoices, boolean hasFiles) {
+        if (hasImages || hasVoices || hasFiles) {
             return THINKING_MESSAGE;
         }
         if (text == null || text.isBlank() || text.startsWith("/")) {
@@ -257,6 +259,8 @@ public class WechatBotService {
 
             if (part.hasImage()) {
                 sendImage(activeClient, userId, part.image(), part.text());
+            } else if (part.hasFile()) {
+                sendDocumentFile(activeClient, userId, part.file());
             } else {
                 sendReplyChunks(activeClient, userId, part.text());
             }
@@ -385,6 +389,22 @@ public class WechatBotService {
             } else {
                 throw new WechatSendException(exception);
             }
+        }
+    }
+
+    private void sendDocumentFile(WechatClient activeClient, String userId, WechatReply.FileAttachment file) {
+        if (file == null || file.fileBytes() == null || file.fileBytes().length == 0) {
+            return;
+        }
+
+        try {
+            sendMediaWithRetry(
+                    "文档文件",
+                    userId,
+                    file.fileName(),
+                    () -> activeClient.sendFile(userId, file.fileBytes(), file.fileName(), file.caption()));
+        } catch (IOException | UnsupportedOperationException exception) {
+            throw new WechatSendException(exception);
         }
     }
 

@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Instant;
 
@@ -20,6 +21,7 @@ import static org.mockito.Mockito.when;
 @SpringBootTest(
         args = "/status",
         properties = "wechat.memory.rolling-summary-turn-threshold=2")
+@ActiveProfiles("test")
 class WechatMemoryMaintenanceSchedulerTests {
 
     @Autowired
@@ -36,6 +38,7 @@ class WechatMemoryMaintenanceSchedulerTests {
 
     @BeforeEach
     void clearMemoryTables() {
+        TestDatabaseGuard.assertUsingTestDatabase(jdbcTemplate);
         jdbcTemplate.update("DELETE FROM tool_execution_logs");
         jdbcTemplate.update("DELETE FROM conversation_summaries");
         jdbcTemplate.update("DELETE FROM conversation_messages");

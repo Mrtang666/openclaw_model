@@ -223,6 +223,32 @@ class WechatBotServiceTests {
         service.stop();
     }
 
+    @Test
+    void sendsDocumentReplyPartsAsWechatFiles() throws Exception {
+        FakeWechatClient client = new FakeWechatClient(2);
+        WechatConversationService conversationService = mock(WechatConversationService.class);
+        when(conversationService.handleWechat(any())).thenReturn(WechatReply.ordered(List.of(
+                WechatReply.Part.file(new WechatReply.FileAttachment(
+                        "DOCX".getBytes(),
+                        "汇报.docx",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        "文档已生成，请查收")))));
+        @SuppressWarnings("unchecked")
+        ObjectProvider<WechatConversationService> provider = mock(ObjectProvider.class);
+        when(provider.getObject()).thenReturn(conversationService);
+        WechatBotService service = new WechatBotService(() -> client, provider);
+
+        service.start();
+        client.loginFuture.complete(new WechatLoginInfo("bot-1"));
+        client.updates.add(List.of(new WechatIncomingMessage("user@im.wechat", "生成文档")));
+
+        assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
+        assertThat(client.sentFiles).hasSize(1);
+        assertThat(client.sentFiles.peek().fileName()).isEqualTo("汇报.docx");
+        assertThat(client.sentFiles.peek().caption()).isEqualTo("文档已生成，请查收");
+        service.stop();
+    }
+
     private static WechatReply.Part voiceFilePart(int index) {
         return WechatReply.Part.voice(new WechatReply.Voice(
                 ("MP3-" + index).getBytes(),

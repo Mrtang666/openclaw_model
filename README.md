@@ -1,6 +1,6 @@
 # OpenClaw CLI / WeChat Agent
 
-OpenClaw 是一个基于 Java 17 + Spring Boot 的智能助手项目，支持 CLI 命令行入口和微信 iLink 入口。当前项目重点是微信端 Agent：微信端可以接收文本、图片、语音消息，并根据用户需求调用天气、图片生成、图片理解、语音识别、语音合成和大模型对话等工具。
+OpenClaw 是一个基于 Java 17 + Spring Boot 的智能助手项目，支持 CLI 命令行入口和微信 iLink 入口。当前项目重点是微信端 Agent：微信端可以接收文本、图片、语音、文件消息，并根据用户需求调用天气、图片生成、图片理解、语音识别、语音合成、文件解析、文档生成和大模型对话等工具。
 
 ## 当前功能
 
@@ -10,6 +10,7 @@ OpenClaw 是一个基于 Java 17 + Spring Boot 的智能助手项目，支持 CL
 - 大模型对话：接入阿里百炼 DashScope，文本模型配置为 `qwen3.7-max-2026-06-08`。
 - 天气查询：接入高德天气 API，再由大模型整理成自然回复和出行建议。
 - 微信图片识别：支持微信附件图片、图片链接、data URI 图片。
+- 微信文件识别与生成：支持 PDF、Word、TXT、Markdown、Excel、PPT 文件解析，也支持按用户需求生成 Word、PDF、TXT、Markdown 文档。
 - 微信图片生成：图片生成能力只保留在微信端工具中，支持提示词优化、确认后生成、上下文修改图片。
 - 微信语音识别：支持微信语音下载、格式检测、必要时 ffmpeg 转码，再调用 ASR。
 - 微信语音合成：支持把回答文本转成语音文件发送，长文本会拆段。
@@ -156,6 +157,26 @@ ImageGenerationService 下载图片二进制
 WechatBotService 发送图片给用户
 ```
 
+### 微信文件解析与文档生成流程
+
+```text
+用户发送文件或提出文档需求
+  ↓
+IlinkWechatClient 下载文件二进制并封装为 WechatIncomingFile
+  ↓
+DocumentTypeDetector 结合文件后缀、MIME 和文件头识别真实类型
+  ↓
+DocumentParseService 解析 PDF / DOCX / TXT / MD / XLSX / PPTX，并按片段切块
+  ↓
+如果用户只发送文件：WechatConversationService 先追问“你想让我怎么处理”
+  ↓
+如果用户提出总结、提炼、改写等需求：DocumentAnalysisWechatTool 输出摘要和关键片段
+  ↓
+如果用户要求生成 Word / PDF / TXT / Markdown：DocumentGenerationWechatTool 生成文件
+  ↓
+WechatBotService 发送文本结果或文件附件给用户
+```
+
 ### 微信语音流程
 
 ```text
@@ -193,6 +214,7 @@ src/main/java/com/example/spring/
       ├─ bot/                       # 微信 Bot 生命周期、队列、发送逻辑
       ├─ conversation/              # 微信会话编排
       ├─ conversation/tools/        # 微信插件化工具
+      ├─ document/                  # 微信文件解析、分块、生成与本地归档
       ├─ image/                     # 微信图片理解
       ├─ image/generation/          # 微信端图片生成能力
       ├─ model/                     # 微信入站消息、图片、语音等模型

@@ -25,6 +25,10 @@ public class WechatConversationMemory {
     private String lastWeatherCity;
     private String pendingClarificationUserText;
     private String pendingClarificationQuestion;
+    private String lastFileName;
+    private String lastFileFormat;
+    private String lastFileSummary;
+    private String pendingFileQuestion;
     private int lastImagePromptTurnCount;
     private List<VoiceProfile> lastDisplayedVoiceCandidates = List.of();
     private String lastVoiceQuery = "";
@@ -111,6 +115,19 @@ public class WechatConversationMemory {
         }
     }
 
+    public synchronized void recordFile(String fileName, String fileFormat, String fileSummary) {
+        if (!isBlank(fileName)) {
+            lastFileName = fileName.strip();
+        }
+        if (!isBlank(fileFormat)) {
+            lastFileFormat = fileFormat.strip();
+        }
+        if (!isBlank(fileSummary)) {
+            lastFileSummary = fileSummary.strip();
+        }
+        pendingFileQuestion = null;
+    }
+
     public synchronized List<ConversationTurn> snapshot() {
         return List.copyOf(turns);
     }
@@ -159,6 +176,22 @@ public class WechatConversationMemory {
         return optionalText(lastWeatherCity);
     }
 
+    public synchronized Optional<String> lastFileName() {
+        return optionalText(lastFileName);
+    }
+
+    public synchronized Optional<String> lastFileFormat() {
+        return optionalText(lastFileFormat);
+    }
+
+    public synchronized Optional<String> lastFileSummary() {
+        return optionalText(lastFileSummary);
+    }
+
+    public synchronized Optional<String> pendingFileQuestion() {
+        return optionalText(pendingFileQuestion);
+    }
+
     public synchronized Optional<String> pendingClarificationUserText() {
         return optionalText(pendingClarificationUserText);
     }
@@ -174,6 +207,10 @@ public class WechatConversationMemory {
     public synchronized void clearPendingClarification() {
         pendingClarificationUserText = null;
         pendingClarificationQuestion = null;
+    }
+
+    public synchronized void clearPendingFileQuestion() {
+        pendingFileQuestion = null;
     }
 
     public synchronized boolean lastAssistantInvitedImageRefinement() {
@@ -235,6 +272,10 @@ public class WechatConversationMemory {
                 lastWeatherCity,
                 pendingClarificationUserText,
                 pendingClarificationQuestion,
+                lastFileName,
+                lastFileFormat,
+                lastFileSummary,
+                pendingFileQuestion,
                 lastImagePromptTurnCount);
     }
 
@@ -250,6 +291,10 @@ public class WechatConversationMemory {
         lastWeatherCity = state.lastWeatherCity();
         pendingClarificationUserText = state.pendingClarificationUserText();
         pendingClarificationQuestion = state.pendingClarificationQuestion();
+        lastFileName = state.lastFileName();
+        lastFileFormat = state.lastFileFormat();
+        lastFileSummary = state.lastFileSummary();
+        pendingFileQuestion = state.pendingFileQuestion();
         lastImagePromptTurnCount = Math.max(0, state.lastImagePromptTurnCount());
     }
 
@@ -262,6 +307,10 @@ public class WechatConversationMemory {
             String lastWeatherCity,
             String pendingClarificationUserText,
             String pendingClarificationQuestion,
+            String lastFileName,
+            String lastFileFormat,
+            String lastFileSummary,
+            String pendingFileQuestion,
             int lastImagePromptTurnCount) {
     }
 

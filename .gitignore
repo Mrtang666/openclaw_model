@@ -6,4 +6,5 @@ target/
 logs/
 *.log
 generated-images/
+data/
 .worktrees/

@@ -2,7 +2,7 @@ package com.example.spring.tool.protocol;
 
 
 /**
- * 标准工具调用协议层，负责承载和解析大模型工具计划。
+ * 负责解析大模型返回的 JSON。
  */
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

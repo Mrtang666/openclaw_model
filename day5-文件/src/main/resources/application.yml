@@ -1,0 +1,23 @@
+spring:
+  application:
+    name: wechat-ai-agent
+
+# DeepSeek 配置
+deepseek:
+  api-key: "sk-1bd491c65518488fbf84ce9221d23788"
+
+# 和风天气配置
+weather:
+  api-key: "d8a7cecb399a474c8f04c91843248269"
+
+
+# DashScope 配置 (通义千问 + 通义万相)
+dashscope:
+  api-key: "sk-ws-H.EDYDLLX.QWwS.MEYCIQCfGazv9lfSewDUwISsGzX9p1FJ1a9lgvSwmBaOmTSxZgIhAPNRqkix9kzct-4NpoHhmgxCwrwTi2EpImGGmHM1mSEH"
+
+# OCR 配置
+ocr:
+  # SiliconFlow API（可选，如果不使用本地服务）
+  api:
+    key: "sk-hboitaifgqosgaqgbrjdudoxqilrfjlrnvdcslctujojypnp"
+

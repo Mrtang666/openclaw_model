@@ -21,10 +21,6 @@ public class TtsTool implements Tool {
     private final OkHttpClient httpClient;
     private final ConversationMemory memory;
 
-    // 支持的音频格式
-    public static final String FORMAT_MP3 = "mp3";
-    public static final String FORMAT_PCM = "pcm";
-
     public TtsTool(DashScopeProperties dashScopeProperties,
                    OkHttpClient httpClient,
                    ConversationMemory memory) {
@@ -61,7 +57,7 @@ public class TtsTool implements Tool {
 
         Map<String, Object> userIdProp = new HashMap<>();
         userIdProp.put("type", "string");
-        userIdProp.put("description", "用户ID");
+        userIdProp.put("description", "用户ID（用于获取用户音色偏好）");
         properties.put("userId", userIdProp);
 
         schema.put("properties", properties);
@@ -77,46 +73,59 @@ public class TtsTool implements Tool {
 
         log.info("========== TTS工具被调用 ==========");
         log.info("待合成文本: {}", text);
+        log.info("传入的voice参数: {}", voice);
+        log.info("传入的userId参数: {}", userId);
 
         if (text == null || text.trim().isEmpty()) {
             return "请提供要转换为语音的文本内容";
         }
 
-        // 确定音色
-        if (voice != null && !voice.isEmpty() && memory.isValidVoice(voice)) {
-            log.info("✅ 使用传入的音色: {}", voice);
-        } else if (userId != null) {
-            voice = memory.getUserVoice(userId);
-            log.info("✅ 从用户偏好获取音色: {}", voice);
-        } else {
-            voice = "Cherry";
-            log.info("✅ 使用默认音色: {}", voice);
+        // ============================================================
+        // 核心修复：从 memory 读取音色（优先使用 userId）
+        // ============================================================
+        String finalVoice = null;
+
+        // 1. 如果有 userId，从 memory 读取用户保存的音色
+        if (userId != null) {
+            String savedVoice = memory.getUserVoice(userId);
+            log.info("🔍 从 memory 读取到音色: userId={}, savedVoice={}", userId, savedVoice);
+            if (savedVoice != null && memory.isValidVoice(savedVoice)) {
+                finalVoice = savedVoice;
+                log.info("✅ 使用 memory 中保存的音色: {}", finalVoice);
+            } else {
+                log.warn("⚠️ memory 中音色无效或不存在，尝试使用传入的voice参数");
+            }
         }
 
-        if (!memory.isValidVoice(voice)) {
-            log.warn("⚠️ 无效音色: {}，使用默认音色 Cherry", voice);
-            voice = "Cherry";
+        // 2. 如果 memory 中没有，使用传入的 voice 参数
+        if (finalVoice == null && voice != null && !voice.isEmpty() && memory.isValidVoice(voice)) {
+            finalVoice = voice;
+            log.info("✅ 使用传入的音色参数: {}", finalVoice);
         }
 
-        log.info("🎤 最终使用音色: {}", voice);
+        // 3. 最后保底：使用默认音色
+        if (finalVoice == null || !memory.isValidVoice(finalVoice)) {
+            finalVoice = "Cherry";
+            log.warn("⚠️ 使用默认音色 Cherry（因为没有有效音色）");
+        }
+
+        log.info("🎤 最终使用音色: {}", finalVoice);
+        log.info("🎤 音色显示名称: {}", memory.getVoiceDisplayName(finalVoice));
 
         // =============================================
         // 1. 先尝试 MP3 格式
         // =============================================
         try {
-            log.info("🔄 尝试使用 MP3 格式合成语音...");
-            byte[] audioBytes = synthesizeSpeechViaHttp(text, voice, FORMAT_MP3);
+            log.info("🔄 尝试使用 MP3 格式合成语音，音色: {}", finalVoice);
+            byte[] audioBytes = synthesizeSpeechViaHttp(text, finalVoice, "mp3");
             log.info("✅ MP3合成成功，音频大小: {} bytes", audioBytes.length);
             return "AUDIO:MP3:" + Base64.getEncoder().encodeToString(audioBytes);
         } catch (Exception e) {
             log.warn("⚠️ MP3合成失败: {}", e.getMessage());
             log.info("🔄 自动降级为 PCM 格式...");
 
-            // =============================================
-            // 2. MP3 失败，降级为 PCM 格式
-            // =============================================
             try {
-                byte[] audioBytes = synthesizeSpeechViaHttp(text, voice, FORMAT_PCM);
+                byte[] audioBytes = synthesizeSpeechViaHttp(text, finalVoice, "pcm");
                 log.info("✅ PCM合成成功，音频大小: {} bytes", audioBytes.length);
                 return "AUDIO:PCM:" + Base64.getEncoder().encodeToString(audioBytes);
             } catch (Exception e2) {
@@ -127,7 +136,7 @@ public class TtsTool implements Tool {
     }
 
     /**
-     * 使用 HTTP 直调方式调用 Qwen-TTS，支持指定格式
+     * 使用 HTTP 直调方式调用 Qwen-TTS
      */
     private byte[] synthesizeSpeechViaHttp(String text, String voice, String format) throws Exception {
         Map<String, Object> requestBody = new HashMap<>();

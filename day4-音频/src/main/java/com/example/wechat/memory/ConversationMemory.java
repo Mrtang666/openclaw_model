@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class ConversationMemory {
 
-    private static final int MAX_HISTORY_SIZE = 30;
+    private static final int MAX_HISTORY_SIZE = 20;
     private static final long VOICE_MODE_TIMEOUT_MS = 5 * 60 * 1000;
 
     // 用户ID -> 对话历史
@@ -23,10 +23,10 @@ public class ConversationMemory {
     // 用户ID -> 是否刚退出语音模式
     private final Map<String, Boolean> recentlyInVoiceMode = new ConcurrentHashMap<>();
 
-    // 用户ID -> 当前使用的音色（默认Cherry）
+    // 用户ID -> 当前使用的音色
     private final Map<String, String> userVoicePreference = new ConcurrentHashMap<>();
 
-    // 用户ID -> 是否正在等待选择音色（只在用户主动切换音色时使用）
+    // 用户ID -> 是否正在等待选择音色
     private final Map<String, Boolean> waitingForVoiceSelection = new ConcurrentHashMap<>();
 
     // 用户ID -> 等待音色选择时的原始问题
@@ -35,7 +35,7 @@ public class ConversationMemory {
     // ===== 默认音色 =====
     private static final String DEFAULT_VOICE = "Cherry";
 
-    // ===== 音色定义（带标签） =====
+    // ===== 音色定义 =====
     public static class VoiceInfo {
         public final String name;
         public final String displayName;
@@ -52,7 +52,6 @@ public class ConversationMemory {
 
     // 音色库
     public static final List<VoiceInfo> VOICE_LIBRARY = Arrays.asList(
-            // ===== 温柔女声类 =====
             new VoiceInfo("Cherry", "芊悦", "阳光积极、亲切自然的温柔女声",
                     "温柔", "女声", "亲切", "自然", "甜美", "小姐姐", "治愈", "暖"),
             new VoiceInfo("Serena", "苏瑶", "温柔婉约、娓娓道来的知性女声",
@@ -61,8 +60,6 @@ public class ConversationMemory {
                     "温柔", "女声", "知性", "沉稳", "成熟", "姐姐"),
             new VoiceInfo("Mia", "乖小妹", "温顺乖巧，声音甜美",
                     "温柔", "女声", "甜美", "乖巧", "可爱", "妹妹", "治愈"),
-
-            // ===== 阳光活力男声 =====
             new VoiceInfo("Ethan", "晨煦", "阳光、温暖、充满活力的男声",
                     "男声", "阳光", "活力", "温暖", "朝气", "哥哥", "清爽"),
             new VoiceInfo("Moon", "月白", "率性帅气、清爽干净的男声",
@@ -71,56 +68,37 @@ public class ConversationMemory {
                     "男声", "磁性", "低沉", "稳重", "成熟", "大叔"),
             new VoiceInfo("Ryan", "甜茶", "节奏感强，戏感炸裂的活力男声",
                     "男声", "活力", "节奏", "戏感", "开朗", "哥哥"),
-
-            // ===== 可爱/二次元 =====
             new VoiceInfo("Chelsie", "千雪", "二次元虚拟女友，甜美可爱的少女音",
                     "可爱", "二次元", "萌", "少女", "动漫", "女友"),
             new VoiceInfo("Momo", "茉兔", "撒娇搞怪、活泼可爱的声音",
                     "可爱", "撒娇", "搞怪", "活泼", "萌", "少女"),
             new VoiceInfo("Bella", "萌宝", "调皮可爱的小萝莉音",
                     "可爱", "萝莉", "调皮", "萌", "小朋友"),
-
-            // ===== 御姐/成熟女声 =====
             new VoiceInfo("Vivian", "十三", "拽拽的、带点小暴躁的御姐",
                     "御姐", "女声", "成熟", "高冷", "帅气", "姐姐"),
             new VoiceInfo("Katerina", "卡捷琳娜", "御姐音色，韵律感十足",
                     "御姐", "女声", "成熟", "韵律", "磁性", "姐姐"),
-
-            // ===== 英语/国际 =====
             new VoiceInfo("Jennifer", "詹妮弗", "电影质感的美式英语女声",
                     "英语", "美式", "电影", "女声", "国际"),
             new VoiceInfo("Aiden", "艾登", "美式英语大男孩，阳光开朗",
                     "英语", "美式", "男声", "国际", "阳光"),
-
-            // ===== 特殊/搞怪 =====
             new VoiceInfo("Nofish", "不吃鱼", "略带口音、不会翘舌音的设计师",
                     "搞怪", "特别", "有趣", "设计师"),
             new VoiceInfo("Eldric Sage", "沧明子", "沉稳睿智的老者，有智慧感",
                     "老者", "沉稳", "睿智", "大叔", "长辈")
     );
 
-    // ===== 音色标签关键词索引 =====
+    // ===== 音色标签索引 =====
     private static final Map<String, List<VoiceInfo>> TAG_INDEX = new HashMap<>();
+    private static final Map<String, String> VOICE_DISPLAY_NAME = new HashMap<>();
+    private static final Map<String, String> VOICE_DESCRIPTION = new HashMap<>();
+
     static {
         for (VoiceInfo voice : VOICE_LIBRARY) {
             for (String tag : voice.tags) {
                 TAG_INDEX.computeIfAbsent(tag, k -> new ArrayList<>()).add(voice);
             }
-        }
-    }
-
-    // 音色显示名称映射
-    private static final Map<String, String> VOICE_DISPLAY_NAME = new HashMap<>();
-    static {
-        for (VoiceInfo voice : VOICE_LIBRARY) {
             VOICE_DISPLAY_NAME.put(voice.name, voice.displayName);
-        }
-    }
-
-    // 音色描述映射
-    private static final Map<String, String> VOICE_DESCRIPTION = new HashMap<>();
-    static {
-        for (VoiceInfo voice : VOICE_LIBRARY) {
             VOICE_DESCRIPTION.put(voice.name, voice.description);
         }
     }
@@ -131,41 +109,19 @@ public class ConversationMemory {
         if (keyword == null || keyword.trim().isEmpty()) {
             return Collections.emptyList();
         }
-
         String lowerKeyword = keyword.toLowerCase().trim();
         Set<VoiceInfo> matched = new LinkedHashSet<>();
-
         for (Map.Entry<String, List<VoiceInfo>> entry : TAG_INDEX.entrySet()) {
             if (entry.getKey().contains(lowerKeyword) || lowerKeyword.contains(entry.getKey())) {
                 matched.addAll(entry.getValue());
             }
         }
-
         for (VoiceInfo voice : VOICE_LIBRARY) {
-            if (voice.displayName.contains(lowerKeyword) ||
-                    voice.description.contains(lowerKeyword)) {
+            if (voice.displayName.contains(lowerKeyword) || voice.description.contains(lowerKeyword)) {
                 matched.add(voice);
             }
         }
-
         return new ArrayList<>(matched);
-    }
-
-    public String getVoiceByTags(String keyword) {
-        List<VoiceInfo> matched = findVoicesByTags(keyword);
-        if (matched.isEmpty()) {
-            return null;
-        }
-        return matched.get(0).name;
-    }
-
-    public List<String> getSuggestedVoices(String keyword) {
-        List<VoiceInfo> matched = findVoicesByTags(keyword);
-        List<String> suggestions = new ArrayList<>();
-        for (int i = 0; i < Math.min(3, matched.size()); i++) {
-            suggestions.add(matched.get(i).name);
-        }
-        return suggestions;
     }
 
     public String getVoiceListByCategory(String category) {
@@ -173,7 +129,6 @@ public class ConversationMemory {
         if (voices.isEmpty()) {
             return "未找到相关音色，请试试其他关键词。";
         }
-
         StringBuilder sb = new StringBuilder("🎤 找到以下相关音色：\n\n");
         for (VoiceInfo voice : voices) {
             sb.append("• **").append(voice.displayName).append("** (")
@@ -202,7 +157,13 @@ public class ConversationMemory {
     // ===== 音色偏好管理 =====
 
     public String getUserVoice(String userId) {
-        return userVoicePreference.getOrDefault(userId, DEFAULT_VOICE);
+        String voice = userVoicePreference.get(userId);
+        if (voice == null) {
+            voice = DEFAULT_VOICE;
+            // 首次使用，自动设置默认音色
+            userVoicePreference.putIfAbsent(userId, DEFAULT_VOICE);
+        }
+        return voice;
     }
 
     public boolean hasUserVoice(String userId) {
@@ -213,13 +174,9 @@ public class ConversationMemory {
         if (isValidVoice(voice)) {
             userVoicePreference.put(userId, voice);
             System.out.println("🎤 用户 " + userId + " 切换音色为: " + voice);
+        } else {
+            System.out.println("⚠️ 无效音色: " + voice);
         }
-    }
-
-    // 重置音色为默认
-    public void resetUserVoice(String userId) {
-        userVoicePreference.remove(userId);
-        System.out.println("🔄 用户 " + userId + " 重置音色为默认: " + DEFAULT_VOICE);
     }
 
     public boolean isValidVoice(String voice) {
@@ -260,7 +217,7 @@ public class ConversationMemory {
         return pendingVoiceQuestion.get(userId);
     }
 
-    // ===== 原有方法 =====
+    // ===== 核心方法 =====
 
     public static class Message {
         private final String role;
@@ -272,7 +229,6 @@ public class ConversationMemory {
             this.content = content;
             this.timestamp = System.currentTimeMillis();
         }
-
         public String getRole() { return role; }
         public String getContent() { return content; }
         public long getTimestamp() { return timestamp; }
@@ -307,7 +263,7 @@ public class ConversationMemory {
         systemMsg.put("content", getSystemPrompt(userId));
         messages.add(systemMsg);
 
-        int start = Math.max(0, history.size() - 10);
+        int start = Math.max(0, history.size() - 6);
         for (int i = start; i < history.size(); i++) {
             Message msg = history.get(i);
             Map<String, String> m = new HashMap<>();
@@ -315,7 +271,6 @@ public class ConversationMemory {
             m.put("content", msg.getContent());
             messages.add(m);
         }
-
         return messages;
     }
 
@@ -355,8 +310,6 @@ public class ConversationMemory {
                 voiceModeHint;
     }
 
-
-
     // ========== 语音模式管理 ==========
 
     public void setVoiceMode(String userId, boolean enabled) {
@@ -370,9 +323,8 @@ public class ConversationMemory {
         } else {
             voiceModePreference.remove(userId);
             voiceModeLastActiveTime.remove(userId);
-            // 用户主动退出，清除超时标记，不触发超时提示
             recentlyInVoiceMode.remove(userId);
-            System.out.println("🔇 用户 " + userId + " 主动退出语音回复模式");
+            System.out.println("🔇 用户 " + userId + " 退出语音回复模式");
         }
     }
 
@@ -388,12 +340,11 @@ public class ConversationMemory {
         if (isActive == null || !isActive) {
             return false;
         }
-
         Long lastActive = voiceModeLastActiveTime.get(userId);
         if (lastActive != null) {
             long idleTime = System.currentTimeMillis() - lastActive;
             if (idleTime > VOICE_MODE_TIMEOUT_MS) {
-                System.out.println("⏰ 用户 " + userId + " 语音模式超时 (" + (idleTime / 1000) + "秒)，自动关闭");
+                System.out.println("⏰ 用户 " + userId + " 语音模式超时，自动关闭");
                 voiceModePreference.remove(userId);
                 voiceModeLastActiveTime.remove(userId);
                 recentlyInVoiceMode.put(userId, true);
@@ -407,9 +358,7 @@ public class ConversationMemory {
 
     public long getVoiceModeRemainingSeconds(String userId) {
         Long lastActive = voiceModeLastActiveTime.get(userId);
-        if (lastActive == null) {
-            return 0;
-        }
+        if (lastActive == null) return 0;
         long elapsed = System.currentTimeMillis() - lastActive;
         long remaining = (VOICE_MODE_TIMEOUT_MS - elapsed) / 1000;
         return Math.max(0, remaining);

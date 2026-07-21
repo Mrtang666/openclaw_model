@@ -1,5 +1,6 @@
 package com.example.spring.wechat.memory.service;
 
+import com.example.spring.chat.ChatService;
 import com.example.spring.wechat.memory.config.WechatMemoryProperties;
 import com.example.spring.wechat.memory.fallback.InMemoryWechatMemoryFallback;
 import com.example.spring.wechat.memory.model.ConversationTurn;
@@ -46,16 +47,19 @@ public class MySqlWechatMemoryService implements WechatMemoryService {
     private final ObjectMapper objectMapper;
     private final WechatMemoryProperties properties;
     private final InMemoryWechatMemoryFallback fallback;
+    private final ChatService chatService;
 
     public MySqlWechatMemoryService(
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
             WechatMemoryProperties properties,
-            InMemoryWechatMemoryFallback fallback) {
+            InMemoryWechatMemoryFallback fallback,
+            ChatService chatService) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.properties = properties;
         this.fallback = fallback;
+        this.chatService = chatService;
     }
 
     @Override
@@ -192,6 +196,18 @@ public class MySqlWechatMemoryService implements WechatMemoryService {
     }
 
     @Override
+    @Transactional
+    public void maintainConversationSummaries(Instant now) {
+        Instant time = safeTime(now);
+        try {
+            closeIdleConversationsAfterSummary(time);
+            createRollingSummaries(time);
+        } catch (DataAccessException exception) {
+            log.warn("微信会话摘要维护失败，error={}", rootMessage(exception));
+        }
+    }
+
+    @Override
     public Optional<String> explicitPreference(String wechatUserId, String preferenceKey) {
         if (preferenceKey == null || preferenceKey.isBlank()) {
             return Optional.empty();
@@ -265,13 +281,13 @@ public class MySqlWechatMemoryService implements WechatMemoryService {
 
     private WechatMemorySession openPersistent(String wechatUserId, Instant now) {
         long userId = findOrCreateUser(wechatUserId, now);
-        closeExpiredConversations(userId, now);
+        closeExpiredConversationsAfterSummary(userId, now);
         Long activeConversationId = findActiveConversationId(userId);
         long conversationId = activeConversationId == null
                 ? createConversation(userId, now)
                 : activeConversationId;
         touchConversation(conversationId, now);
-        return new WechatMemorySession(userId, conversationId, loadMemory(conversationId));
+        return new WechatMemorySession(userId, conversationId, loadMemory(userId, conversationId));
     }
 
     private long findOrCreateUser(String wechatUserId, Instant now) {
@@ -314,19 +330,24 @@ public class MySqlWechatMemoryService implements WechatMemoryService {
         return ids.isEmpty() ? null : ids.get(0);
     }
 
-    private void closeExpiredConversations(long userId, Instant now) {
-        jdbcTemplate.update(
+    private void closeExpiredConversationsAfterSummary(long userId, Instant now) {
+        List<Long> conversationIds = jdbcTemplate.query(
                 """
-                        UPDATE conversations
-                        SET status = ?, closed_at = ?
+                        SELECT id
+                        FROM conversations
                         WHERE user_id = ? AND channel = ? AND status = ? AND last_active_at <= ?
+                        ORDER BY last_active_at, id
                         """,
-                STATUS_CLOSED,
-                Timestamp.from(now),
+                (resultSet, rowNumber) -> resultSet.getLong(1),
                 userId,
                 CHANNEL_WECHAT,
                 STATUS_ACTIVE,
                 Timestamp.from(now.minusSeconds(properties.sessionIdleMinutes() * 60L)));
+        for (Long conversationId : conversationIds) {
+            if (conversationId != null && summarizeConversation(conversationId, now)) {
+                closeConversation(conversationId, now);
+            }
+        }
     }
 
     private Long findActiveConversationId(long userId) {
@@ -371,11 +392,192 @@ public class MySqlWechatMemoryService implements WechatMemoryService {
                 conversationId);
     }
 
-    private WechatConversationMemory loadMemory(long conversationId) {
-        WechatConversationMemory memory = WechatConversationMemory.empty(properties.recentTurnLimit());
+    private WechatConversationMemory loadMemory(long userId, long conversationId) {
+        WechatConversationMemory memory = WechatConversationMemory.empty(
+                properties.recentTurnLimit(),
+                loadRelevantSummary(userId, conversationId));
         loadState(conversationId).ifPresent(memory::applyState);
         memory.replaceTurns(loadRecentTurns(conversationId));
         return memory;
+    }
+
+    private void closeIdleConversationsAfterSummary(Instant now) {
+        List<Long> userIds = jdbcTemplate.query(
+                """
+                        SELECT DISTINCT user_id
+                        FROM conversations
+                        WHERE channel = ? AND status = ? AND last_active_at <= ?
+                        """,
+                (resultSet, rowNumber) -> resultSet.getLong(1),
+                CHANNEL_WECHAT,
+                STATUS_ACTIVE,
+                Timestamp.from(now.minusSeconds(properties.sessionIdleMinutes() * 60L)));
+        for (Long userId : userIds) {
+            if (userId != null) {
+                closeExpiredConversationsAfterSummary(userId, now);
+            }
+        }
+    }
+
+    private void createRollingSummaries(Instant now) {
+        List<Long> conversationIds = jdbcTemplate.query(
+                """
+                        SELECT id
+                        FROM conversations
+                        WHERE channel = ? AND status = ?
+                        ORDER BY id
+                        """,
+                (resultSet, rowNumber) -> resultSet.getLong(1),
+                CHANNEL_WECHAT,
+                STATUS_ACTIVE);
+        for (Long conversationId : conversationIds) {
+            if (conversationId != null && completedTurnsSinceLatestSummary(conversationId)
+                    >= properties.rollingSummaryTurnThreshold()) {
+                summarizeConversation(conversationId, now);
+            }
+        }
+    }
+
+    private int completedTurnsSinceLatestSummary(long conversationId) {
+        long coveredMessageId = latestSummary(conversationId)
+                .map(SummaryRow::coveredMessageId)
+                .orElse(0L);
+        List<Integer> roleCounts = jdbcTemplate.query(
+                """
+                        SELECT role, COUNT(*)
+                        FROM conversation_messages
+                        WHERE conversation_id = ? AND id > ? AND role IN ('USER', 'ASSISTANT')
+                        GROUP BY role
+                        """,
+                (resultSet, rowNumber) -> "USER".equals(resultSet.getString(1))
+                        ? resultSet.getInt(2)
+                        : -resultSet.getInt(2),
+                conversationId,
+                coveredMessageId);
+        int users = 0;
+        int assistants = 0;
+        for (Integer count : roleCounts) {
+            if (count != null && count >= 0) {
+                users = count;
+            } else if (count != null) {
+                assistants = -count;
+            }
+        }
+        return Math.min(users, assistants);
+    }
+
+    private boolean summarizeConversation(long conversationId, Instant now) {
+        Optional<SummaryRow> previous = latestSummary(conversationId);
+        long coveredMessageId = previous.map(SummaryRow::coveredMessageId).orElse(0L);
+        List<MessageRow> messages = messagesAfter(conversationId, coveredMessageId);
+        if (messages.isEmpty()) {
+            return true;
+        }
+        try {
+            String summary = chatService.reply(summaryPrompt(previous.map(SummaryRow::summaryText).orElse(""), messages));
+            if (summary == null || summary.isBlank()) {
+                log.warn("微信会话摘要为空，conversationId={}", conversationId);
+                return false;
+            }
+            long newCoveredMessageId = messages.get(messages.size() - 1).id();
+            jdbcTemplate.update(
+                    """
+                            INSERT INTO conversation_summaries
+                            (conversation_id, summary_text, covered_message_id, generated_at)
+                            VALUES (?, ?, ?, ?)
+                            """,
+                    conversationId,
+                    summary.strip(),
+                    newCoveredMessageId,
+                    Timestamp.from(now));
+            return true;
+        } catch (RuntimeException exception) {
+            log.warn("微信会话摘要生成失败，conversationId={}, error={}",
+                    conversationId, rootMessage(exception));
+            return false;
+        }
+    }
+
+    private void closeConversation(long conversationId, Instant now) {
+        jdbcTemplate.update(
+                """
+                        UPDATE conversations
+                        SET status = ?, closed_at = ?
+                        WHERE id = ? AND status = ?
+                        """,
+                STATUS_CLOSED,
+                Timestamp.from(now),
+                conversationId,
+                STATUS_ACTIVE);
+    }
+
+    private Optional<SummaryRow> latestSummary(long conversationId) {
+        List<SummaryRow> values = jdbcTemplate.query(
+                """
+                        SELECT summary_text, COALESCE(covered_message_id, 0)
+                        FROM conversation_summaries
+                        WHERE conversation_id = ?
+                        ORDER BY generated_at DESC, id DESC
+                        LIMIT 1
+                        """,
+                (resultSet, rowNumber) -> new SummaryRow(resultSet.getString(1), resultSet.getLong(2)),
+                conversationId);
+        return values.stream().findFirst();
+    }
+
+    private String loadRelevantSummary(long userId, long conversationId) {
+        Optional<SummaryRow> currentSummary = latestSummary(conversationId);
+        if (currentSummary.isPresent()) {
+            return currentSummary.get().summaryText();
+        }
+        List<String> previousSummaries = jdbcTemplate.query(
+                """
+                        SELECT summary.summary_text
+                        FROM conversation_summaries summary
+                        JOIN conversations conversation ON conversation.id = summary.conversation_id
+                        WHERE conversation.user_id = ? AND conversation.id <> ?
+                        ORDER BY summary.generated_at DESC, summary.id DESC
+                        LIMIT 1
+                        """,
+                (resultSet, rowNumber) -> resultSet.getString(1),
+                userId,
+                conversationId);
+        return previousSummaries.isEmpty() ? null : previousSummaries.get(0);
+    }
+
+    private List<MessageRow> messagesAfter(long conversationId, long coveredMessageId) {
+        return jdbcTemplate.query(
+                """
+                        SELECT id, role, content
+                        FROM conversation_messages
+                        WHERE conversation_id = ? AND id > ? AND role IN ('USER', 'ASSISTANT')
+                        ORDER BY id
+                        """,
+                (resultSet, rowNumber) -> new MessageRow(
+                        resultSet.getLong(1),
+                        resultSet.getString(2),
+                        resultSet.getString(3)),
+                conversationId,
+                coveredMessageId);
+    }
+
+    private String summaryPrompt(String previousSummary, List<MessageRow> messages) {
+        StringBuilder prompt = new StringBuilder("""
+                你是微信助手的会话记忆压缩器。
+                只根据给出的已有摘要和新增对话，输出简洁、准确的中文摘要。
+                仅保留：用户已明确的事实和偏好、当前目标、已完成事项、未完成事项、待确认问题、工具调用结果。
+                不要杜撰，不要解释你的工作，不要使用标题或寒暄。
+
+                已有摘要：
+                """);
+        prompt.append(previousSummary == null || previousSummary.isBlank() ? "无" : previousSummary.strip())
+                .append("\n\n新增对话：\n");
+        for (MessageRow message : messages) {
+            prompt.append("USER".equals(message.role()) ? "用户：" : "助手：")
+                    .append(message.content())
+                    .append('\n');
+        }
+        return prompt.toString();
     }
 
     private Optional<WechatConversationMemory.State> loadState(long conversationId) {
@@ -404,7 +606,10 @@ public class MySqlWechatMemoryService implements WechatMemoryService {
                         ORDER BY id DESC
                         LIMIT ?
                         """,
-                (resultSet, rowNumber) -> new MessageRow(resultSet.getString(1), resultSet.getString(2)),
+                (resultSet, rowNumber) -> new MessageRow(
+                        0L,
+                        resultSet.getString(1),
+                        resultSet.getString(2)),
                 conversationId,
                 properties.recentTurnLimit() * 2);
         Collections.reverse(newestFirst);
@@ -479,6 +684,9 @@ public class MySqlWechatMemoryService implements WechatMemoryService {
         return current.getMessage() == null ? current.getClass().getSimpleName() : current.getMessage();
     }
 
-    private record MessageRow(String role, String content) {
+    private record SummaryRow(String summaryText, long coveredMessageId) {
+    }
+
+    private record MessageRow(long id, String role, String content) {
     }
 }

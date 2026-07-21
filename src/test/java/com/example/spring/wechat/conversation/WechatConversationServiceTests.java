@@ -7,6 +7,10 @@ import com.example.spring.wechat.image.generation.service.ImageGenerationService
 import com.example.spring.tool.protocol.ToolCallPlanParser;
 import com.example.spring.tool.protocol.ToolCallPlanner;
 import com.example.spring.wechat.bot.WechatReply;
+import com.example.spring.wechat.image.generation.intent.ImageGenerationIntentParser;
+import com.example.spring.wechat.image.service.ImageInputResolver;
+import com.example.spring.wechat.memory.model.WechatConversationMemory;
+import com.example.spring.wechat.memory.service.WechatMemoryService;
 import com.example.spring.wechat.model.WechatIncomingMessage;
 import com.example.spring.wechat.conversation.tools.ChatWechatTool;
 import com.example.spring.wechat.conversation.tools.ImageGenerationWechatTool;
@@ -54,6 +58,40 @@ class WechatConversationServiceTests {
         assertThat(reply).isEqualTo("\u6211\u662f\u4f60\u7684 AI \u52a9\u624b");
         verify(chatService).streamReply(org.mockito.ArgumentMatchers.argThat(prompt ->
                 prompt.contains("\u4f60\u662f\u8c01")), any());
+    }
+
+    @Test
+    void includesPersistedConversationSummaryInChatPrompt() {
+        ChatService chatService = mock(ChatService.class);
+        WeatherService weatherService = mock(WeatherService.class);
+        WechatMemoryService memoryService = mock(WechatMemoryService.class);
+        WechatConversationMemory memory = WechatConversationMemory.empty(
+                10,
+                "\u7528\u6237\u6b63\u5728\u51c6\u5907\u676d\u5dde\u65c5\u884c\uff0c\u5e0c\u671b\u83b7\u5f97\u7b80\u6d01\u5efa\u8bae\u3002");
+        when(memoryService.memoryFor("summary-user")).thenReturn(memory);
+        doAnswer(invocation -> {
+            com.example.spring.agent.ReplyEmitter emitter = invocation.getArgument(1);
+            emitter.emit("\u660e\u5929\u53ef\u4ee5\u7ee7\u7eed\u5173\u6ce8\u676d\u5dde\u5929\u6c14\u3002");
+            return null;
+        }).when(chatService).streamReply(anyString(), any());
+
+        WechatConversationService service = new WechatConversationService(
+                chatService,
+                weatherService,
+                null,
+                null,
+                null,
+                new ImageInputResolver(),
+                new WeatherIntentParser(),
+                new ImageGenerationIntentParser(),
+                null,
+                null,
+                memoryService);
+
+        service.handle("summary-user", "\u63a5\u7740\u8bf4");
+
+        verify(chatService).streamReply(org.mockito.ArgumentMatchers.argThat(prompt ->
+                prompt.contains("\u676d\u5dde\u65c5\u884c") && prompt.contains("\u63a5\u7740\u8bf4")), any());
     }
 
     @Test

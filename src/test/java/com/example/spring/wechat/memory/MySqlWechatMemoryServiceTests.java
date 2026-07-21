@@ -83,13 +83,14 @@ class MySqlWechatMemoryServiceTests {
                 String.class,
                 String.class,
                 Instant.class);
-        Method memoryFor = service.getClass().getMethod("memoryFor", String.class);
+        Method open = service.getClass().getMethod("open", String.class, Instant.class);
         Instant now = Instant.parse("2026-07-21T01:00:00Z");
 
         acceptIncoming.invoke(service, "wx-user", "msg-1", "我在杭州", "TEXT", now);
         recordAssistantMessage.invoke(service, "wx-user", "记住了，你在杭州。", "TEXT", now);
 
-        Object memory = memoryFor.invoke(service, "wx-user");
+        Object session = open.invoke(service, "wx-user", now);
+        Object memory = session.getClass().getMethod("memory").invoke(session);
         Object turns = memory.getClass().getMethod("snapshot").invoke(memory);
 
         assertThat(turns).hasToString("[ConversationTurn[userText=我在杭州, assistantText=记住了，你在杭州。]]");

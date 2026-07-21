@@ -1003,6 +1003,11 @@ public class WechatConversationService {
     }
 
     private void appendHistory(StringBuilder prompt, WechatConversationMemory memory) {
+        memory.conversationSummary().ifPresent(summary -> prompt.append("更早会话摘要：")
+                .append('\n')
+                .append(summary)
+                .append('\n'));
+
         List<com.example.spring.wechat.memory.model.ConversationTurn> turns = memory.snapshot();
         if (turns.isEmpty()) {
             return;

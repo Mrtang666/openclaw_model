@@ -19,6 +19,7 @@ public class WechatConversationMemory {
 
     private final int maxHistoryTurns;
     private final Deque<ConversationTurn> turns = new ArrayDeque<>();
+    private String conversationSummary;
     private String lastImagePrompt;
     private String pendingImagePrompt;
     private String lastWeatherCity;
@@ -37,6 +38,15 @@ public class WechatConversationMemory {
 
     public static WechatConversationMemory empty(int maxHistoryTurns) {
         return new WechatConversationMemory(maxHistoryTurns);
+    }
+
+    /**
+     * 创建带有持久化摘要的会话记忆；摘要用于补足未放入最近轮次窗口的历史信息。
+     */
+    public static WechatConversationMemory empty(int maxHistoryTurns, String conversationSummary) {
+        WechatConversationMemory memory = new WechatConversationMemory(maxHistoryTurns);
+        memory.conversationSummary(conversationSummary);
+        return memory;
     }
 
     public synchronized void record(String userText, String assistantText) {
@@ -103,6 +113,20 @@ public class WechatConversationMemory {
 
     public synchronized List<ConversationTurn> snapshot() {
         return List.copyOf(turns);
+    }
+
+    /**
+     * 返回当前会话或上一已关闭会话的压缩摘要，供大模型理解较早的上下文。
+     */
+    public synchronized Optional<String> conversationSummary() {
+        return optionalText(conversationSummary);
+    }
+
+    /**
+     * 更新从数据库恢复的会话摘要，不把摘要写入短期状态 JSON。
+     */
+    public synchronized void conversationSummary(String summary) {
+        conversationSummary = isBlank(summary) ? null : summary.strip();
     }
 
     public synchronized List<ConversationTurn> recentTurns(int maxTurns) {

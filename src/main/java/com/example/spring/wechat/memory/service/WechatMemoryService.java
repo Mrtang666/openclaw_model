@@ -35,6 +35,12 @@ public interface WechatMemoryService {
             String status,
             Instant now);
 
+    /**
+     * 生成超时会话摘要和长会话滚动摘要；内存兜底实现不需要持久化维护。
+     */
+    default void maintainConversationSummaries(Instant now) {
+    }
+
     Optional<String> explicitPreference(String wechatUserId, String preferenceKey);
 
     void saveExplicitPreference(

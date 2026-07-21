@@ -39,6 +39,29 @@ public class DocumentAnalysisWechatTool implements WechatTool {
     }
 
     @Override
+    public List<WechatToolParameter> parameters() {
+        return List.of(
+                WechatToolParameter.optionalString(
+                        "question",
+                        "用户围绕当前文件或最近文件提出的问题",
+                        "帮我总结这份 PDF 的重点"),
+                WechatToolParameter.optionalEnum(
+                        "operation",
+                        "文件处理方式",
+                        List.of("summary", "extract", "qa", "table", "outline"),
+                        "summary"));
+    }
+
+    @Override
+    public WechatToolCapability capability() {
+        return new WechatToolCapability(
+                "解析用户发送的 PDF、Word、TXT、Markdown、Excel、PPT 等文件，提取摘要、重点、表格或结构化内容。",
+                List.of("当前消息没有文件且上下文没有最近文件时必须追问；大文件只能基于分块摘要回答，不能声称逐字完整阅读。"),
+                List.of("files：当前微信消息中的文件", "question：用户围绕文件提出的问题", "operation：处理方式"),
+                List.of("文件类型", "内容摘要", "关键片段", "针对文件问题的文本回答"));
+    }
+
+    @Override
     public WechatReply execute(WechatToolRequest request) {
         if (request.files().isEmpty()) {
             if (hasRecentFileContext(request.historyText())) {

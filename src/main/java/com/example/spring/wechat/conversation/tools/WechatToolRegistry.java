@@ -41,7 +41,7 @@ public class WechatToolRegistry {
 
     public List<WechatToolDefinition> definitions() {
         return tools.values().stream()
-                .map(tool -> new WechatToolDefinition(tool.name(), tool.description(), tool.arguments()))
+                .map(tool -> new WechatToolDefinition(tool.name(), tool.description(), tool.parameters(), tool.capability()))
                 .sorted(java.util.Comparator.comparing(WechatToolDefinition::name))
                 .toList();
     }

@@ -221,10 +221,16 @@ src/main/resources/application.properties
 src/main/resources/db/migration/
   ├─ V1__create_wechat_memory_tables.sql
   └─ V2__create_wechat_document_tables.sql
+
+docs/
+  ├─ DATABASE_SETUP.md
+  └─ sql/create_database.sql
 ```
 
 - `V1`：微信记忆、消息、工具调用日志表。
 - `V2`：微信文件元数据、文件分块、文档生成记录表。
+- `DATABASE_SETUP.md`：给合作者看的本地 MySQL 初始化说明。
+- `create_database.sql`：只负责创建 `openclaw` 和 `openclaw_test` 空数据库，业务表仍由 Flyway 自动创建。
 
 ## 12. 常用验证命令
 

@@ -75,10 +75,14 @@ OpenClaw 是一个基于 Java 17 + Spring Boot 的智能助手项目，支持 CL
 首次运行前请创建数据库：
 
 ```sql
-CREATE DATABASE openclaw CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS openclaw
+  DEFAULT CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
 ```
 
-然后在 `.env` 中填写 `MYSQL_URL`、`MYSQL_USERNAME` 和 `MYSQL_PASSWORD`。应用启动时 Flyway 会自动创建记忆相关数据表。
+然后在 `.env` 中填写 `MYSQL_URL`、`MYSQL_USERNAME` 和 `MYSQL_PASSWORD`。应用启动时 Flyway 会自动创建记忆和文件相关数据表。
+
+更完整的协作者建库说明见 [docs/DATABASE_SETUP.md](docs/DATABASE_SETUP.md)，独立建库脚本见 [docs/sql/create_database.sql](docs/sql/create_database.sql)。
 
 ## 核心流程
 

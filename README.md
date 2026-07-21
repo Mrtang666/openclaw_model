@@ -60,6 +60,25 @@ OpenClaw 是一个基于 Java 17 + Spring Boot 的智能助手项目，支持 CL
   └─ 微信 iLink SDK
 ```
 
+## 微信端 MySQL 上下文记忆
+
+微信端现已使用本机 MySQL 保存上下文记忆，CLI 的内存对话逻辑保持不变。
+
+- 同一用户 60 分钟内持续对话会复用会话；超过 60 分钟无新消息会创建新会话。
+- 用户原始消息、助手回复和工具执行日志保存 30 天。
+- 图片待确认提示词、待追问问题、最近天气城市等短期状态保存为会话 JSON。
+- 用户明确确认的音色保存为长期偏好，重启项目后仍然生效。
+- 同一微信消息 ID 重复投递时会被忽略，避免重复调用模型和工具。
+- MySQL 短暂不可用时自动退回当前进程内存，服务不会因持久化失败停止。
+
+首次运行前请创建数据库：
+
+```sql
+CREATE DATABASE openclaw CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+然后在 `.env` 中填写 `MYSQL_URL`、`MYSQL_USERNAME` 和 `MYSQL_PASSWORD`。应用启动时 Flyway 会自动创建记忆相关数据表。
+
 ## 核心流程
 
 ### CLI 流程

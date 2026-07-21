@@ -68,12 +68,17 @@ public class ImageTaskOrchestrator {
                 "当前图片任务已取消。你可以直接告诉我新的需求。", request, routedPlan);
         }
 
+        if (routedPlan.primaryType() == AgentType.DOCUMENT) {
+            return ImageTaskDecision.passThrough(request, routedPlan);
+        }
+
         boolean imageRequested = routedPlan.steps().contains(AgentType.IMAGE_GENERATION);
         boolean recentImageContext = hasRecentImageContext(request);
         if (active.isEmpty() && !imageRequested && !recentImageContext) {
             return ImageTaskDecision.passThrough(request, routedPlan);
         }
-        if (active.isPresent() && routedPlan.primaryType() == AgentType.WEATHER) {
+        if (active.isPresent() && (routedPlan.primaryType() == AgentType.WEATHER
+            || routedPlan.primaryType() == AgentType.DOCUMENT)) {
             return ImageTaskDecision.passThrough(request, routedPlan);
         }
 

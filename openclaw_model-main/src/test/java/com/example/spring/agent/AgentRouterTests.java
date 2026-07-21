@@ -2,6 +2,7 @@ package com.example.spring.agent;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.example.spring.document.DocumentAsset;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -29,6 +30,17 @@ class AgentRouterTests {
             .containsExactly(AgentType.VISION);
         assertThat(route("按照这张图生成一张插画", 1).steps())
             .containsExactly(AgentType.VISION, AgentType.IMAGE_GENERATION);
+        assertThat(route("把上文输出为PDF", 0).steps())
+            .containsExactly(AgentType.DOCUMENT);
+
+        AgentRequest attachedDocument = new AgentRequest(
+            "user", 4L, "总结这个文件", List.of(), 0,
+            List.of(), List.of(),
+            List.of(new DocumentAsset("id", "a.txt", "text/plain",
+                new byte[] {1}, "content", "content")),
+            1, List.of());
+        assertThat(router.route(attachedDocument).steps())
+            .containsExactly(AgentType.DOCUMENT);
 
         AgentRequest historicalEdit = new AgentRequest(
             "user",

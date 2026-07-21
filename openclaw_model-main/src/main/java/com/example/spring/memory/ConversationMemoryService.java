@@ -372,6 +372,37 @@ public class ConversationMemoryService implements InitializingBean {
         }
     }
 
+    public String getLatestExportableAssistantText(String userId) {
+        if (!properties.isEnabled() || userId == null || userId.isBlank()) {
+            return "";
+        }
+        String sql = """
+            SELECT text FROM memory_entries
+            WHERE user_id = ? AND role = 'assistant'
+                AND text IS NOT NULL AND trim(text) <> ''
+            ORDER BY id DESC LIMIT 30
+            """;
+        try {
+            synchronized (databaseMonitor) {
+                try (Connection connection = connection();
+                     PreparedStatement statement = connection.prepareStatement(sql)) {
+                    statement.setString(1, userId);
+                    try (ResultSet result = statement.executeQuery()) {
+                        while (result.next()) {
+                            String text = result.getString(1);
+                            if (isExportableAssistantText(text)) {
+                                return text;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (SQLException exception) {
+            log.warn("读取最近可导出回复失败，userId={}", userId, exception);
+        }
+        return "";
+    }
+
     List<ImageAsset> loadReferencedImages(String userId, String userText)
         throws SQLException, IOException {
         List<StoredImage> storedImages = new ArrayList<>();
@@ -714,6 +745,17 @@ public class ConversationMemoryService implements InitializingBean {
             return false;
         }
         return IMAGE_REFERENCE.matcher(text).find() || IMAGE_EDIT.matcher(text).find();
+    }
+
+    private static boolean isExportableAssistantText(String text) {
+        if (text == null || text.isBlank()) return false;
+        String value = text.trim();
+        return !value.startsWith("文件已生成")
+            && !value.startsWith("文件发送完成")
+            && !value.startsWith("文件已读取完成")
+            && !value.startsWith("正在发送")
+            && !value.equals("图片已生成。")
+            && !value.equals("我正在思考，请稍等。");
     }
 
     private static String dedupeKey(

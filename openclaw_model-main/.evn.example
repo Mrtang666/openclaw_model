@@ -33,3 +33,9 @@ SPEECH_VOICE_RETRY_MAX_DELAY=10s
 
 WEATHER_API_KEY=replace_with_your_qweather_key
 WEATHER_API_HOST=https://your-api-host.qweatherapi.com
+
+# Optional. Required only when the system cannot locate a Chinese PDF font.
+DOCUMENT_PDF_FONT_PATH=C:/Windows/Fonts/simhei.ttf
+DOCUMENT_MAX_UPLOAD_BYTES=20971520
+DOCUMENT_MAX_FILES_PER_USER=20
+DOCUMENT_MAX_BYTES_PER_USER=104857600

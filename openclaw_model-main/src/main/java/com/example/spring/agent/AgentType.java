@@ -4,5 +4,6 @@ public enum AgentType {
     CHAT,
     WEATHER,
     VISION,
-    IMAGE_GENERATION
+    IMAGE_GENERATION,
+    DOCUMENT
 }

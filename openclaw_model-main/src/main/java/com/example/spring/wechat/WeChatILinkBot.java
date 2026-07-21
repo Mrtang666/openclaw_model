@@ -7,7 +7,15 @@ import com.example.spring.agent.AgentResponse;
 import com.example.spring.agent.AgentRouter;
 import com.example.spring.agent.AgentType;
 import com.example.spring.agent.ImageAsset;
+import com.example.spring.agent.IntentRoutingAgent;
+import com.example.spring.agent.IntentRoutingDecision;
 import com.example.spring.bailian.BailianProperties;
+import com.example.spring.document.DocumentAsset;
+import com.example.spring.document.DocumentMemoryService;
+import com.example.spring.document.DocumentProcessingException;
+import com.example.spring.document.GeneratedDocument;
+import com.example.spring.document.PendingDocumentDelivery;
+import com.example.spring.document.PendingDocumentDeliveryStore;
 import com.example.spring.memory.ConversationMemoryService;
 import com.example.spring.speech.Mp3AudioEncoder;
 import com.example.spring.speech.PendingVoiceModeOfferService;
@@ -60,8 +68,11 @@ public class WeChatILinkBot implements SmartLifecycle {
     private final WeChatBotProperties properties;
     private final BailianProperties bailianProperties;
     private final AgentRouter agentRouter;
+    private final IntentRoutingAgent intentRoutingAgent;
     private final AgentCoordinator agentCoordinator;
     private final ConversationMemoryService memoryService;
+    private final DocumentMemoryService documentMemoryService;
+    private final PendingDocumentDeliveryStore pendingDocumentDeliveryStore;
     private final ImageTaskOrchestrator imageTaskOrchestrator;
     private final SpeechRecognitionService speechRecognitionService;
     private final SpeechSynthesisService speechSynthesisService;
@@ -87,8 +98,11 @@ public class WeChatILinkBot implements SmartLifecycle {
         WeChatBotProperties properties,
         BailianProperties bailianProperties,
         AgentRouter agentRouter,
+        IntentRoutingAgent intentRoutingAgent,
         AgentCoordinator agentCoordinator,
         ConversationMemoryService memoryService,
+        DocumentMemoryService documentMemoryService,
+        PendingDocumentDeliveryStore pendingDocumentDeliveryStore,
         ImageTaskOrchestrator imageTaskOrchestrator,
         SpeechRecognitionService speechRecognitionService,
         SpeechSynthesisService speechSynthesisService,
@@ -102,8 +116,11 @@ public class WeChatILinkBot implements SmartLifecycle {
         this.properties = properties;
         this.bailianProperties = bailianProperties;
         this.agentRouter = agentRouter;
+        this.intentRoutingAgent = intentRoutingAgent;
         this.agentCoordinator = agentCoordinator;
         this.memoryService = memoryService;
+        this.documentMemoryService = documentMemoryService;
+        this.pendingDocumentDeliveryStore = pendingDocumentDeliveryStore;
         this.imageTaskOrchestrator = imageTaskOrchestrator;
         this.speechRecognitionService = speechRecognitionService;
         this.speechSynthesisService = speechSynthesisService;
@@ -160,6 +177,7 @@ public class WeChatILinkBot implements SmartLifecycle {
                 }
 
                 resumePendingVoiceReplies(activeClient);
+                resumePendingDocumentDeliveries(activeClient);
                 promptPendingRecovery(activeClient);
 
                 while (running.get() && !Thread.currentThread().isInterrupted()) {
@@ -250,12 +268,13 @@ public class WeChatILinkBot implements SmartLifecycle {
                 continue;
             }
             log.info(
-                "收到微信消息，userId={}，messageId={}，textLength={}，imageCount={}，voiceCount={}，unsupportedTypes={}",
+                "收到微信消息，userId={}，messageId={}，textLength={}，imageCount={}，voiceCount={}，fileCount={}，unsupportedTypes={}",
                 userId,
                 message.getMessage_id(),
                 summary.text().length(),
                 summary.imageItems().size(),
                 summary.voiceItems().size(),
+                summary.fileItems().size(),
                 summary.unsupportedTypes());
             if (messageId != 0L
                 && !summary.voiceItems().isEmpty()
@@ -267,6 +286,7 @@ public class WeChatILinkBot implements SmartLifecycle {
                         mergeText(summary.text(), recoveryVoiceText),
                         summary.imageItems(),
                         List.of(),
+                        summary.fileItems(),
                         summary.unsupportedTypes());
                     deliveryLedger.ready(userId, messageId, summary.text());
                 } catch (SpeechRecognitionException | IOException exception) {
@@ -307,7 +327,15 @@ public class WeChatILinkBot implements SmartLifecycle {
                 message.getMessage_id(),
                 summary.text(),
                 List.of(),
-                summary.imageItems().size()));
+                summary.imageItems().size(),
+                List.of(),
+                List.of(),
+                List.of(),
+                summary.fileItems().size(),
+                List.of()));
+            previewRequest = previewRequest.withDocuments(
+                List.of(), summary.fileItems().size(),
+                documentMemoryService.resolve(userId, summary.text()));
             AgentPlan plan = agentRouter.route(previewRequest);
             boolean activeImageTask = imageTaskOrchestrator.hasActiveSession(userId);
             boolean recentImageContext = imageTaskOrchestrator.hasRecentImageContext(previewRequest);
@@ -316,7 +344,7 @@ public class WeChatILinkBot implements SmartLifecycle {
             boolean readAloudPending = ReadAloudIntentParser.isReadAloudIntent(summary.text());
             boolean voiceModeOfferPending = voiceModeOfferService.hasPendingOffer(userId);
             log.info(
-                "微信消息已路由，userId={}，messageId={}，steps={}",
+                "微信消息已完成快速预路由，userId={}，messageId={}，steps={}",
                 userId,
                 message.getMessage_id(),
                 plan.steps());
@@ -347,6 +375,8 @@ public class WeChatILinkBot implements SmartLifecycle {
         String userId = previewRequest.userId();
         try {
             List<ImageAsset> images = downloadImages(activeClient, summary.imageItems());
+            List<DocumentAsset> documents = downloadDocuments(
+                activeClient, userId, message.getMessage_id(), summary.fileItems());
             String recognizedVoice = recognizeVoices(
                 activeClient, userId, message.getMessage_id(), summary.voiceItems());
             String combinedText = mergeText(summary.text(), recognizedVoice);
@@ -360,11 +390,16 @@ public class WeChatILinkBot implements SmartLifecycle {
                 message.getMessage_id(),
                 combinedText,
                 images,
-                summary.imageItems().size()));
+                summary.imageItems().size(),
+                List.of(),
+                List.of(),
+                documents,
+                summary.fileItems().size(),
+                documentMemoryService.resolve(userId, combinedText)));
             if (!images.isEmpty()) {
                 memoryService.rememberUserRequest(request);
             }
-            AgentPlan effectivePlan = agentRouter.route(request);
+            AgentPlan fallbackPlan = agentRouter.route(request);
             PendingVoiceModeOfferService.OfferDecision offerDecision =
                 voiceModeOfferService.consume(userId, combinedText);
             if (offerDecision == PendingVoiceModeOfferService.OfferDecision.ACCEPT
@@ -458,7 +493,7 @@ public class WeChatILinkBot implements SmartLifecycle {
                     activeClient,
                     userId,
                     "语音识别完成，" + processingMessage(
-                        effectivePlan,
+                        fallbackPlan,
                         imageTaskOrchestrator.hasActiveSession(userId),
                         imageTaskOrchestrator.hasRecentImageContext(request),
                         false,
@@ -467,6 +502,16 @@ public class WeChatILinkBot implements SmartLifecycle {
                         false),
                     message.getMessage_id());
             }
+            IntentRoutingDecision routingDecision = routeIntent(request, fallbackPlan);
+            request = request.withDocumentTaskPlan(routingDecision.documentTaskPlan());
+            AgentPlan effectivePlan = routingDecision.plan();
+            log.info(
+                "顶层意图路由完成，userId={}，messageId={}，semantic={}，steps={}，documentTask={}",
+                userId,
+                message.getMessage_id(),
+                routingDecision.semantic(),
+                effectivePlan.steps(),
+                routingDecision.documentTaskPlan());
             if (imageTaskOrchestrator.requiresSourceImage(userId)
                 || imageTaskOrchestrator.hasRecentImageContext(request)) {
                 request = memoryService.attachLatestImage(request);
@@ -497,11 +542,12 @@ public class WeChatILinkBot implements SmartLifecycle {
             AgentResponse response = agentCoordinator.execute(
                 taskDecision.plan(), taskDecision.request());
             log.info(
-                "Agent 处理完成，userId={}，messageId={}，textReplyLength={}，imageReplyCount={}",
+                "Agent 处理完成，userId={}，messageId={}，textReplyLength={}，imageReplyCount={}，fileReplyCount={}",
                 userId,
                 message.getMessage_id(),
                 response.text().length(),
-                response.images().size());
+                response.images().size(),
+                response.files().size());
             stopTypingSafely(activeClient, userId, message.getMessage_id());
             deliveryLedger.mark(userId, messageId, MessageReplyStatus.REPLYING);
             DeliveryResult result = sendResponse(
@@ -510,6 +556,17 @@ public class WeChatILinkBot implements SmartLifecycle {
             if (taskDecision.action() == TaskDecisionAction.EXECUTE) {
                 imageTaskOrchestrator.complete(userId);
             }
+        } catch (DocumentProcessingException exception) {
+            log.warn("文件处理失败，userId={}，messageId={}",
+                userId, message.getMessage_id(), exception);
+            stopTypingSafely(activeClient, userId, message.getMessage_id());
+            DeliveryResult result = sendTextSafely(
+                activeClient,
+                userId,
+                "文件处理失败：" + exception.getMessage(),
+                message.getMessage_id());
+            completeDelivery(userId,
+                message.getMessage_id() == null ? 0L : message.getMessage_id(), result);
         } catch (SpeechRecognitionException exception) {
             log.warn("语音识别失败，userId={}，messageId={}",
                 userId, message.getMessage_id(), exception);
@@ -630,7 +687,8 @@ public class WeChatILinkBot implements SmartLifecycle {
                     record.userId(), record.messageId(), exception);
             }
         }
-        if (replayText.isBlank() && !record.sourceType().contains("IMAGE")) {
+        if (replayText.isBlank() && !record.sourceType().contains("IMAGE")
+            && !record.sourceType().contains("FILE")) {
             deliveryLedger.mark(
                 record.userId(), record.messageId(), MessageReplyStatus.REPLYING);
             DeliveryResult result = sendTextSafely(
@@ -644,16 +702,30 @@ public class WeChatILinkBot implements SmartLifecycle {
         try {
             deliveryLedger.mark(
                 record.userId(), record.messageId(), MessageReplyStatus.PROCESSING);
+            List<DocumentAsset> recoveredDocuments = record.sourceType().contains("FILE")
+                ? documentMemoryService.findByMessage(record.userId(), record.messageId())
+                : List.of();
             AgentRequest request = memoryService.prepare(new AgentRequest(
                 record.userId(),
                 record.messageId(),
-                replayText.isBlank() ? "请识别并回复我之前发送的图片" : replayText,
+                replayText.isBlank()
+                    ? (record.sourceType().contains("FILE")
+                        ? "请处理我之前发送的文件" : "请识别并回复我之前发送的图片")
+                    : replayText,
                 List.of(),
-                record.sourceType().contains("IMAGE") ? 1 : 0));
+                record.sourceType().contains("IMAGE") ? 1 : 0,
+                List.of(),
+                List.of(),
+                recoveredDocuments,
+                recoveredDocuments.size(),
+                List.of()));
             if (record.sourceType().contains("IMAGE")) {
                 request = memoryService.attachLatestImage(request);
             }
-            AgentPlan plan = agentRouter.route(request);
+            AgentPlan fallbackPlan = agentRouter.route(request);
+            IntentRoutingDecision routingDecision = routeIntent(request, fallbackPlan);
+            request = request.withDocumentTaskPlan(routingDecision.documentTaskPlan());
+            AgentPlan plan = routingDecision.plan();
             ImageTaskDecision decision = imageTaskOrchestrator.decide(request, plan);
             AgentResponse response;
             if (decision.action() == TaskDecisionAction.REPLY) {
@@ -694,6 +766,18 @@ public class WeChatILinkBot implements SmartLifecycle {
         }
     }
 
+    private IntentRoutingDecision routeIntent(
+        AgentRequest request,
+        AgentPlan fallbackPlan) {
+        try {
+            return intentRoutingAgent.route(request);
+        } catch (Exception exception) {
+            log.warn("顶层意图路由 Agent 调用失败，使用本地规则降级，userId={}，messageId={}",
+                request.userId(), request.messageId(), exception);
+            return new IntentRoutingDecision(fallbackPlan, null, false);
+        }
+    }
+
     private static String sourceType(MessageSummary summary) {
         List<String> types = new ArrayList<>();
         if (!summary.text().isBlank()) {
@@ -704,6 +788,9 @@ public class WeChatILinkBot implements SmartLifecycle {
         }
         if (!summary.voiceItems().isEmpty()) {
             types.add("VOICE");
+        }
+        if (!summary.fileItems().isEmpty()) {
+            types.add("FILE");
         }
         return types.isEmpty() ? "UNSUPPORTED" : String.join("_", types);
     }
@@ -874,13 +961,34 @@ public class WeChatILinkBot implements SmartLifecycle {
         return images;
     }
 
+    private List<DocumentAsset> downloadDocuments(
+        ILinkClient activeClient,
+        String userId,
+        Long messageId,
+        List<MessageItem> fileItems) throws DocumentProcessingException {
+        List<DocumentAsset> documents = new ArrayList<>();
+        for (MessageItem item : fileItems) {
+            String fileName = item.getFile_item() == null
+                ? "wechat-document" : item.getFile_item().getFile_name();
+            try {
+                byte[] data = activeClient.downloadFileFromMessageItem(item);
+                documents.add(documentMemoryService.store(userId, messageId, data, fileName));
+            } catch (IOException | RuntimeException exception) {
+                throw new DocumentProcessingException(
+                    "无法读取“" + (fileName == null ? "未命名文件" : fileName)
+                        + "”：" + exception.getMessage(), exception);
+            }
+        }
+        return documents;
+    }
+
     private DeliveryResult sendResponse(
         ILinkClient activeClient,
         String userId,
         AgentResponse response,
         Long messageId) {
         boolean voiceMode = memoryService.getReplyMode(userId) == ReplyMode.VOICE;
-        if (response.images().isEmpty()) {
+        if (response.images().isEmpty() && response.files().isEmpty()) {
             if (!response.text().isBlank()) {
                 VoiceReplyResult voiceResult = voiceMode
                     ? sendVoiceResponse(activeClient, userId, response.text(), messageId)
@@ -931,7 +1039,74 @@ public class WeChatILinkBot implements SmartLifecycle {
                 ? DeliveryResult.partial("图片发送失败")
                 : DeliveryResult.failed("文字和图片均发送失败：" + textResult.error());
         }
+        boolean allFilesSent = true;
+        for (GeneratedDocument file : response.files()) {
+            if (!sendFileSafely(activeClient, userId, file, messageId)) {
+                allFilesSent = false;
+                pendingDocumentDeliveryStore.save(userId, messageId, file);
+            }
+        }
+        if (!allFilesSent) {
+            DeliveryResult notice = sendTextSafely(
+                activeClient,
+                userId,
+                "文件已经生成，但微信文件发送持续失败。文件已保留，重新连接后会再次尝试发送。",
+                messageId);
+            return notice.success() ? DeliveryResult.partial("文件发送失败")
+                : DeliveryResult.failed("文件和失败提示均未发送成功");
+        }
+        if (!response.files().isEmpty()) {
+            sendTextSafely(activeClient, userId,
+                "文件发送完成：" + response.files().stream()
+                    .map(GeneratedDocument::fileName)
+                    .reduce((left, right) -> left + "、" + right).orElse(""),
+                messageId);
+        }
         return textResult;
+    }
+
+    private boolean sendFileSafely(
+        ILinkClient activeClient,
+        String userId,
+        GeneratedDocument file,
+        Long messageId) {
+        int maxAttempts = Math.max(3, Math.min(5,
+            speechProperties.getVoiceRetryMaxAttempts()));
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                synchronized (sendMonitor) {
+                    if (!awaitOutboundSlot()) return false;
+                    activeClient.sendFile(userId, file.data(), file.fileName(), file.description());
+                    markOutboundSent();
+                }
+                log.info("微信文件发送成功，userId={}，messageId={}，fileName={}，bytes={}，attempt={}",
+                    userId, messageId, file.fileName(), file.data().length, attempt);
+                return true;
+            } catch (IOException | RuntimeException exception) {
+                log.warn("微信文件发送失败，userId={}，messageId={}，fileName={}，attempt={}/{}",
+                    userId, messageId, file.fileName(), attempt, maxAttempts, exception);
+                if (attempt < maxAttempts && !sleepVoiceGap(retryDelayMillis(attempt))) {
+                    return false;
+                }
+            }
+        }
+        return false;
+    }
+
+    private void resumePendingDocumentDeliveries(ILinkClient activeClient) {
+        Set<String> completedUsers = new LinkedHashSet<>();
+        for (PendingDocumentDelivery pending : pendingDocumentDeliveryStore.loadPending()) {
+            if (!sendFileSafely(activeClient, pending.userId(), pending.document(), pending.messageId())) {
+                log.warn("待重试文件仍未发送成功，id={}，fileName={}",
+                    pending.id(), pending.document().fileName());
+                return;
+            }
+            pendingDocumentDeliveryStore.complete(pending);
+            completedUsers.add(pending.userId());
+        }
+        for (String userId : completedUsers) {
+            sendTextSafely(activeClient, userId, "之前发送失败的文件已经重新发送成功。", null);
+        }
     }
 
     private VoiceReplyResult sendVoiceResponse(
@@ -1531,11 +1706,12 @@ public class WeChatILinkBot implements SmartLifecycle {
 
     static MessageSummary summarize(WeixinMessage message) {
         if (message == null || message.getItem_list() == null) {
-            return new MessageSummary("", List.of(), List.of(), List.of());
+            return new MessageSummary("", List.of(), List.of(), List.of(), List.of());
         }
         StringBuilder text = new StringBuilder();
         List<MessageItem> images = new ArrayList<>();
         List<MessageItem> voices = new ArrayList<>();
+        List<MessageItem> files = new ArrayList<>();
         List<String> unsupported = new ArrayList<>();
         for (MessageItem item : message.getItem_list()) {
             if (item == null) {
@@ -1551,7 +1727,7 @@ public class WeChatILinkBot implements SmartLifecycle {
                 voices.add(item);
             }
             if (item.getFile_item() != null) {
-                unsupported.add("文件");
+                files.add(item);
             }
             if (item.getVideo_item() != null) {
                 unsupported.add("视频");
@@ -1562,7 +1738,7 @@ public class WeChatILinkBot implements SmartLifecycle {
                 unsupported.add("未转写的语音");
             }
         }
-        return new MessageSummary(text.toString(), images, voices, unsupported);
+        return new MessageSummary(text.toString(), images, voices, files, unsupported);
     }
 
     static String extractText(WeixinMessage message) {
@@ -1601,7 +1777,7 @@ public class WeChatILinkBot implements SmartLifecycle {
     private static String unsupportedReply(MessageSummary summary) {
         if (!summary.unsupportedTypes().isEmpty()) {
             return "已收到" + String.join("、", summary.unsupportedTypes())
-                + "消息。当前版本支持文字、带转写文字的语音、图片和图片 URL；该内容暂时无法进一步识别。";
+                + "消息。当前版本支持文字、带转写文字的语音、图片、图片 URL 和常用办公文件；该内容暂时无法进一步识别。";
         }
         return "已收到消息，但没有识别到可处理的文字或图片内容。";
     }
@@ -1709,16 +1885,19 @@ public class WeChatILinkBot implements SmartLifecycle {
         String text,
         List<MessageItem> imageItems,
         List<MessageItem> voiceItems,
+        List<MessageItem> fileItems,
         List<String> unsupportedTypes) {
         MessageSummary {
             text = text == null ? "" : text.trim();
             imageItems = imageItems == null ? List.of() : List.copyOf(imageItems);
             voiceItems = voiceItems == null ? List.of() : List.copyOf(voiceItems);
+            fileItems = fileItems == null ? List.of() : List.copyOf(fileItems);
             unsupportedTypes = unsupportedTypes == null ? List.of() : List.copyOf(unsupportedTypes);
         }
 
         boolean hasProcessableContent() {
-            return !text.isBlank() || !imageItems.isEmpty() || !voiceItems.isEmpty();
+            return !text.isBlank() || !imageItems.isEmpty()
+                || !voiceItems.isEmpty() || !fileItems.isEmpty();
         }
     }
 }

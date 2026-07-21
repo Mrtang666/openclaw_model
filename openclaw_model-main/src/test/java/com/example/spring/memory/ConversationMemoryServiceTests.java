@@ -88,6 +88,23 @@ class ConversationMemoryServiceTests {
         assertThat(fileCount).isEqualTo(2);
     }
 
+    @Test
+    void returnsLatestMeaningfulAssistantReplyForDocumentExport() throws Exception {
+        ConversationMemoryService service = new ConversationMemoryService(properties());
+        service.afterPropertiesSet();
+        AgentRequest summaryRequest = new AgentRequest(
+            "user-export", 201L, "提取重点", List.of(), 0);
+        service.rememberAgentResult(AgentType.DOCUMENT, summaryRequest,
+            AgentResponse.text("产品名称：周年纪念版\n核心升级：新增智能功能"));
+        AgentRequest exportRequest = new AgentRequest(
+            "user-export", 202L, "把上面的内容输出PDF", List.of(), 0);
+        service.rememberAgentResult(AgentType.DOCUMENT, exportRequest,
+            AgentResponse.text("文件已生成，正在发送。"));
+
+        assertThat(service.getLatestExportableAssistantText("user-export"))
+            .isEqualTo("产品名称：周年纪念版\n核心升级：新增智能功能");
+    }
+
     private MemoryProperties properties() {
         MemoryProperties properties = new MemoryProperties();
         properties.setDataDirectory(tempDirectory);

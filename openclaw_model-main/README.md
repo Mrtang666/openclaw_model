@@ -4,6 +4,11 @@ Spring Boot 应用通过微信 iLink SDK 接收消息，根据内容自动调用
 图片识别或图片生成模块。项目只允许启动一个微信客户端和一个机器人，收到消息后
 会先回复处理状态，再由同一个机器人线程严格按照接收顺序逐条处理。
 
+所有普通业务请求会先进入顶层意图路由 Agent。路由 Agent 结合最新消息、附件、
+最近对话和可引用媒体，在 `ChatAgent`、`WeatherAgent`、`VisionAgent`、
+`ImageGenerationAgent`、`DocumentAgent` 五个同级 Agent 之间选择。关键词规则只在
+百炼路由调用失败时降级使用。
+
 ## 功能
 
 - 普通文本：调用阿里云百炼 `qwen-plus` 多轮对话
@@ -16,7 +21,9 @@ Spring Boot 应用通过微信 iLink SDK 接收消息，根据内容自动调用
 - 任务恢复：未完成的图片需求保存在 SQLite 中，应用重启后 24 小时内可以继续
 - 微信输入状态：处理和回复期间顶部显示微信标准的“对方正在输入中...”
 - 持久化记忆：SQLite 保存受限文本历史，图片文件使用数量和容量限制
-- 其他消息：文件、视频和无法转写的语音也会收到明确反馈
+- 文件处理：识别 PDF、DOCX、XLSX、PPTX、TXT、Markdown、CSV、HTML 和 RTF
+- 文件输出：可将文件分析结果或上一条回复生成为 PDF/Word 并直接发送到微信
+- 其他消息：视频和无法转写的语音也会收到明确反馈
 
 ## 外部配置
 
@@ -57,10 +64,48 @@ WEATHER_API_HOST=https://你的和风天气专属APIHost
 - 每个用户最多保存 12 张图片
 - 每个用户图片总量最多 50MB
 - 图片保存在 `runtime-data/images`，数据库位于 `runtime-data/memory.db`
+- 每个用户最多保存 20 个文件，文件总量最多 100MB，默认保留 7 天
+- 原文件保存在 `runtime-data/documents`，失败待重发文件保存在
+  `runtime-data/pending-document-delivery`
 - `runtime-data` 已被 Git 忽略
 
 可以通过 `MEMORY_MAX_ENTRIES_PER_USER`、`MEMORY_PROMPT_ENTRIES`、
 `MEMORY_MAX_IMAGES_PER_USER` 和 `MEMORY_MAX_IMAGE_BYTES_PER_USER` 调整。
+
+## 文件处理
+
+可以直接向机器人发送常用办公文件并附带要求，例如：
+
+```text
+总结这个 PDF
+把该文件内容整理成 Word
+根据这个 Excel 生成分析报告
+比较刚才两个文件
+把上文输出为 PDF
+```
+
+只发送文件而不附带要求时，机器人会列出总结、提取重点、文件问答、Word 和 PDF
+五个选项，可以直接回复数字。长文件会按段落分块处理，问答场景会先在本地选择相关
+分块，再调用百炼。扫描版 PDF 当前不包含 OCR，会明确提示重新提供带文字的 PDF。
+
+“把上面的内容输出为 PDF”“将上述内容保存为 Word”等纯导出请求会直接使用最近一条
+有效回复，不会再次调用模型改写内容；只有明确要求总结、翻译、润色或分析时才调用模型。
+当最近文件会话与“上面的内容”同时存在时，明确引用的对话回复优先于历史文件。
+
+路由 Agent 会进一步区分“从零创作”和“基于材料加工”。例如“生成一个小故事并以
+PDF 输出”会规划为从零创作，不使用最近文件；“根据这个文件写一个故事并输出 PDF”
+才会把最近文件交给 DocumentAgent。出现 `PDF`、`Word` 等词本身不会强制进入文件流程，
+例如“PDF 是什么”仍由 ChatAgent 回答。
+
+PDF 使用本机中文字体。Windows 会自动尝试 `simhei.ttf` 等系统字体；也可以在 `.evn`
+中显式配置：
+
+```properties
+DOCUMENT_PDF_FONT_PATH=C:/Windows/Fonts/simhei.ttf
+```
+
+文件正文会被当作不可信数据，不能覆盖系统提示。文件内容仅在执行总结、问答等任务时
+发送给百炼；纯格式输出会尽量避免额外模型调用。所有 `runtime-data` 内容均被 Git 忽略。
 
 收到“上一张图片是什么”时会读取历史图片进行识别；收到“把上一张改成夜景”时
 会调用千问图像编辑模型，并把编辑结果保存为新的历史图片。

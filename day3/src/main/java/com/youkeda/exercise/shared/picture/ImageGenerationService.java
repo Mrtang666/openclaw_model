@@ -33,14 +33,10 @@ public class ImageGenerationService {
         ObjectNode textContent = content.addObject();
         textContent.put("text", prompt);
 
-        // 可选参数
-        // ObjectNode parameters = root.putObject("parameters");
-        // parameters.put("size", "1024x1024");
-        // parameters.put("n", 1);
 
         String payload = objectMapper.writeValueAsString(root);
 
-        // 2. 发送 HTTP 请求 (与之前相同)
+        // 2. 发送 HTTP 请求
         URL url = new URL(API_URL);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");

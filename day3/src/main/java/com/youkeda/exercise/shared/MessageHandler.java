@@ -120,9 +120,35 @@ public class MessageHandler {
 
         System.out.println("📝 文字内容: " + content);
 
-        // 处理命令并回复
-        String reply = processCommand(content,fromUser);
-        client.sendText(fromUser, reply);
+
+        String trimmed = content.trim();
+        // 2. 画图
+        if (trimmed.startsWith("画图") || trimmed.endsWith("图片")) {
+            String prompt = trimmed.replaceFirst("^(画图|图片)\\s*", "").trim();
+            if (prompt.isEmpty()) {
+                client.sendText(fromUser,"🎨 请描述你想画的图片，例如：画图 一只可爱的橘猫");
+            }
+            // 异步生成，避免阻塞
+            new Thread(() -> {
+                try {
+                    client.sendText(fromUser, "🎨 正在生成图片，请稍候...（可能需要10-20秒）");
+                    byte[] imageData = imageGenerationService.generateImage(prompt);
+                    // 发送图片（使用你发现的重载方法）
+                    client.sendImage(fromUser, imageData, "generated.jpg", prompt);
+                } catch (Exception e) {
+                    try {
+                        client.sendText(fromUser, "❌ 生成图片失败：" + e.getMessage());
+                    } catch (Exception ex) {
+                        ex.printStackTrace();
+                    }
+                }
+            }).start();
+        }
+        else {
+            // 处理命令并回复
+            String reply = processCommand(content,fromUser);
+            client.sendText(fromUser, reply);
+        }
     }
 
     /**
@@ -169,7 +195,8 @@ public class MessageHandler {
         // 3. 调用视觉模型分析（传入字节数组）
         String description = qwenVisionService.analyzeImage(imageData);
 
-        String finalDescription = deepSeekService.chat(description);
+        //String finalDescription = deepSeekService.chat(description);
+        String finalDescription = deepSeekService.chat( description);
 
         // 4. 回复用户
         String reply = "📸 我看了一下这张图片：\n" + finalDescription;

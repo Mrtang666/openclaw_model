@@ -18,6 +18,8 @@ import java.util.concurrent.TimeUnit;
 public class DeepSeekService {
 
     private static final String DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions";
+    private static final int MAX_HISTORY_SIZE = 10;         // 保留最近10条消息
+    private static final int EXPIRE_SECONDS = 1800;         // 30分钟无操作则遗忘
 
     @Value("${deepseek.api.key:}")
     private String apiKey;

@@ -82,10 +82,10 @@ public class WeichatdemoApplication {
             // ========== 1. 创建配置 ==========
             ILinkConfig config = ILinkConfig.builder()
                     .connectTimeoutMs(30000)
-                    .readTimeoutMs(30000)
+                    .readTimeoutMs(35000)
                     .writeTimeoutMs(30000)
                     .heartbeatEnabled(true)
-                    .heartbeatIntervalMs(30000)
+                    .heartbeatIntervalMs(5000)
                     .autoReconnectEnabled(true)
                     .loginTimeoutMs(180000)
                     .build();

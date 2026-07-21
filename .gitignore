@@ -1,4 +1,10 @@
 target/
+.env
 .idea/
 *.iml
 .vscode/
+logs/
+*.log
+generated-images/
+data/
+.worktrees/

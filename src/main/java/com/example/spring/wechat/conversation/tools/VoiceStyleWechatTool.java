@@ -65,6 +65,44 @@ public class VoiceStyleWechatTool implements WechatTool {
     }
 
     @Override
+    public List<WechatToolParameter> parameters() {
+        return List.of(
+                WechatToolParameter.optionalEnum(
+                        "action",
+                        "音色流程动作：展示候选、试听、确认选择、换一批或追问",
+                        List.of("show_candidates", "preview", "confirm", "more", "ask_clarify"),
+                        "show_candidates"),
+                WechatToolParameter.optionalString(
+                        "query",
+                        "用户对音色的自然语言偏好，要结合上下文补全，例如温柔女声、沉稳男声、适合讲故事",
+                        "温柔女声"),
+                WechatToolParameter.optionalString(
+                        "voice",
+                        "用户明确指定的音色名称",
+                        "Cherry"),
+                WechatToolParameter.optionalString(
+                        "index",
+                        "用户在候选列表中选择或试听的序号，例如第一个、第五个",
+                        "5"),
+                WechatToolParameter.optionalString(
+                        "preview_text",
+                        "试听时要合成的一小段文本；为空时使用默认试听文本",
+                        "你好，我是你的 AI 助手"));
+    }
+
+    @Override
+    public WechatToolCapability capability() {
+        return new WechatToolCapability(
+                "根据用户偏好筛选、试听、确认并长期保存语音合成音色。",
+                List.of(
+                        "用户需求模糊时需要追问性别、语言、风格或用途。",
+                        "用户说选择第几个、把第几个当音色时，要结合上一批候选列表理解，不能重新生成一批候选。",
+                        "性别约束必须严格遵守：女声只给女声，男声只给男声。"),
+                List.of("action：show_candidates/preview/confirm/more/ask_clarify", "query：音色偏好", "index 或 voice：候选序号或音色名"),
+                List.of("候选音色列表", "试听语音", "已保存的用户音色偏好"));
+    }
+
+    @Override
     public WechatReply execute(WechatToolRequest request) {
         String text = firstNonBlank(request.argument("query"), request.argument("message"), request.userText());
         String action = request.argument("action");

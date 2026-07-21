@@ -1,9 +1,10 @@
-package com.example.spring.tool.protocol;
+package com.example.spring.tool.protocol.legacy;
 
 
 /**
  * 负责解析大模型返回的 JSON。
  */
+import com.example.spring.tool.protocol.ConversationIntentDecision;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;

@@ -108,6 +108,37 @@ class WechatBotServiceTests {
     }
 
     @Test
+    void fallsBackToImageUrlWhenWechatImageUploadThrowsRuntimeException() throws Exception {
+        FakeWechatClient client = new FakeWechatClient(2);
+        client.failImageSendsWithRuntimeException("upload failed code=500");
+        WechatConversationService conversationService = mock(WechatConversationService.class);
+        when(conversationService.handleWechat(any())).thenReturn(WechatReply.textAndImage(
+                "图片如下：",
+                new ImageGenerationResult(
+                        "小猫趴在椅子上",
+                        "https://cdn.example.com/cat.png",
+                        "PNG".getBytes(),
+                        "cat.png",
+                        "image/png",
+                        null,
+                        null)));
+        @SuppressWarnings("unchecked")
+        ObjectProvider<WechatConversationService> provider = mock(ObjectProvider.class);
+        when(provider.getObject()).thenReturn(conversationService);
+        WechatBotService service = new WechatBotService(() -> client, provider);
+
+        service.start();
+        client.loginFuture.complete(new WechatLoginInfo("bot-1"));
+        client.updates.add(List.of(new WechatIncomingMessage("user@im.wechat", "帮我生成一张小猫趴在椅子上的图片")));
+
+        assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
+        assertThat(client.sentImages).isEmpty();
+        assertThat(new ArrayList<>(client.sentTexts))
+                .anySatisfy(text -> assertThat(text).contains("https://cdn.example.com/cat.png"));
+        service.stop();
+    }
+
+    @Test
     void sendsOptimizedPromptTextBeforeGeneratedImage() throws Exception {
         FakeWechatClient client = new FakeWechatClient(3);
         WechatConversationService conversationService = mock(WechatConversationService.class);
@@ -286,6 +317,7 @@ class WechatBotServiceTests {
         private final Queue<SentFile> sentFiles = new ConcurrentLinkedQueue<>();
         private final Map<String, Integer> fileFailuresBeforeSuccess = new ConcurrentHashMap<>();
         private final Map<String, Integer> fileSendAttempts = new ConcurrentHashMap<>();
+        private volatile RuntimeException imageSendFailure;
         private volatile String sentToUserId;
 
         private FakeWechatClient() {
@@ -324,6 +356,9 @@ class WechatBotServiceTests {
 
         @Override
         public void sendImage(String toUserId, byte[] imageBytes, String fileName, String caption) {
+            if (imageSendFailure != null) {
+                throw imageSendFailure;
+            }
             this.sentToUserId = toUserId;
             this.sentImages.add(new SentImage(imageBytes, fileName, caption));
             sentLatch.countDown();
@@ -362,6 +397,10 @@ class WechatBotServiceTests {
 
         private int fileSendAttempts(String fileName) {
             return this.fileSendAttempts.getOrDefault(fileName, 0);
+        }
+
+        private void failImageSendsWithRuntimeException(String message) {
+            this.imageSendFailure = new RuntimeException(message);
         }
 
         @Override

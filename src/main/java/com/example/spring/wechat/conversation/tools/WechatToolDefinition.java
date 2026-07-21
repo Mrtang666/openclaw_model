@@ -6,12 +6,27 @@ package com.example.spring.wechat.conversation.tools;
  */
 import java.util.List;
 
-public record WechatToolDefinition(String name, String description, List<String> arguments) {
+public record WechatToolDefinition(
+        String name,
+        String description,
+        List<WechatToolParameter> parameters,
+        WechatToolCapability capability) {
+
+    public WechatToolDefinition(String name, String description, List<WechatToolParameter> parameters) {
+        this(name, description, parameters, WechatToolCapability.empty());
+    }
 
     public WechatToolDefinition {
         name = name == null ? "" : name.strip();
         description = description == null ? "" : description.strip();
-        arguments = arguments == null ? List.of() : List.copyOf(arguments);
+        parameters = parameters == null ? List.of() : List.copyOf(parameters);
+        capability = capability == null ? WechatToolCapability.empty() : capability;
+    }
+
+    public List<String> arguments() {
+        return parameters.stream()
+                .map(WechatToolParameter::name)
+                .toList();
     }
 }
 

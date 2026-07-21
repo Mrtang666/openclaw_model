@@ -1,7 +1,10 @@
-package com.example.spring.tool.protocol;
+package com.example.spring.tool.protocol.legacy;
 
 import com.example.spring.chat.ChatService;
+import com.example.spring.tool.protocol.ConversationIntentDecision;
+import com.example.spring.tool.protocol.ConversationToolPlanner;
 import com.example.spring.wechat.conversation.tools.WechatToolDefinition;
+import com.example.spring.wechat.conversation.tools.WechatToolParameter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -12,7 +15,7 @@ import java.util.List;
 import java.util.Optional;
 
 @Service
-public class ToolCallPlanner {
+public class ToolCallPlanner implements ConversationToolPlanner {
 
     private static final Logger log = LoggerFactory.getLogger(ToolCallPlanner.class);
 
@@ -34,6 +37,7 @@ public class ToolCallPlanner {
                 .map(ToolPlan::new);
     }
 
+    @Override
     public Optional<ConversationIntentDecision> planDecision(
             String userText,
             List<WechatToolDefinition> toolDefinitions,
@@ -81,8 +85,8 @@ public class ToolCallPlanner {
                     .append(definition.name())
                     .append("：")
                     .append(definition.description())
-                    .append("；参数：")
-                    .append(String.join(", ", definition.arguments()))
+                    .append("；参数 schema：")
+                    .append(formatParameters(definition.parameters()))
                     .append('\n');
         }
 
@@ -92,6 +96,36 @@ public class ToolCallPlanner {
                 .append("用户原话：").append(userText).append('\n')
                 .append("请输出任务拆解 JSON：");
         return prompt.toString();
+    }
+
+    private String formatParameters(List<WechatToolParameter> parameters) {
+        if (parameters == null || parameters.isEmpty()) {
+            return "无";
+        }
+        return parameters.stream()
+                .map(this::formatParameter)
+                .toList()
+                .toString();
+    }
+
+    private String formatParameter(WechatToolParameter parameter) {
+        StringBuilder value = new StringBuilder();
+        value.append(parameter.name())
+                .append("(type=")
+                .append(parameter.type())
+                .append(", required=")
+                .append(parameter.required());
+        if (!parameter.description().isBlank()) {
+            value.append(", description=").append(parameter.description());
+        }
+        if (!parameter.allowedValues().isEmpty()) {
+            value.append(", allowed=").append(String.join("|", parameter.allowedValues()));
+        }
+        if (!parameter.example().isBlank()) {
+            value.append(", example=").append(parameter.example());
+        }
+        value.append(")");
+        return value.toString();
     }
 
     private String preview(String value) {

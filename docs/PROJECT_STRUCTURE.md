@@ -1,41 +1,19 @@
-# 项目结构说明
+# OpenClaw 项目结构说明
 
-这份文档用于说明 OpenClaw 当前代码的分层和每个主要目录的职责。当前项目以“入口层 -> 会话编排层 -> 工具协议层 -> 具体工具能力 -> 外部服务适配”的方式组织代码，重点能力集中在微信端 Agent。
+本文档用于说明当前项目的主要包结构、每个模块的职责，以及旧版 `prompt-json` 模式和新版 `function-calling` 模式的区别。
 
-## 1. 总体分层
+## 1. 总体流程
 
 ```text
-用户入口
-  ├─ CLI 控制台
-  └─ 微信 iLink
-
-入口与分发
-  ├─ agent/
-  ├─ cli/
-  ├─ cli/command/
-  └─ wechat/bot/
-
-会话编排与工具规划
-  ├─ tool/protocol/
-  └─ wechat/conversation/
-
-领域能力
-  ├─ chat/
-  ├─ weather/
-  ├─ wechat/document/
-  ├─ wechat/image/
-  ├─ wechat/image/generation/
-  └─ wechat/voice/
-
-外部平台适配
-  ├─ chat/DashScopeChatClient.java
-  ├─ weather/client/
-  ├─ wechat/adapter/
-  ├─ wechat/adapter/ilink/
-  ├─ wechat/image/client/
-  ├─ wechat/image/generation/client/
-  ├─ wechat/voice/recognition/client/
-  └─ wechat/voice/synthesis/client/
+微信 / CLI 输入
+  -> 会话编排层
+  -> 工具规划层
+      -> legacy prompt-json 模式
+      -> function-calling 模式
+  -> 工具注册中心
+  -> 天气 / 图片 / 语音 / 文件 / 普通聊天等工具
+  -> 外部 API
+  -> 返回微信或 CLI
 ```
 
 ## 2. 根包
@@ -45,44 +23,25 @@ com.example.spring
   └─ AgentClawApplication.java
 ```
 
-- `AgentClawApplication`：Spring Boot 启动类，负责启动整个项目。
+- `AgentClawApplication`：Spring Boot 启动类。
 
-## 3. agent：CLI 默认对话入口
+## 3. CLI 入口
 
 ```text
 agent/
-  ├─ AgentService.java
-  └─ ReplyEmitter.java
-```
-
-- `AgentService`：CLI 输入的统一处理入口，决定走本地命令还是大模型对话。
-- `ReplyEmitter`：流式输出接口，用于 CLI 流式打印和大模型流式回复。
-
-## 4. cli：控制台入口与命令系统
-
-```text
 cli/
-  ├─ ConsoleRunner.java
-  └─ command/
-      ├─ core/
-      │   ├─ Command.java
-      │   ├─ CommandDispatcher.java
-      │   ├─ CommandRegistry.java
-      │   └─ ErrorMessageFormatter.java
-      └─ impl/
-          ├─ HelpCommand.java
-          ├─ VersionCommand.java
-          ├─ StatusCommand.java
-          ├─ WeatherCommand.java
-          └─ WechatCommand.java
+cli/command/
 ```
 
-- `ConsoleRunner`：项目启动后的控制台输入循环。
-- `command/core`：命令接口、命令注册、命令分发、错误格式化。
-- `command/impl`：具体 CLI 命令实现，目前包括 `/help`、`/version`、`/status`、`/weather`、`/wechat`。
-- CLI 端已经移除图片生成命令，图片生成只保留在微信端工具里。
+- `agent/AgentService`：CLI 默认大模型对话入口。
+- `agent/ReplyEmitter`：流式输出接口。
+- `cli/ConsoleRunner`：控制台输入循环。
+- `cli/command/core`：命令接口、命令注册、命令分发、错误格式化。
+- `cli/command/impl`：`help`、`version`、`status`、`weather`、`wechat` 等命令实现。
 
-## 5. chat：文本大模型能力
+说明：CLI 端不再保留图片生成命令，图片生成只保留在微信端工具里。
+
+## 4. 文本大模型
 
 ```text
 chat/
@@ -93,11 +52,10 @@ chat/
   └─ DashScopeChatClient.java
 ```
 
-- `ChatService`：业务层统一调用的大模型服务。
-- `DashScopeChatClient`：阿里百炼兼容 OpenAI Chat Completions 接口的客户端。
-- 当前主要用于普通对话、工具规划、提示词优化、天气结果整理、文档正文生成等场景。
+- `ChatService`：项目内调用文本大模型的统一入口。
+- `DashScopeChatClient`：阿里百炼兼容 OpenAI Chat Completions 的客户端。
 
-## 6. tool：工具协议与旧版工具注册
+## 5. 工具协议层
 
 ```text
 tool/
@@ -105,83 +63,51 @@ tool/
   ├─ ToolRegistry.java
   ├─ WeatherTool.java
   └─ protocol/
+      ├─ ConversationToolPlanner.java
       ├─ ConversationIntentDecision.java
-      ├─ ToolCall.java
-      ├─ ToolCallPlanParser.java
-      ├─ ToolCallPlanner.java
-      └─ ToolPlan.java
+      ├─ ConfigurableConversationToolPlanner.java
+      ├─ legacy/
+      │   ├─ ToolCall.java
+      │   ├─ ToolPlan.java
+      │   ├─ ToolCallPlanParser.java
+      │   └─ ToolCallPlanner.java
+      ├─ function/
+      │   ├─ DashScopeFunctionCallingClient.java
+      │   ├─ FunctionCallingMessage.java
+      │   ├─ FunctionCallingToolCall.java
+      │   ├─ FunctionCallingModelResponse.java
+      │   ├─ FunctionCallingResponseParser.java
+      │   ├─ FunctionCallingToolPlanner.java
+      │   └─ FunctionCallingToolSchemaConverter.java
+      └─ validation/
+          ├─ ToolCallValidator.java
+          └─ ToolCallValidationResult.java
 ```
 
-- `tool/protocol`：结构化工具调用协议，让大模型输出 JSON 任务计划。
-- `ToolCallPlanner`：把用户需求、历史上下文和工具列表交给大模型做任务拆解。
-- `ToolCallPlanParser`：解析模型输出的 JSON，并转成系统可执行的工具调用计划。
+- `ConversationToolPlanner`：统一工具规划接口。
+- `ConfigurableConversationToolPlanner`：根据 `agent.tool-calling.mode` 切换规划模式。
+- `legacy/`：旧版 JSON 规划模式。模型输出 JSON，Java 解析后执行工具。
+- `function/`：新版 Function Calling 模式。模型返回标准 `tool_calls`，Java 执行工具后把 tool message 回传模型。
+- `validation/`：工具调用参数校验，负责拦截缺少必填参数、枚举值非法等问题。
 
-## 7. weather：天气能力
-
-```text
-weather/
-  ├─ client/
-  │   ├─ AmapWeatherClient.java
-  │   └─ WeatherClient.java
-  ├─ model/
-  │   └─ WeatherResult.java
-  └─ service/
-      └─ WeatherService.java
-```
-
-- `client`：高德天气 API 调用。
-- `model`：天气结果数据结构。
-- `service`：天气查询参数校验和业务封装。
-
-## 8. wechat/adapter 与 wechat/model：微信平台适配
-
-```text
-wechat/
-  ├─ adapter/
-  │   ├─ WechatClient.java
-  │   ├─ WechatClientFactory.java
-  │   └─ ilink/
-  │       ├─ IlinkWechatClient.java
-  │       └─ IlinkWechatClientFactory.java
-  └─ model/
-      ├─ ImageSourceType.java
-      ├─ VoiceSourceType.java
-      ├─ WechatIncomingFile.java
-      ├─ WechatIncomingImage.java
-      ├─ WechatIncomingMessage.java
-      ├─ WechatIncomingVoice.java
-      └─ WechatLoginInfo.java
-```
-
-- `WechatClient`：微信客户端抽象接口，隐藏 iLink SDK 的具体实现。
-- `IlinkWechatClient`：iLink SDK 适配实现，负责登录、接收消息、下载图片/语音/文件、发送文本/图片/语音/文件。
-- `wechat/model`：微信入站消息、图片、语音、文件、登录信息等数据对象。
-- `WechatIncomingFile`：微信文件附件的统一模型，包含文件名、MIME、字节内容、大小、哈希等信息。
-
-## 9. wechat/bot：微信 Bot 生命周期与发送层
-
-```text
-wechat/bot/
-  ├─ WechatBotService.java
-  ├─ WechatBotState.java
-  ├─ WechatBotStatus.java
-  ├─ WechatReply.java
-  └─ WechatStartResult.java
-```
-
-- `WechatBotService`：登录、拉取消息、发送等待提示、异步处理消息、发送文本/图片/语音/文件。
-- `WechatReply`：微信回复对象，支持有序 `parts`，例如文本、图片、语音、文件按顺序发送。
-
-## 10. wechat/conversation：微信会话编排与工具中心
+## 6. 微信会话编排
 
 ```text
 wechat/conversation/
   ├─ WechatConversationService.java
+  ├─ agent/
+  │   ├─ FunctionCallingAgentLoop.java
+  │   ├─ FunctionCallingAgentRequest.java
+  │   └─ AgentToolExecutionResult.java
+  ├─ memory/
+  │   └─ WechatAgentMemoryContextBuilder.java
   ├─ intent/
   │   └─ WeatherIntentParser.java
   └─ tools/
       ├─ WechatTool.java
+      ├─ WechatToolCapability.java
       ├─ WechatToolDefinition.java
+      ├─ WechatToolParameter.java
       ├─ WechatToolRegistry.java
       ├─ WechatToolRequest.java
       ├─ ChatWechatTool.java
@@ -194,150 +120,102 @@ wechat/conversation/
       └─ VoiceStyleWechatTool.java
 ```
 
-- `WechatConversationService`：微信端核心编排层，处理文本、图片、语音、文件、上下文、工具计划和最终回复组合。
-- `intent`：兜底规则意图识别，目前主要用于天气等兼容路径。
-- `tools`：微信端插件化工具中心。天气、聊天、图片生成、文档解析、文档生成、语音识别、语音生成、音色修改都以工具形式注册。
-- `WechatToolRequest`：工具执行请求，携带用户文本、工具参数、历史上下文、图片和文件上下文等信息。
+- `WechatConversationService`：微信端核心编排层，负责处理文本、图片、语音、文件、上下文、工具调用和最终回复。
+- `agent/FunctionCallingAgentLoop`：标准 Agent Function Calling 循环。
+- `memory/WechatAgentMemoryContextBuilder`：把滚动摘要、最近对话、媒体记忆、工具状态拼成大模型上下文。
+- `tools/WechatToolCapability`：描述工具能力边界，包括能做什么、不能做什么、缺什么要追问、输出什么。
+- `tools/WechatToolRegistry`：微信端工具注册中心。
 
-## 11. wechat/document：微信文件解析、分块、生成与归档
+## 7. 微信平台适配
+
+```text
+wechat/adapter/
+wechat/adapter/ilink/
+wechat/bot/
+wechat/model/
+```
+
+- `adapter/WechatClient`：微信客户端抽象接口。
+- `adapter/ilink/IlinkWechatClient`：iLink SDK 适配层，负责登录、收消息、下载附件、发送文本/图片/语音/文件。
+- `bot/WechatBotService`：微信 Bot 生命周期和消息处理队列。
+- `model/WechatIncomingMessage`：统一封装微信文本、图片、语音、文件消息。
+
+## 8. 领域工具能力
+
+### 天气
+
+```text
+weather/
+  ├─ client/
+  ├─ model/
+  └─ service/
+```
+
+- 使用高德天气 API。
+- 微信端通过 `WeatherWechatTool` 暴露为工具。
+
+### 图片
+
+```text
+wechat/image/
+wechat/image/generation/
+```
+
+- `wechat/image`：图片理解。
+- `wechat/image/generation`：图片生成。
+- 微信端通过 `ImageGenerationWechatTool` 作为工具调用。
+
+### 语音
+
+```text
+wechat/voice/recognition/
+wechat/voice/synthesis/
+wechat/voice/style/
+```
+
+- `recognition`：ASR，语音转文字。
+- `synthesis`：TTS，文字转语音。
+- `style`：音色候选、试听、确认、偏好保存。
+
+### 文件
 
 ```text
 wechat/document/
   ├─ model/
-  │   ├─ DocumentChunk.java
-  │   ├─ DocumentFormat.java
-  │   ├─ GeneratedDocument.java
-  │   ├─ GeneratedDocumentRequest.java
-  │   └─ ParsedDocument.java
   └─ service/
-      ├─ DefaultDocumentGenerationService.java
-      ├─ DocumentArchiveService.java
-      ├─ DocumentChunkService.java
-      ├─ DocumentParseService.java
-      └─ DocumentTypeDetector.java
 ```
 
-- `DocumentTypeDetector`：结合文件后缀、MIME 和文件头识别文件类型。
-- `DocumentParseService`：解析 PDF、DOCX、TXT、Markdown、XLSX、PPTX 文件，把文件正文转成可供模型理解的文本。
-- `DocumentChunkService`：把长文档按长度切块，避免一次性把大文件全部塞进模型上下文。
-- `DocumentArchiveService`：把微信收到的原始文件保存到本地 `data/wechat/documents`，方便后续追溯和复用。
-- `DefaultDocumentGenerationService`：根据模型生成的正文导出 DOCX、PDF、TXT、Markdown 文档。
-- `DocumentAnalysisWechatTool`：微信端文档解析工具，用于总结、提炼重点、读取文件内容。
-- `DocumentGenerationWechatTool`：微信端文档生成工具，用于根据用户需求或最近文件上下文生成可发送的文件。
+- 支持文件类型检测、解析、分块、摘要、归档和文档生成。
+- 微信端通过 `DocumentAnalysisWechatTool` 和 `DocumentGenerationWechatTool` 作为工具调用。
 
-## 12. wechat/image：微信图片理解
-
-```text
-wechat/image/
-  ├─ exception/
-  │   └─ ImageUnderstandingException.java
-  ├─ model/
-  │   └─ ImageAnalysisRequest.java
-  ├─ service/
-  │   ├─ ImageInputResolver.java
-  │   ├─ ImageUnderstandingService.java
-  │   └─ DefaultImageUnderstandingService.java
-  └─ client/
-      ├─ ImageUnderstandingClient.java
-      └─ DashScopeImageUnderstandingClient.java
-```
-
-- `ImageInputResolver`：解析微信附件图片、图片链接、data URI。
-- `DefaultImageUnderstandingService`：调用视觉模型并生成图片描述或基于图片的回答。
-
-## 13. wechat/image/generation：微信图片生成
-
-```text
-wechat/image/generation/
-  ├─ ImageGenerationClient.java
-  ├─ ImageGenerationException.java
-  ├─ client/
-  │   └─ DashScopeImageGenerationClient.java
-  ├─ intent/
-  │   └─ ImageGenerationIntentParser.java
-  ├─ model/
-  │   ├─ ImageGenerationRequest.java
-  │   └─ ImageGenerationResult.java
-  └─ service/
-      └─ ImageGenerationService.java
-```
-
-- `intent`：图片生成相关的旧规则意图识别。
-- `model`：图片生成请求和结果。
-- `service`：图片生成和图片下载封装。
-- `client`：阿里百炼图片生成 API 客户端。
-- 该模块只服务微信端图片生成工具，不再暴露 CLI 图片生成命令。
-
-## 14. wechat/voice：微信语音识别、语音生成与音色偏好
-
-```text
-wechat/voice/
-  ├─ recognition/
-  │   ├─ VoiceRecognitionException.java
-  │   ├─ audio/
-  │   │   ├─ AudioFormatDetector.java
-  │   │   ├─ AudioTranscoder.java
-  │   │   └─ FfmpegAudioTranscoder.java
-  │   ├─ client/
-  │   │   ├─ VoiceRecognitionClient.java
-  │   │   └─ DashScopeVoiceRecognitionClient.java
-  │   ├─ model/
-  │   │   ├─ VoiceRecognitionRequest.java
-  │   │   └─ VoiceRecognitionResult.java
-  │   └─ service/
-  │       ├─ VoiceRecognitionService.java
-  │       └─ DefaultVoiceRecognitionService.java
-  ├─ synthesis/
-  │   ├─ exception/
-  │   │   └─ VoiceSynthesisException.java
-  │   ├─ client/
-  │   │   ├─ VoiceSynthesisClient.java
-  │   │   └─ DashScopeVoiceSynthesisClient.java
-  │   ├─ model/
-  │   │   ├─ VoiceSynthesisAudio.java
-  │   │   ├─ VoiceSynthesisRequest.java
-  │   │   └─ VoiceSynthesisSegment.java
-  │   └─ service/
-  │       ├─ VoiceSynthesisService.java
-  │       └─ DefaultVoiceSynthesisService.java
-  └─ style/
-      ├─ model/
-      │   ├─ VoiceCandidatePage.java
-      │   └─ VoiceProfile.java
-      └─ service/
-          ├─ VoiceCatalog.java
-          └─ VoicePreferenceService.java
-```
-
-- `recognition`：ASR，负责微信语音转文字。
-- `synthesis`：TTS，负责文本转语音，长文本会按时长限制拆段。
-- `style`：音色目录、候选筛选、试听上下文和用户音色偏好。
-
-## 15. wechat/memory：微信端上下文记忆
+## 9. 微信记忆
 
 ```text
 wechat/memory/
   ├─ config/
-  │   └─ WechatMemoryProperties.java
   ├─ fallback/
-  │   └─ InMemoryWechatMemoryFallback.java
   ├─ model/
-  │   ├─ ConversationTurn.java
-  │   ├─ WechatConversationMemory.java
-  │   └─ WechatMemorySession.java
   ├─ scheduler/
-  │   └─ WechatMemoryMaintenanceScheduler.java
   └─ service/
-      ├─ MySqlWechatMemoryService.java
-      └─ WechatMemoryService.java
 ```
 
-- `WechatMemoryService`：微信上下文记忆接口。
-- `MySqlWechatMemoryService`：MySQL 持久化实现，保存消息、会话状态和工具日志。
-- `InMemoryWechatMemoryFallback`：数据库不可用时的内存兜底，保证服务不因数据库故障直接停止。
-- `WechatMemoryMaintenanceScheduler`：定期清理超过保留期的历史数据。
+- `WechatMemoryService`：微信记忆统一接口。
+- `MySqlWechatMemoryService`：MySQL 持久化实现。
+- `InMemoryWechatMemoryFallback`：数据库不可用时的内存兜底。
+- `WechatMemoryMaintenanceScheduler`：过期数据清理和摘要维护。
+- 当前上下文保留策略由 `wechat.memory.*` 配置控制。
 
-## 16. 数据库迁移
+## 10. 配置文件
+
+```text
+src/main/resources/application.properties
+.env.example
+```
+
+- `application.properties`：按 MySQL、Agent、微信记忆、天气、DashScope 文本、图片、语音、日志分组。
+- `.env.example`：本地环境变量示例，不包含真实密钥。
+
+## 11. 数据库迁移
 
 ```text
 src/main/resources/db/migration/
@@ -345,31 +223,17 @@ src/main/resources/db/migration/
   └─ V2__create_wechat_document_tables.sql
 ```
 
-- `V1__create_wechat_memory_tables.sql`：微信上下文记忆、消息日志、工具调用日志表。
-- `V2__create_wechat_document_tables.sql`：微信文件元数据、文档分块、文档生成记录表。
+- `V1`：微信记忆、消息、工具调用日志表。
+- `V2`：微信文件元数据、文件分块、文档生成记录表。
 
-## 17. 测试目录
-
-测试目录整体跟随主代码包结构：
-
-```text
-src/test/java/com/example/spring/cli/command/
-src/test/java/com/example/spring/weather/client/
-src/test/java/com/example/spring/wechat/adapter/ilink/
-src/test/java/com/example/spring/wechat/bot/
-src/test/java/com/example/spring/wechat/conversation/
-src/test/java/com/example/spring/wechat/conversation/tools/
-src/test/java/com/example/spring/wechat/document/
-src/test/java/com/example/spring/wechat/image/
-src/test/java/com/example/spring/wechat/image/generation/
-src/test/java/com/example/spring/wechat/memory/
-src/test/java/com/example/spring/wechat/voice/recognition/
-src/test/java/com/example/spring/wechat/voice/style/
-src/test/java/com/example/spring/wechat/voice/synthesis/
-```
-
-常用验证命令：
+## 12. 常用验证命令
 
 ```powershell
-mvn clean test
+mvn -q test
+```
+
+聚焦验证 Function Calling 和工具协议：
+
+```powershell
+mvn -q "-Dtest=WechatAgentMemoryContextBuilderTests,WechatToolRegistryTests,FunctionCallingToolSchemaConverterTests,ConfigurableConversationToolPlannerTests,FunctionCallingAgentLoopTests" test
 ```

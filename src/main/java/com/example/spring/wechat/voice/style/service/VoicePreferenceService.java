@@ -1,8 +1,12 @@
 package com.example.spring.wechat.voice.style.service;
 
+import com.example.spring.wechat.memory.service.WechatMemoryService;
 import com.example.spring.wechat.voice.style.model.VoiceCandidatePage;
 import com.example.spring.wechat.voice.style.model.VoiceProfile;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -26,16 +30,39 @@ public class VoicePreferenceService {
 
     private final VoiceCatalog catalog;
     private final Clock clock;
+    private final WechatMemoryService wechatMemoryService;
+    private final ObjectMapper objectMapper;
     private final ConcurrentMap<String, VoiceSessionState> states = new ConcurrentHashMap<>();
 
     @Autowired
+    public VoicePreferenceService(
+            VoiceCatalog catalog,
+            ObjectProvider<WechatMemoryService> wechatMemoryServiceProvider,
+            ObjectProvider<ObjectMapper> objectMapperProvider) {
+        this(
+                catalog,
+                Clock.systemDefaultZone(),
+                wechatMemoryServiceProvider.getIfAvailable(),
+                objectMapperProvider.getIfAvailable());
+    }
+
     public VoicePreferenceService(VoiceCatalog catalog) {
-        this(catalog, Clock.systemDefaultZone());
+        this(catalog, Clock.systemDefaultZone(), null, null);
     }
 
     public VoicePreferenceService(VoiceCatalog catalog, Clock clock) {
+        this(catalog, clock, null, null);
+    }
+
+    private VoicePreferenceService(
+            VoiceCatalog catalog,
+            Clock clock,
+            WechatMemoryService wechatMemoryService,
+            ObjectMapper objectMapper) {
         this.catalog = catalog;
         this.clock = clock == null ? Clock.systemDefaultZone() : clock;
+        this.wechatMemoryService = wechatMemoryService;
+        this.objectMapper = objectMapper;
     }
 
     public VoiceCatalog catalog() {
@@ -49,6 +76,10 @@ public class VoicePreferenceService {
     }
 
     public Optional<VoiceProfile> currentPreference(String sessionKey) {
+        Optional<VoiceProfile> persistedPreference = loadPersistedPreference(sessionKey);
+        if (persistedPreference.isPresent()) {
+            return persistedPreference;
+        }
         VoiceSessionState state = states.get(safeKey(sessionKey));
         return state == null ? Optional.empty() : Optional.ofNullable(state.selectedVoice());
     }
@@ -58,6 +89,7 @@ public class VoicePreferenceService {
             return;
         }
         stateFor(sessionKey).selectedVoice(profile);
+        savePersistedPreference(sessionKey, profile);
     }
 
     public VoiceCandidatePage searchAndRememberCandidates(String sessionKey, String query) {
@@ -146,6 +178,40 @@ public class VoicePreferenceService {
 
     private String safeKey(String sessionKey) {
         return sessionKey == null || sessionKey.isBlank() ? "default" : sessionKey.strip();
+    }
+
+    private Optional<VoiceProfile> loadPersistedPreference(String sessionKey) {
+        if (wechatMemoryService == null || objectMapper == null || "default".equals(safeKey(sessionKey))) {
+            return Optional.empty();
+        }
+        try {
+            return wechatMemoryService.explicitPreference(sessionKey, "voice")
+                    .flatMap(value -> {
+                        try {
+                            return Optional.of(objectMapper.readValue(value, VoiceProfile.class));
+                        } catch (JsonProcessingException exception) {
+                            return Optional.empty();
+                        }
+                    });
+        } catch (RuntimeException exception) {
+            return Optional.empty();
+        }
+    }
+
+    private void savePersistedPreference(String sessionKey, VoiceProfile profile) {
+        if (wechatMemoryService == null || objectMapper == null || "default".equals(safeKey(sessionKey))) {
+            return;
+        }
+        try {
+            wechatMemoryService.saveExplicitPreference(
+                    sessionKey,
+                    "voice",
+                    objectMapper.writeValueAsString(profile),
+                    "EXPLICIT_ACTION",
+                    Instant.now(clock));
+        } catch (JsonProcessingException ignored) {
+            // 音色偏好持久化失败时仍保留当前进程内选择。
+        }
     }
 
     private static final class VoiceSessionState {

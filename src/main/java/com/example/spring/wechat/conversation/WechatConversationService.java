@@ -20,6 +20,10 @@ import com.example.spring.wechat.image.exception.ImageUnderstandingException;
 import com.example.spring.wechat.image.model.ImageAnalysisRequest;
 import com.example.spring.wechat.image.service.ImageInputResolver;
 import com.example.spring.wechat.image.service.ImageUnderstandingService;
+import com.example.spring.wechat.memory.config.WechatMemoryProperties;
+import com.example.spring.wechat.memory.fallback.InMemoryWechatMemoryFallback;
+import com.example.spring.wechat.memory.model.WechatConversationMemory;
+import com.example.spring.wechat.memory.service.WechatMemoryService;
 import com.example.spring.wechat.voice.recognition.VoiceRecognitionException;
 import com.example.spring.wechat.voice.recognition.model.VoiceRecognitionResult;
 import com.example.spring.wechat.voice.recognition.service.VoiceRecognitionService;
@@ -63,7 +67,8 @@ public class WechatConversationService {
     private final ImageGenerationIntentParser imageGenerationIntentParser;
     private final ToolCallPlanner toolCallPlanner;
     private final WechatToolRegistry wechatToolRegistry;
-    private final Map<String, ConversationMemory> memories = new ConcurrentHashMap<>();
+    private final WechatMemoryService wechatMemoryService;
+    private final Map<String, WechatConversationMemory> memories = new ConcurrentHashMap<>();
 
     @Autowired
     public WechatConversationService(
@@ -76,7 +81,8 @@ public class WechatConversationService {
             WeatherIntentParser weatherIntentParser,
             ImageGenerationIntentParser imageGenerationIntentParser,
             ToolCallPlanner toolCallPlanner,
-            WechatToolRegistry wechatToolRegistry) {
+            WechatToolRegistry wechatToolRegistry,
+            WechatMemoryService wechatMemoryService) {
         this.chatService = chatService;
         this.weatherService = weatherService;
         this.imageUnderstandingService = imageUnderstandingService;
@@ -87,17 +93,18 @@ public class WechatConversationService {
         this.imageGenerationIntentParser = imageGenerationIntentParser;
         this.toolCallPlanner = toolCallPlanner;
         this.wechatToolRegistry = wechatToolRegistry;
+        this.wechatMemoryService = wechatMemoryService;
     }
 
     WechatConversationService(ChatService chatService, WeatherService weatherService) {
-        this(chatService, weatherService, null, null, null, new ImageInputResolver(), new WeatherIntentParser(), new ImageGenerationIntentParser(), null, null);
+        this(chatService, weatherService, null, null, null, new ImageInputResolver(), new WeatherIntentParser(), new ImageGenerationIntentParser(), null, null, localMemoryService());
     }
 
     WechatConversationService(
             ChatService chatService,
             WeatherService weatherService,
             WeatherIntentParser weatherIntentParser) {
-        this(chatService, weatherService, null, null, null, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), null, null);
+        this(chatService, weatherService, null, null, null, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), null, null, localMemoryService());
     }
 
     WechatConversationService(
@@ -105,7 +112,7 @@ public class WechatConversationService {
             WeatherService weatherService,
             ImageUnderstandingService imageUnderstandingService,
             WeatherIntentParser weatherIntentParser) {
-        this(chatService, weatherService, imageUnderstandingService, null, null, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), null, null);
+        this(chatService, weatherService, imageUnderstandingService, null, null, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), null, null, localMemoryService());
     }
 
     WechatConversationService(
@@ -114,7 +121,7 @@ public class WechatConversationService {
             ImageUnderstandingService imageUnderstandingService,
             ImageGenerationService imageGenerationService,
             WeatherIntentParser weatherIntentParser) {
-        this(chatService, weatherService, imageUnderstandingService, imageGenerationService, null, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), null, null);
+        this(chatService, weatherService, imageUnderstandingService, imageGenerationService, null, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), null, null, localMemoryService());
     }
 
     WechatConversationService(
@@ -124,7 +131,7 @@ public class WechatConversationService {
             ImageGenerationService imageGenerationService,
             VoiceRecognitionService voiceRecognitionService,
             WeatherIntentParser weatherIntentParser) {
-        this(chatService, weatherService, imageUnderstandingService, imageGenerationService, voiceRecognitionService, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), null, null);
+        this(chatService, weatherService, imageUnderstandingService, imageGenerationService, voiceRecognitionService, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), null, null, localMemoryService());
     }
 
     WechatConversationService(
@@ -136,7 +143,7 @@ public class WechatConversationService {
             WeatherIntentParser weatherIntentParser,
             ToolCallPlanner toolCallPlanner,
             WechatToolRegistry wechatToolRegistry) {
-        this(chatService, weatherService, imageUnderstandingService, imageGenerationService, voiceRecognitionService, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), toolCallPlanner, wechatToolRegistry);
+        this(chatService, weatherService, imageUnderstandingService, imageGenerationService, voiceRecognitionService, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), toolCallPlanner, wechatToolRegistry, localMemoryService());
     }
 
     public String handle(String input) {
@@ -155,37 +162,49 @@ public class WechatConversationService {
     }
 
     public WechatReply handleWechat(WechatIncomingMessage message) {
+        return handleWechat(message, true);
+    }
+
+    private WechatReply handleWechat(WechatIncomingMessage message, boolean persistIncomingMessage) {
         if (message == null) {
             return WechatReply.text("");
         }
 
         String sessionKey = sessionKey(message.fromUserId());
-        if (message.hasVoices()) {
-            return handleVoiceMessage(sessionKey, message);
-        }
-
-        ImageAnalysisRequest request = imageInputResolver.resolve(message);
-        String text = request.userText();
-        boolean hasImages = request.hasImages();
-
-        if (hasImages) {
-            StringBuilder output = new StringBuilder();
-            handleStreaming(message, output::append);
-            return WechatReply.text(output.toString().strip());
-        }
-
-        if (text == null || text.isBlank()) {
+        if (persistIncomingMessage && !acceptWechatMessage(sessionKey, message)) {
+            log.info("忽略微信重复消息，userId={}, messageId={}",
+                    sessionKey, valueOrUnknown(message.messageId()));
             return WechatReply.text("");
         }
+        try {
+            if (message.hasVoices()) {
+                return handleVoiceMessage(sessionKey, message);
+            }
 
-        if (!hasImages) {
+            ImageAnalysisRequest request = imageInputResolver.resolve(message);
+            String text = request.userText();
+            boolean hasImages = request.hasImages();
+
+            if (hasImages) {
+                StringBuilder output = new StringBuilder();
+                handleStreaming(message, output::append);
+                return WechatReply.text(output.toString().strip());
+            }
+
+            if (text == null || text.isBlank()) {
+                return WechatReply.text("");
+            }
+
             Optional<WechatReply> structuredReply = handleIntentPlan(sessionKey, text);
             if (structuredReply.isPresent()) {
                 return structuredReply.get();
             }
+            return handleSingleTextTask(sessionKey, text);
+        } finally {
+            if (persistIncomingMessage) {
+                persistWechatMemory(sessionKey);
+            }
         }
-
-        return handleSingleTextTask(sessionKey, text);
     }
 
     public void handleStreaming(String input, ReplyEmitter emitter) {
@@ -302,6 +321,15 @@ public class WechatConversationService {
             List<WechatReply.Part> replyParts = toReplyParts(reply);
             parts.addAll(replyParts);
             String toolReplyText = replyMemoryText(replyParts);
+            if (!DEFAULT_SESSION_KEY.equals(sessionKey)) {
+                wechatMemoryService.recordToolExecution(
+                        sessionKey,
+                        toolCall.tool(),
+                        arguments,
+                        toolReplyText,
+                        "SUCCESS",
+                        java.time.Instant.now());
+            }
             if (!toolReplyText.isBlank()) {
                 previousToolReplyText = toolReplyText;
                 rollingHistory = appendRollingHistory(rollingHistory, toolCall.tool(), toolReplyText);
@@ -316,6 +344,7 @@ public class WechatConversationService {
         if (!assistantReply.isBlank()) {
             memoryFor(sessionKey).record(text, assistantReply);
             memoryFor(sessionKey).clearPendingClarification();
+            rememberAssistantReply(sessionKey, assistantReply);
         }
         return Optional.of(WechatReply.ordered(parts));
     }
@@ -431,13 +460,13 @@ public class WechatConversationService {
     }
 
     private String historyText(String sessionKey) {
-        List<ConversationTurn> turns = memoryFor(sessionKey).snapshot();
+        List<com.example.spring.wechat.memory.model.ConversationTurn> turns = memoryFor(sessionKey).snapshot();
         if (turns.isEmpty()) {
             return "?";
         }
 
         StringBuilder history = new StringBuilder();
-        for (ConversationTurn turn : turns) {
+        for (com.example.spring.wechat.memory.model.ConversationTurn turn : turns) {
             history.append("用户：").append(turn.userText()).append('\n')
                     .append("助手：").append(turn.assistantText()).append('\n');
         }
@@ -454,7 +483,7 @@ public class WechatConversationService {
     }
 
     private String conversationContext(String sessionKey) {
-        ConversationMemory memory = memoryFor(sessionKey);
+        WechatConversationMemory memory = memoryFor(sessionKey);
         StringBuilder context = new StringBuilder();
         memory.pendingClarificationUserText().ifPresent(text ->
                 context.append("上一轮未完成需求：").append(text).append('\n'));
@@ -493,7 +522,7 @@ public class WechatConversationService {
                     mergedText,
                     message.images(),
                     List.of());
-            WechatReply reply = handleWechat(syntheticMessage);
+            WechatReply reply = handleWechat(syntheticMessage, false);
             if (reply != null && reply.parts() != null && reply.parts().stream().anyMatch(WechatReply.Part::hasVoice)) {
                 return reply;
             }
@@ -581,6 +610,7 @@ public class WechatConversationService {
             memoryFor(sessionKey).recordUserImage(
                     userText == null || userText.isBlank() ? "[图片]" : userText,
                     assistantReply);
+            rememberAssistantReply(sessionKey, assistantReply);
         } catch (ImageUnderstandingException exception) {
             String message = "图片识别失败：" + messageOrDefault(exception, "请稍后重试");
             log.warn("微信图片识别失败，userId={}, messageId={}, error={}",
@@ -643,7 +673,7 @@ public class WechatConversationService {
             return Optional.empty();
         }
 
-        ConversationMemory memory = memoryFor(sessionKey);
+        WechatConversationMemory memory = memoryFor(sessionKey);
         return memory.lastWeatherCity();
     }
 
@@ -672,6 +702,7 @@ public class WechatConversationService {
         try {
             ImageGenerationResult image = imageGenerationService.generate(new ImageGenerationRequest(prompt));
             memoryFor(sessionKey).recordImage(originalText, prompt);
+            rememberAssistantReply(sessionKey, "已为你生成图片");
             return WechatReply.textsAndImage(preImageTexts, "我已经帮你生成好了，图片如下：", image);
         } catch (RuntimeException exception) {
             log.warn("微信图片生成失败，userId={}, prompt={}, error={}",
@@ -687,7 +718,7 @@ public class WechatConversationService {
             return Optional.empty();
         }
 
-        ConversationMemory memory = memoryFor(sessionKey);
+        WechatConversationMemory memory = memoryFor(sessionKey);
         if (isPendingImageGenerationApproval(text)) {
             Optional<String> pendingPrompt = memory.lastPendingImagePrompt();
             if (pendingPrompt.isPresent()) {
@@ -848,14 +879,14 @@ public class WechatConversationService {
     private String buildImageFollowUpPrompt(
             String previousPrompt,
             String instruction,
-            List<ConversationTurn> recentTurns) {
+            List<com.example.spring.wechat.memory.model.ConversationTurn> recentTurns) {
         StringBuilder prompt = new StringBuilder();
         prompt.append("基于上一轮图片需求和最近对话上下文重新生成图片。")
                 .append("上一轮图片需求：").append(previousPrompt).append("。");
 
         if (recentTurns != null && !recentTurns.isEmpty()) {
             prompt.append("最近对话上下文：");
-            for (ConversationTurn turn : recentTurns) {
+            for (com.example.spring.wechat.memory.model.ConversationTurn turn : recentTurns) {
                 prompt.append("用户说：").append(turn.userText()).append("。")
                         .append("助手回复：").append(turn.assistantText()).append("。");
             }
@@ -884,6 +915,7 @@ public class WechatConversationService {
         String assistantReply = reply.toString().strip();
         if (!assistantReply.isBlank()) {
             memoryFor(sessionKey).record(userText, assistantReply);
+            rememberAssistantReply(sessionKey, assistantReply);
         }
     }
 
@@ -970,21 +1002,64 @@ public class WechatConversationService {
         return prompt.toString();
     }
 
-    private void appendHistory(StringBuilder prompt, ConversationMemory memory) {
-        List<ConversationTurn> turns = memory.snapshot();
+    private void appendHistory(StringBuilder prompt, WechatConversationMemory memory) {
+        List<com.example.spring.wechat.memory.model.ConversationTurn> turns = memory.snapshot();
         if (turns.isEmpty()) {
             return;
         }
 
         prompt.append("最近对话：").append('\n');
-        for (ConversationTurn turn : turns) {
+        for (com.example.spring.wechat.memory.model.ConversationTurn turn : turns) {
             prompt.append("用户：").append(turn.userText()).append('\n')
                     .append("助手：").append(turn.assistantText()).append('\n');
         }
     }
 
-    private ConversationMemory memoryFor(String sessionKey) {
-        return memories.computeIfAbsent(sessionKey, key -> new ConversationMemory());
+    private WechatConversationMemory memoryFor(String sessionKey) {
+        if (DEFAULT_SESSION_KEY.equals(sessionKey)) {
+            return memories.computeIfAbsent(
+                    sessionKey,
+                    key -> WechatConversationMemory.empty(6));
+        }
+        return memories.computeIfAbsent(sessionKey, wechatMemoryService::memoryFor);
+    }
+
+    private boolean acceptWechatMessage(String sessionKey, WechatIncomingMessage message) {
+        String contentType = message.hasVoices() ? "VOICE" : message.hasImages() ? "IMAGE" : "TEXT";
+        boolean accepted = wechatMemoryService.acceptIncoming(
+                sessionKey,
+                message.messageId(),
+                message.text(),
+                contentType,
+                java.time.Instant.now());
+        if (accepted) {
+            memories.put(sessionKey, wechatMemoryService.memoryFor(sessionKey));
+        }
+        return accepted;
+    }
+
+    private void persistWechatMemory(String sessionKey) {
+        if (DEFAULT_SESSION_KEY.equals(sessionKey)) {
+            return;
+        }
+        WechatConversationMemory memory = memories.remove(sessionKey);
+        if (memory != null) {
+            wechatMemoryService.saveMemory(sessionKey, memory, java.time.Instant.now());
+        }
+    }
+
+    private void rememberAssistantReply(String sessionKey, String assistantReply) {
+        if (!DEFAULT_SESSION_KEY.equals(sessionKey)) {
+            wechatMemoryService.recordAssistantMessage(
+                    sessionKey,
+                    assistantReply,
+                    "TEXT",
+                    java.time.Instant.now());
+        }
+    }
+
+    private static WechatMemoryService localMemoryService() {
+        return new InMemoryWechatMemoryFallback(new WechatMemoryProperties(60, 30, 6, 20));
     }
 
     private String sessionKey(String userId) {

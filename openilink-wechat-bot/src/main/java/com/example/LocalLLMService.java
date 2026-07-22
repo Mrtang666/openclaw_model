@@ -115,28 +115,69 @@ public class LocalLLMService {
         public String getBaiduMapAk() {
             return props.getProperty("map.baidu.ak", "");
         }
+        public String getQWeatherApiHost() {
+            return props.getProperty("qweather.api.host", "devapi.qweather.com");
+        }
+        public String getQWeatherApiKey() {
+            return props.getProperty("qweather.api.key", "");
+        }
+        public String getTtsApiKey() {
+            return props.getProperty("tts.api.key", "");
+        }
+        public String getTtsUrl() {
+            return props.getProperty("tts.api.url", "https://api.siliconflow.cn/v1/audio/speech");
+        }
+        public String getTtsModel() {
+            return props.getProperty("tts.model", "FunAudioLLM/CosyVoice2-0.5B");
+        }
+        public String getTtsVoice() {
+            return props.getProperty("tts.voice", "FunAudioLLM/CosyVoice2-0.5B:alex");
+        }
+        public String getTtsResponseFormat() {
+            return props.getProperty("tts.response.format", "pcm");
+        }
+        public int getTtsSampleRate() {
+            return Integer.parseInt(props.getProperty("tts.sample.rate", "16000"));
+        }
+        public double getTtsSpeed() {
+            return Double.parseDouble(props.getProperty("tts.speed", "1.0"));
+        }
+        public double getTtsGain() {
+            return Double.parseDouble(props.getProperty("tts.gain", "0.0"));
+        }
     }
 
     private static final Config cachedConfig = new Config(configProps);
     public static Config getConfig() { return cachedConfig; }
 
     public String chat(String userId, String message) {
+        return chatInternal(userId, message, temperature, maxTokens, false);
+    }
+
+    /** Uses conservative sampling for long-form document content. */
+    public String chatForDocument(String userId, String message) {
+        return chatInternal(userId, message, 0.25, Math.max(maxTokens, 3072), true);
+    }
+
+    private String chatInternal(String userId, String message,
+                                 double requestTemperature, int requestMaxTokens,
+                                 boolean isolated) {
         try {
-            List<Map<String, String>> history = conversationHistory
-                    .computeIfAbsent(userId, k -> {
-                        List<Map<String, String>> list = new ArrayList<>();
-                        list.add(Map.of("role", "system", "content",
-                                "你是一个友好的微信聊天机器人助手，具备图片生成能力。"
-                                + "如果用户要求生成/画/创建/绘制一张图片，你在回复最后加上标记 [IMAGE_GEN:用户的图片描述]。"
-                                + "例如：\"好的，为您生成一张猫的图片[IMAGE_GEN:一只可爱的橘猫坐在窗台上]\"。"
-                                + "图片生成标记必须严格使用英文方括号，不要加粗，不要换成 Markdown。"
-                                + "不要拒绝画图请求，直接生成即可。用简洁自然的语气回复。"));
-                        return list;
-                    });
+            List<Map<String, String>> history;
+            if (isolated) {
+                history = new ArrayList<>();
+                history.add(systemMessage());
+            } else {
+                history = conversationHistory.computeIfAbsent(userId, k -> {
+                    List<Map<String, String>> list = new ArrayList<>();
+                    list.add(systemMessage());
+                    return list;
+                });
+            }
 
             history.add(Map.of("role", "user", "content", message));
 
-            if (history.size() > MAX_HISTORY) {
+            if (!isolated && history.size() > MAX_HISTORY) {
                 List<Map<String, String>> trimmed = new ArrayList<>();
                 trimmed.add(history.get(0));
                 trimmed.addAll(history.subList(history.size() - MAX_HISTORY + 1, history.size()));
@@ -144,7 +185,7 @@ public class LocalLLMService {
                 history = trimmed;
             }
 
-            ChatRequest request = new ChatRequest(model, history, temperature, maxTokens);
+            ChatRequest request = new ChatRequest(model, history, requestTemperature, requestMaxTokens);
             String requestBody = objectMapper.writeValueAsString(request);
 
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
@@ -173,13 +214,23 @@ public class LocalLLMService {
                 return "抱歉，我没有理解你的意思。";
             }
 
-            history.add(Map.of("role", "assistant", "content", reply));
+            if (!isolated) {
+                history.add(Map.of("role", "assistant", "content", reply));
+            }
             return reply;
 
         } catch (Exception e) {
             log.error("调用本地大模型失败", e);
             return "抱歉，我连接不到大脑，请检查本地模型服务是否启动。";
         }
+    }
+
+    private Map<String, String> systemMessage() {
+        return Map.of("role", "system", "content",
+                "你是一个友好的微信聊天机器人助手。"
+                        + "当前消息已经由程序路由层判断为普通聊天，请只用自然中文回答用户问题。"
+                        + "如果完成用户请求所必需的信息不足，请先主动提出简洁的澄清问题，不要自行猜测；信息足够时直接回答或执行。"
+                        + "不要输出 IMAGE_GEN 标记，不要主动触发图片生成、路线图生成、天气查询或语音模式切换。");
     }
 
     public String chatWithImage(String userId, String textPrompt, byte[] imageBytes, String imageMimeType) {

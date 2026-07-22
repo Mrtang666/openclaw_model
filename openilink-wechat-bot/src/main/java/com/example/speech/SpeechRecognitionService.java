@@ -4,9 +4,11 @@ import com.example.LocalLLMService;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.kasukusakura.silkcodec.SilkCoder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
@@ -25,6 +27,9 @@ public class SpeechRecognitionService {
 
     private static final Logger log = LoggerFactory.getLogger(SpeechRecognitionService.class);
     private static final String TEMP_DIR = "downloads/temp_audio";
+    private static final int SILK_SAMPLE_RATE = 24000;
+    private static final int PCM_CHANNELS = 1;
+    private static final int PCM_BITS_PER_SAMPLE = 16;
 
     private final String apiKey;
     private final String transcriptionUrl;
@@ -55,6 +60,16 @@ public class SpeechRecognitionService {
         }
 
         String safeName = safeFileName(originalFileName);
+        String ext = inferExtension(safeName);
+        if ("silk".equals(ext)) {
+            String result = decodeSilkAndTranscribe(audioData, safeName);
+            if (result != null) {
+                return result;
+            }
+            log.warn("本地 SILK 解码识别失败，跳过直接上传 SILK，等待微信语音转文字兜底");
+            return null;
+        }
+
         if (isFfmpegAvailable()) {
             String result = transcodeAndTranscribe(audioData, safeName);
             if (result != null) {
@@ -64,7 +79,6 @@ public class SpeechRecognitionService {
             log.info("ffmpeg 未安装或不可用，跳过语音转码");
         }
 
-        String ext = inferExtension(safeName);
         String mimeType = mimeTypeFor(ext);
         String result = tryDirectTranscribe(audioData, safeName, ext, mimeType);
         if (result != null) {
@@ -80,6 +94,62 @@ public class SpeechRecognitionService {
 
         log.warn("语音识别失败：file={}, size={} bytes", safeName, audioData.length);
         return null;
+    }
+
+    private String decodeSilkAndTranscribe(byte[] silkData, String originalName) {
+        try {
+            ByteArrayOutputStream pcmOut = new ByteArrayOutputStream();
+            SilkCoder.decode(new ByteArrayInputStream(silkData), pcmOut);
+            byte[] pcmBytes = pcmOut.toByteArray();
+            if (pcmBytes.length == 0) {
+                log.warn("SILK 解码结果为空: file={}", originalName);
+                return null;
+            }
+
+            byte[] wavBytes = wrapPcmAsWav(pcmBytes, SILK_SAMPLE_RATE, PCM_CHANNELS, PCM_BITS_PER_SAMPLE);
+            log.info("SILK 已本地解码为 WAV 后识别: file={}, silkBytes={}, pcmBytes={}, wavBytes={}",
+                    originalName, silkData.length, pcmBytes.length, wavBytes.length);
+            return callTranscription(wavBytes, replaceExtension(originalName, "wav"), "audio/wav");
+        } catch (Exception e) {
+            log.warn("SILK 本地解码失败: file={}, error={}", originalName, e.getMessage());
+            return null;
+        }
+    }
+
+    private byte[] wrapPcmAsWav(byte[] pcmBytes, int sampleRate, int channels, int bitsPerSample) throws IOException {
+        int byteRate = sampleRate * channels * bitsPerSample / 8;
+        int blockAlign = channels * bitsPerSample / 8;
+        int dataSize = pcmBytes.length;
+        int riffSize = 36 + dataSize;
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream(44 + dataSize);
+        writeAscii(out, "RIFF");
+        writeLittleEndianInt(out, riffSize);
+        writeAscii(out, "WAVE");
+        writeAscii(out, "fmt ");
+        writeLittleEndianInt(out, 16);
+        writeLittleEndianShort(out, 1);
+        writeLittleEndianShort(out, channels);
+        writeLittleEndianInt(out, sampleRate);
+        writeLittleEndianInt(out, byteRate);
+        writeLittleEndianShort(out, blockAlign);
+        writeLittleEndianShort(out, bitsPerSample);
+        writeAscii(out, "data");
+        writeLittleEndianInt(out, dataSize);
+        out.write(pcmBytes);
+        return out.toByteArray();
+    }
+
+    private void writeLittleEndianInt(ByteArrayOutputStream out, int value) {
+        out.write(value & 0xff);
+        out.write((value >> 8) & 0xff);
+        out.write((value >> 16) & 0xff);
+        out.write((value >> 24) & 0xff);
+    }
+
+    private void writeLittleEndianShort(ByteArrayOutputStream out, int value) {
+        out.write(value & 0xff);
+        out.write((value >> 8) & 0xff);
     }
 
     private String transcodeAndTranscribe(byte[] audioData, String originalName) {

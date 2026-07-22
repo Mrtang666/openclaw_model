@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1180" viewBox="0 0 1800 1180">
+  <defs>
+    <style>
+      .title { font: 700 34px "Microsoft YaHei", "Segoe UI", sans-serif; fill: #18323a; }
+      .subtitle { font: 400 17px "Microsoft YaHei", "Segoe UI", sans-serif; fill: #577078; }
+      .section { font: 700 22px "Microsoft YaHei", "Segoe UI", sans-serif; fill: #18323a; }
+      .box-title { font: 700 19px "Microsoft YaHei", "Segoe UI", sans-serif; fill: #18323a; }
+      .box-text { font: 400 15px "Microsoft YaHei", "Segoe UI", sans-serif; fill: #48616a; }
+      .small { font: 400 14px "Microsoft YaHei", "Segoe UI", sans-serif; fill: #607780; }
+      .line { stroke: #6d858b; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+      .line-soft { stroke: #b7c7c9; stroke-width: 2; fill: none; stroke-dasharray: 7 7; }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6d858b"/>
+    </marker>
+  </defs>
+
+  <rect width="1800" height="1180" fill="#f5f8f7"/>
+  <rect x="36" y="30" width="1728" height="1120" rx="24" fill="#ffffff" stroke="#d6e1df" stroke-width="2"/>
+  <text x="82" y="88" class="title">openilink-wechat-bot 当前项目结构</text>
+  <text x="82" y="121" class="subtitle">模块化单体结构：入口层 → 应用编排 → 功能模块 → 模型/服务 → 微信适配</text>
+
+  <rect x="82" y="160" width="1636" height="132" rx="16" fill="#e4f1ef" stroke="#9fcac3" stroke-width="2"/>
+  <text x="110" y="195" class="section">入口层</text>
+  <rect x="110" y="213" width="310" height="55" rx="10" fill="#ffffff" stroke="#7eb8ae" stroke-width="2"/>
+  <text x="132" y="237" class="box-title">WechatBot.java</text>
+  <text x="132" y="258" class="box-text">登录、轮询、消息分发、顶层路由</text>
+  <rect x="454" y="213" width="310" height="55" rx="10" fill="#ffffff" stroke="#7eb8ae" stroke-width="2"/>
+  <text x="476" y="237" class="box-title">feature/media</text>
+  <text x="476" y="258" class="box-text">图片识别、语音转写、视频提示</text>
+  <rect x="798" y="213" width="310" height="55" rx="10" fill="#ffffff" stroke="#7eb8ae" stroke-width="2"/>
+  <text x="820" y="237" class="box-title">intent + context</text>
+  <text x="820" y="258" class="box-text">判断天气/图片/文件等需求并补全上下文</text>
+  <rect x="1142" y="213" width="548" height="55" rx="10" fill="#ffffff" stroke="#7eb8ae" stroke-width="2"/>
+  <text x="1164" y="237" class="box-title">feature/guidance</text>
+  <text x="1164" y="258" class="box-text">缺少信息时主动提问，信息齐全后触发对应功能</text>
+
+  <path d="M 265 292 L 265 345" class="line"/>
+  <path d="M 609 292 L 609 345" class="line"/>
+  <path d="M 953 292 L 953 345" class="line"/>
+  <path d="M 1416 292 L 1416 345" class="line"/>
+
+  <rect x="82" y="345" width="1636" height="285" rx="16" fill="#f0f5fb" stroke="#b6cbe3" stroke-width="2"/>
+  <text x="110" y="380" class="section">功能处理层 feature/*</text>
+
+  <rect x="110" y="405" width="340" height="92" rx="12" fill="#ffffff" stroke="#8caed1" stroke-width="2"/>
+  <text x="132" y="432" class="box-title">feature/weather</text>
+  <text x="132" y="456" class="box-text">WeatherHandler</text>
+  <text x="132" y="479" class="small">解析城市/区县/日期，调用和风 API 并保存天气上下文</text>
+
+  <rect x="478" y="405" width="340" height="92" rx="12" fill="#ffffff" stroke="#8caed1" stroke-width="2"/>
+  <text x="500" y="432" class="box-title">feature/image</text>
+  <text x="500" y="456" class="box-text">ImageHandler</text>
+  <text x="500" y="479" class="small">识别 3:4/16:9 等比例，生成图片并处理海报修改</text>
+
+  <rect x="846" y="405" width="340" height="92" rx="12" fill="#ffffff" stroke="#8caed1" stroke-width="2"/>
+  <text x="868" y="432" class="box-title">feature/route</text>
+  <text x="868" y="456" class="box-text">RouteMapHandler</text>
+  <text x="868" y="479" class="small">组合天气、LLM 结构化行程、地图数据并绘制 PNG</text>
+
+  <rect x="1214" y="405" width="476" height="92" rx="12" fill="#ffffff" stroke="#8caed1" stroke-width="2"/>
+  <text x="1236" y="432" class="box-title">feature/file</text>
+  <text x="1236" y="456" class="box-text">FileHandler</text>
+  <text x="1236" y="479" class="small">下载 Word/PDF/Excel 等文件，分析内容或生成新文件</text>
+
+  <rect x="110" y="520" width="340" height="80" rx="12" fill="#ffffff" stroke="#8caed1" stroke-width="2"/>
+  <text x="132" y="547" class="box-title">feature/voice</text>
+  <text x="132" y="571" class="box-text">VoiceModeHandler · 按用户开启/关闭语音回复</text>
+
+  <rect x="478" y="520" width="340" height="80" rx="12" fill="#ffffff" stroke="#8caed1" stroke-width="2"/>
+  <text x="500" y="547" class="box-title">feature/guidance</text>
+  <text x="500" y="571" class="box-text">GuidedTaskHandler · 统一处理追问完成结果</text>
+
+  <rect x="846" y="520" width="844" height="80" rx="12" fill="#ffffff" stroke="#8caed1" stroke-width="2"/>
+  <text x="868" y="547" class="box-title">feature/media</text>
+  <text x="868" y="571" class="box-text">IncomingMediaHandler · 下载媒体、保存记录、调用视觉/STT、返回文本</text>
+
+  <path d="M 900 630 L 900 683" class="line"/>
+  <path d="M 1340 630 L 1340 683" class="line"/>
+
+  <rect x="82" y="683" width="1636" height="195" rx="16" fill="#fff7e9" stroke="#e5c783" stroke-width="2"/>
+  <text x="110" y="718" class="section">应用编排与外部能力</text>
+  <rect x="110" y="744" width="400" height="90" rx="12" fill="#ffffff" stroke="#d9b96d" stroke-width="2"/>
+  <text x="132" y="772" class="box-title">application</text>
+  <text x="132" y="797" class="box-text">ReplyOrchestrator</text>
+  <text x="132" y="820" class="small">统一决定文字、MP3、WAV、文字兜底的发送顺序</text>
+  <rect x="548" y="744" width="400" height="90" rx="12" fill="#ffffff" stroke="#d9b96d" stroke-width="2"/>
+  <text x="570" y="772" class="box-title">模型与媒体服务</text>
+  <text x="570" y="797" class="box-text">LocalLLM · ImageGen · STT · TTS</text>
+  <text x="570" y="820" class="small">LLM 负责对话与规划，STT/TTS 负责语音，Vision 负责图片</text>
+  <rect x="986" y="744" width="704" height="90" rx="12" fill="#ffffff" stroke="#d9b96d" stroke-width="2"/>
+  <text x="1008" y="772" class="box-title">已有基础包</text>
+  <text x="1008" y="797" class="box-text">file · guidance · imagegen · speech · tts · voice · vision · routegen · map</text>
+  <text x="1008" y="820" class="small">提供文件、路线、地图、语音、视觉等可复用领域能力</text>
+
+  <path d="M 310 878 L 310 925" class="line"/>
+  <path d="M 865 878 L 865 925" class="line"/>
+  <path d="M 1338 878 L 1338 925" class="line"/>
+
+  <rect x="82" y="925" width="1636" height="170" rx="16" fill="#f4eef8" stroke="#cdb8dd" stroke-width="2"/>
+  <text x="110" y="960" class="section">适配与基础设施</text>
+  <rect x="110" y="983" width="430" height="76" rx="12" fill="#ffffff" stroke="#b99ccc" stroke-width="2"/>
+  <text x="132" y="1011" class="box-title">adapter/wechat</text>
+  <text x="132" y="1036" class="box-text">WechatMessageSender · 微信 SDK 发送隔离</text>
+  <rect x="582" y="983" width="430" height="76" rx="12" fill="#ffffff" stroke="#b99ccc" stroke-width="2"/>
+  <text x="604" y="1011" class="box-title">根包基础服务</text>
+  <text x="604" y="1036" class="box-text">LocalLLMService：模型配置　WeatherService：和风请求　MediaHelper：媒体落盘</text>
+  <rect x="1054" y="983" width="636" height="76" rx="12" fill="#ffffff" stroke="#b99ccc" stroke-width="2"/>
+  <text x="1076" y="1011" class="box-title">外部系统</text>
+  <text x="1076" y="1036" class="box-text">微信收发消息、天气数据、图片/对话模型、路线信息、SILK 编解码</text>
+
+  <text x="82" y="1122" class="small">实际入口：src/main/java/com/example/WechatBot.java　|　图示文件：docs/project-structure.svg</text>
+</svg>

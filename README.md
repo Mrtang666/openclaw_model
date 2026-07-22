@@ -1,28 +1,51 @@
 # OpenClaw CLI / WeChat Agent
 
-OpenClaw 是一个基于 Java 17 + Spring Boot 的智能助手项目，支持 CLI 命令行入口和微信 iLink 入口。当前项目重点是微信端 Agent：微信端可以接收文本、图片、语音、文件消息，并根据用户需求调用天气、图片生成、图片理解、语音识别、语音合成、文件解析、文档生成和大模型对话等工具。
+OpenClaw 是一个基于 Java 17 + Spring Boot 的智能助手项目，支持 CLI 命令行入口和微信 iLink 入口。项目当前重点是微信端 Agent：用户可以在微信里发送文本、图片、语音、文件，系统会基于大模型 Function Calling 流程判断需求，并调用天气、图片理解、图片生成、语音识别、语音合成、音色修改、文件解析、文档生成等工具完成回复。
 
-## 当前功能
+## 1. 当前能力
 
-- CLI 普通对话：直接输入文本时调用阿里百炼大模型。
-- CLI 基础命令：`/help`、`/version`、`/status`、`/weather`、`/wechat`。
-- 微信 iLink 接入：扫码登录、接收消息、发送文本/图片/语音文件回复。
-- 大模型对话：接入阿里百炼 DashScope，文本模型配置为 `qwen3.7-max-2026-06-08`。
-- 天气查询：接入高德天气 API，再由大模型整理成自然回复和出行建议。
-- 微信图片识别：支持微信附件图片、图片链接、data URI 图片。
-- 微信文件识别与生成：支持 PDF、Word、TXT、Markdown、Excel、PPT 文件解析，也支持按用户需求生成 Word、PDF、TXT、Markdown 文档。
-- 微信图片生成：图片生成能力只保留在微信端工具中，支持提示词优化、确认后生成、上下文修改图片。
-- 微信语音识别：支持微信语音下载、格式检测、必要时 ffmpeg 转码，再调用 ASR。
-- 微信语音合成：支持把回答文本转成语音文件发送，长文本会拆段。
-- 微信音色修改：支持按“温柔女声、沉稳男声、适合讲故事”等需求筛选 `qwen3-tts-flash` 官方音色，试听后确认保存到内存偏好。
-- 上下文记忆：微信端按 `fromUserId` 保存最近多轮对话。
-- 多需求拆解：一句话包含多个需求时，由结构化工具计划拆分并按用户表达顺序执行。
-- 工具插件化：微信端工具统一注册到 `WechatToolRegistry`，后续新增地图、新闻、日程、文件分析等工具时，不需要重写主流程。
+### CLI 端
 
-## 整体架构
+- 普通对话：直接输入文本时调用阿里百炼大模型。
+- 基础命令：`/help`、`/version`、`/status`。
+- 天气命令：`/weather 北京`。
+- 微信控制命令：`/wechat start`、`/wechat status`、`/wechat stop`。
+- CLI 端已移除图片生成能力，图片生成只保留在微信端工具中。
+
+### 微信端
+
+- 文本对话：默认由大模型接管，每条消息都会进入微信接收、上下文读取、Agent 推理和回复流程。
+- Function Calling 工具调用：大模型可以按用户需求主动选择工具，工具执行结果会回传给模型继续推理。
+- 多需求处理：一句话包含多个需求时，按用户表达顺序逐个处理。
+- 上下文记忆：微信端使用 MySQL 保存用户、会话、消息、状态、摘要、工具日志和明确偏好。
+- 天气查询：接入高德天气 API，并由大模型整理为自然语言回复和出行建议。
+- 图片理解：支持微信图片附件、图片链接、data URI 图片，先描述图片内容，再结合后续问题对话。
+- 图片生成：支持提示词优化、确认后生成、根据上下文修改图片，并发送图片给微信用户。
+- 语音识别：支持微信语音下载、格式检测、必要时 ffmpeg 转码，然后调用 ASR。
+- 语音合成：支持把指定文本或上一轮回答转成语音文件发送，长文本会自动拆段。
+- 音色修改：支持筛选、试听、确认音色；用户明确确认后的音色偏好会通过微信记忆服务持久化。
+- 文件解析：支持 PDF、Word、TXT、Markdown、Excel、PPT 等文件解析和内容分块。
+- 文档生成：支持根据用户需求生成 Word、PDF、TXT、Markdown 文档并回传。
+
+## 2. 技术栈
+
+- Java 17
+- Spring Boot 3.4.7
+- Maven
+- MySQL
+- Flyway
+- JDBC
+- 阿里百炼 DashScope
+- 高德天气 API
+- 微信 iLink SDK
+- Apache PDFBox
+- Apache POI
+- ffmpeg，可选，用于语音转码
+
+## 3. 整体架构
 
 ```text
-用户入口层
+用户入口
   ├─ CLI 终端
   └─ 微信 iLink
 
@@ -32,47 +55,176 @@ OpenClaw 是一个基于 Java 17 + Spring Boot 的智能助手项目，支持 CL
 
 会话编排层
   └─ WechatConversationService
-       ├─ 上下文记忆
-       ├─ 多需求拆解
-       ├─ 结构化工具计划
-       ├─ 规则兜底路由
-       └─ 有序回复组合
+       ├─ 读取微信上下文记忆
+       ├─ 处理文本 / 图片 / 语音 / 文件输入
+       ├─ 构造 Function Calling 请求
+       ├─ 执行 Agent 工具调用循环
+       ├─ 保存消息、状态、偏好和工具日志
+       └─ 组合文本、图片、语音、文件回复
 
-工具协议层
-  ├─ ToolCallPlanner
-  ├─ ToolCallPlanParser
-  ├─ WechatTool
+Agent 工具调用层
+  ├─ FunctionCallingAgentLoop
+  ├─ DashScopeFunctionCallingClient
+  ├─ FunctionCallingToolSchemaConverter
+  ├─ ToolCallValidator
   └─ WechatToolRegistry
 
-工具能力层
+微信工具层
   ├─ ChatWechatTool
   ├─ WeatherWechatTool
   ├─ ImageGenerationWechatTool
   ├─ VoiceRecognitionWechatTool
   ├─ VoiceSynthesisWechatTool
-  └─ VoiceStyleWechatTool
+  ├─ VoiceStyleWechatTool
+  ├─ DocumentAnalysisWechatTool
+  └─ DocumentGenerationWechatTool
 
-外部服务层
+外部服务
   ├─ 阿里百炼文本大模型
   ├─ 阿里百炼图片理解模型
   ├─ 阿里百炼图片生成模型
-  ├─ 阿里百炼语音识别/合成模型
+  ├─ 阿里百炼语音识别 / 语音合成模型
   ├─ 高德天气 API
+  ├─ MySQL
   └─ 微信 iLink SDK
 ```
 
-## 微信端 MySQL 上下文记忆
+## 4. Function Calling 工作流
 
-微信端现已使用本机 MySQL 保存上下文记忆，CLI 的内存对话逻辑保持不变。
+微信端默认使用标准 Function Calling Agent Loop。
 
-- 同一用户 60 分钟内持续对话会复用会话；超过 60 分钟无新消息会创建新会话。
-- 用户原始消息、助手回复和工具执行日志保存 30 天。
-- 图片待确认提示词、待追问问题、最近天气城市等短期状态保存为会话 JSON。
-- 用户明确确认的音色保存为长期偏好，重启项目后仍然生效。
-- 同一微信消息 ID 重复投递时会被忽略，避免重复调用模型和工具。
-- MySQL 短暂不可用时自动退回当前进程内存，服务不会因持久化失败停止。
+```text
+微信用户发送消息
+  ↓
+WechatBotService 接收消息并发送等待提示
+  ↓
+WechatConversationService 读取上下文记忆
+  ↓
+FunctionCallingAgentLoop 把用户消息、上下文、工具定义发送给大模型
+  ↓
+大模型返回 tool_calls
+  ↓
+Java 根据 tool_calls 执行对应 WechatTool
+  ↓
+工具结果作为 tool message 回传给大模型
+  ↓
+大模型继续判断是否需要调用下一个工具
+  ↓
+没有更多工具调用后，生成最终回复
+  ↓
+WechatBotService 按顺序发送文本、图片、语音或文件
+```
+
+当前默认配置：
+
+```properties
+AGENT_TOOL_CALLING_MODE=function-calling
+AGENT_TOOL_CALLING_MAX_LOOP_ROUNDS=5
+```
+
+项目仍保留旧版 `prompt-json` 规划模式作为对比和回退，但主流程推荐使用 `function-calling`。
+
+## 5. 微信端核心流程
+
+### 文本消息
+
+```text
+文本消息
+  → iLink 接收
+  → 转换为 WechatIncomingMessage
+  → 读取 MySQL 上下文
+  → Function Calling Agent Loop
+  → 调用聊天 / 天气 / 图片 / 语音 / 文件等工具
+  → 保存用户消息、助手回复和工具日志
+  → 微信发送最终结果
+```
+
+### 图片消息
+
+```text
+图片消息
+  → 下载图片二进制
+  → ImageInputResolver 识别图片来源和格式
+  → DefaultImageUnderstandingService 调用视觉模型
+  → 先描述图片内容
+  → 图片描述和图片上下文进入会话记忆
+  → 后续支持“把刚才那张图改成……”这类上下文修改需求
+```
+
+### 图片生成
+
+```text
+图片生成 / 图片修改需求
+  → 大模型判断需要 image_generation 工具
+  → ImageGenerationWechatTool 理解上下文和用户要求
+  → 必要时先优化图片提示词
+  → 调用 ImageGenerationService
+  → DashScopeImageGenerationClient 请求图片生成接口
+  → 下载生成图片
+  → 微信端发送图片
+```
+
+如果用户明确说“先给我提示词，等我确认后再生成”，工具只会返回优化后的提示词，不会直接生成图片。
+
+### 语音识别与语音合成
+
+```text
+语音消息
+  → 下载微信语音
+  → 优先使用 iLink 自带文本
+  → 没有文本时检测音频格式
+  → 必要时 ffmpeg 转码
+  → 调用 ASR 得到文字
+  → 文字重新进入文本 Agent 流程
+```
+
+```text
+用户要求“用语音读一遍”
+  → 大模型判断需要 voice_synthesis 工具
+  → VoiceSynthesisWechatTool 选择要朗读的文本
+  → 读取用户已保存音色偏好
+  → 调用 TTS 生成音频
+  → 长文本按微信发送稳定性拆分
+  → 微信发送语音 / 音频文件
+```
+
+### 文件解析与文档生成
+
+```text
+用户发送文件
+  → 下载文件
+  → DocumentTypeDetector 根据后缀、MIME、文件头识别类型
+  → DocumentParseService 解析正文、表格和段落
+  → DocumentChunkService 分块
+  → DocumentArchiveService 归档文件和分块信息
+```
+
+如果用户只发送文件但没有说明需求，系统会先追问“你想让我怎么处理这个文件”。如果用户提出总结、提炼、改写、生成文档等需求，则由对应工具处理。
+
+## 6. 数据库说明
+
+微信端使用 MySQL 保存上下文记忆，CLI 的普通对话仍保持轻量的命令行逻辑。
+
+当前保存内容包括：
+
+- 微信用户身份
+- 会话记录
+- 用户消息和助手回复
+- 会话临时状态 JSON
+- 用户明确偏好，例如音色
+- 会话摘要
+- 工具调用日志
+- 文件元数据
+- 文件分块内容
+- 生成文档记录
 
 首次运行前请创建数据库：
+
+```bash
+mysql -u root -p < docs/sql/create_database.sql
+```
+
+或者手动执行：
 
 ```sql
 CREATE DATABASE IF NOT EXISTS openclaw
@@ -80,187 +232,115 @@ CREATE DATABASE IF NOT EXISTS openclaw
   COLLATE utf8mb4_unicode_ci;
 ```
 
-然后在 `.env` 中填写 `MYSQL_URL`、`MYSQL_USERNAME` 和 `MYSQL_PASSWORD`。应用启动时 Flyway 会自动创建记忆和文件相关数据表。
+然后在 `.env` 中配置：
 
-更完整的协作者建库说明见 [docs/DATABASE_SETUP.md](docs/DATABASE_SETUP.md)，独立建库脚本见 [docs/sql/create_database.sql](docs/sql/create_database.sql)。
-
-## 核心流程
-
-### CLI 流程
-
-```text
-用户在命令行输入
-  ↓
-ConsoleRunner
-  ↓
-AgentService
-  ↓
-CommandDispatcher
-  ├─ /help、/version、/status 本地命令
-  ├─ /weather 调用天气服务
-  ├─ /wechat 控制微信 Bot
-  └─ 普通文本调用大模型对话
+```properties
+MYSQL_URL=jdbc:mysql://127.0.0.1:3306/openclaw?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+MYSQL_USERNAME=root
+MYSQL_PASSWORD=你的MySQL密码
+FLYWAY_ENABLED=true
 ```
 
-注意：CLI 端已经移除图片生成命令，不再提供 `/image`。
+业务表由 Flyway 自动创建，不建议手动反复执行 `V1`、`V2` 迁移脚本。
 
-### 微信文本消息流程
+更多说明：
 
-```text
-微信用户发送文本
-  ↓
-iLink SDK 拉取消息
-  ↓
-IlinkWechatClient 转换成 WechatIncomingMessage
-  ↓
-WechatBotService 发送等待提示并进入消息队列
-  ↓
-WechatConversationService
-  ├─ 调用 ToolCallPlanner 让大模型输出 JSON 工具计划
-  ├─ ToolCallPlanParser 解析计划
-  ├─ WechatToolRegistry 找到对应工具
-  └─ 按用户表达顺序执行工具并组合回复
-  ↓
-WechatBotService 按顺序发送文本、图片或语音
-```
+- [数据库初始化说明](docs/DATABASE_SETUP.md)
+- [数据库建库脚本](docs/sql/create_database.sql)
 
-### 微信图片消息流程
-
-```text
-微信用户发送图片
-  ↓
-IlinkWechatClient 下载图片二进制
-  ↓
-ImageInputResolver 识别图片来源和格式
-  ↓
-DefaultImageUnderstandingService
-  ↓
-DashScopeImageUnderstandingClient
-  ↓
-先描述图片内容，再结合用户问题回答
-  ↓
-把图片描述写入会话上下文，支持后续“按刚才那张图修改”
-```
-
-### 微信图片生成流程
-
-```text
-用户提出图片生成/修改需求
-  ↓
-ToolCallPlanner 识别为 image_generation 工具
-  ↓
-ImageGenerationWechatTool
-  ├─ 必要时先调用文本大模型优化提示词
-  ├─ 如果用户要求“等我确认”，只返回优化后的提示词
-  └─ 否则调用 ImageGenerationService
-  ↓
-DashScopeImageGenerationClient 请求阿里百炼图片模型
-  ↓
-ImageGenerationService 下载图片二进制
-  ↓
-WechatBotService 发送图片给用户
-```
-
-### 微信文件解析与文档生成流程
-
-```text
-用户发送文件或提出文档需求
-  ↓
-IlinkWechatClient 下载文件二进制并封装为 WechatIncomingFile
-  ↓
-DocumentTypeDetector 结合文件后缀、MIME 和文件头识别真实类型
-  ↓
-DocumentParseService 解析 PDF / DOCX / TXT / MD / XLSX / PPTX，并按片段切块
-  ↓
-如果用户只发送文件：WechatConversationService 先追问“你想让我怎么处理”
-  ↓
-如果用户提出总结、提炼、改写等需求：DocumentAnalysisWechatTool 输出摘要和关键片段
-  ↓
-如果用户要求生成 Word / PDF / TXT / Markdown：DocumentGenerationWechatTool 生成文件
-  ↓
-WechatBotService 发送文本结果或文件附件给用户
-```
-
-### 微信语音流程
-
-```text
-微信用户发送语音
-  ↓
-IlinkWechatClient 下载语音
-  ↓
-DefaultVoiceRecognitionService
-  ├─ 优先使用 iLink 已带的 embeddedText
-  ├─ 否则检测音频格式
-  ├─ 必要时调用 ffmpeg 转 wav
-  └─ 调用 DashScopeVoiceRecognitionClient
-  ↓
-得到文字后重新进入微信文本消息流程
-```
-
-语音合成时，`VoiceSynthesisWechatTool` 会把需要朗读的文本交给 TTS 服务，生成音频文件后由微信发送层发送给用户。如果用户已经通过音色修改工具保存过偏好，会优先使用该用户保存的音色；否则使用默认音色 `Cherry`。
-
-音色修改时，`VoiceStyleWechatTool` 会根据用户描述筛选官方音色：如果用户说“换一个温柔的女声”，系统会展示候选音色；如果用户说“试听第一个”，系统会生成试听语音；如果用户说“就用这个”，系统会在内存中保存该用户的音色偏好。当前没有接入数据库，所以重启项目后偏好会丢失，后续可以把 `VoicePreferenceService` 替换为数据库实现。
-
-## 主要目录职责
+## 7. 项目目录
 
 ```text
 src/main/java/com/example/spring/
-  ├─ agent/                         # CLI 默认对话入口
-  ├─ chat/                          # 阿里百炼文本大模型接入
-  ├─ cli/                           # 控制台入口
-  ├─ cli/command/core/              # CLI 命令接口、注册、分发、错误格式化
-  ├─ cli/command/impl/              # CLI 命令实现：help/version/status/weather/wechat
-  ├─ tool/                          # 早期简单工具封装
-  ├─ tool/protocol/                 # 结构化工具调用协议
-  ├─ weather/                       # 高德天气 API 能力
+  ├─ AgentClawApplication.java
+  ├─ agent/                         # CLI 默认大模型对话
+  ├─ chat/                          # 阿里百炼文本模型客户端和服务
+  ├─ cli/                           # CLI 入口
+  ├─ cli/command/core/              # CLI 命令接口、注册、分发、异常格式化
+  ├─ cli/command/impl/              # help / version / status / weather / wechat 命令
+  ├─ exception/                     # 项目基础异常
+  ├─ tool/                          # 早期通用工具封装
+  ├─ tool/protocol/                 # 工具调用协议
+  │   ├─ function/                  # 标准 Function Calling 协议实现
+  │   ├─ legacy/                    # 旧版 prompt-json 工具规划模式
+  │   └─ validation/                # 工具参数校验
+  ├─ weather/                       # 高德天气 API
   └─ wechat/
       ├─ adapter/                   # 微信客户端抽象与 iLink 适配
-      ├─ bot/                       # 微信 Bot 生命周期、队列、发送逻辑
+      ├─ bot/                       # 微信 Bot 生命周期、消息队列和发送逻辑
       ├─ conversation/              # 微信会话编排
-      ├─ conversation/tools/        # 微信插件化工具
-      ├─ document/                  # 微信文件解析、分块、生成与本地归档
-      ├─ image/                     # 微信图片理解
-      ├─ image/generation/          # 微信端图片生成能力
-      ├─ model/                     # 微信入站消息、图片、语音等模型
-      └─ voice/                     # 微信语音识别、语音合成与音色偏好
+      ├─ conversation/agent/        # Function Calling Agent 循环
+      ├─ conversation/intent/       # 少量辅助意图识别
+      ├─ conversation/memory/       # Agent 上下文拼装
+      ├─ conversation/tools/        # 微信工具定义与工具实现
+      ├─ document/                  # 文件解析、分块、归档和文档生成
+      ├─ image/                     # 图片理解
+      ├─ image/generation/          # 微信端图片生成
+      ├─ memory/                    # MySQL 记忆服务、兜底和清理任务
+      ├─ model/                     # 微信入站消息模型
+      └─ voice/                     # 语音识别、语音合成、音色管理
 ```
 
-图片生成相关文件现在都内嵌在微信包内：
+资源和文档目录：
 
 ```text
-src/main/java/com/example/spring/wechat/image/generation/
-  ├─ ImageGenerationClient.java
-  ├─ ImageGenerationException.java
-  ├─ client/DashScopeImageGenerationClient.java
-  ├─ intent/ImageGenerationIntentParser.java
-  ├─ model/ImageGenerationRequest.java
-  ├─ model/ImageGenerationResult.java
-  └─ service/ImageGenerationService.java
+src/main/resources/
+  ├─ application.properties
+  └─ db/migration/
+      ├─ V1__create_wechat_memory_tables.sql
+      └─ V2__create_wechat_document_tables.sql
+
+docs/
+  ├─ DATABASE_SETUP.md
+  ├─ DOCUMENTATION_GUIDE.md
+  ├─ PROJECT_STRUCTURE.md
+  └─ sql/create_database.sql
 ```
 
-## 配置说明
+更详细的包结构说明见 [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)。
 
-复制 `.env.example` 为 `.env`，填写自己的 Key：
+## 8. 环境配置
+
+复制配置模板：
+
+```powershell
+copy .env.example .env
+```
+
+常用配置：
 
 ```properties
-AMAP_WEATHER_KEY=你的高德 Web 服务 API KEY
-DASHSCOPE_API_KEY=你的阿里百炼 API KEY
+# MySQL
+MYSQL_URL=jdbc:mysql://127.0.0.1:3306/openclaw?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+MYSQL_USERNAME=root
+MYSQL_PASSWORD=你的MySQL密码
+FLYWAY_ENABLED=true
+
+# Agent 模式
+AGENT_TOOL_CALLING_MODE=function-calling
+AGENT_TOOL_CALLING_MAX_LOOP_ROUNDS=5
+
+# 高德天气
+AMAP_WEATHER_KEY=你的高德Web服务Key
+
+# 阿里百炼
+DASHSCOPE_API_KEY=你的DashScope API Key
+DASHSCOPE_CHAT_MODEL=qwen3.7-max-2026-06-08
+DASHSCOPE_VISION_MODEL=qwen3.7-plus
+DASHSCOPE_IMAGE_MODEL=qwen-image-2.0-pro
+DASHSCOPE_VOICE_MODEL=qwen3-asr-flash
+DASHSCOPE_TTS_MODEL=qwen3-tts-flash
+DASHSCOPE_TTS_VOICE=Cherry
 ```
 
-主要模型配置在 `src/main/resources/application.properties`：
+说明：
 
-```properties
-dashscope.base-url=https://ws-6gncy95g9skiwjfi.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
-openclaw.dashscope.model=qwen3.7-max-2026-06-08
-dashscope.vision-model=qwen3.7-plus
-openclaw.dashscope.image-model=qwen-image-2.0-pro
-dashscope.voice-model=qwen3-asr-flash
-openclaw.dashscope.tts-model=qwen3-tts-flash
-```
+- `.env` 保存真实密钥，不要提交到仓库。
+- `application.properties` 中保留默认值和环境变量占位。
+- 图片生成、语音识别、语音合成分别使用独立配置项，便于后续替换模型。
+- 如果本机没有 ffmpeg，可以先关闭 `AUDIO_FFMPEG_ENABLED=false`，但部分语音格式可能无法识别。
 
-说明：`dashscope.voice-model` 当前用于语音识别 ASR；`qwen3-tts-flash` 是语音合成 TTS 模型，所以配置在 `openclaw.dashscope.tts-model`。
-
-## 运行方式
+## 9. 运行方式
 
 如果本机还没有安装微信 iLink SDK，先执行：
 
@@ -276,7 +356,7 @@ cd C:\Users\Lenovo\Desktop\openclaw_model
 mvn spring-boot:run
 ```
 
-CLI 常用输入：
+CLI 示例：
 
 ```text
 你是谁
@@ -290,36 +370,74 @@ CLI 常用输入：
 exit
 ```
 
-## 微信端示例
+## 10. 微信端使用示例
 
 ```text
-用户：帮我生成一张赛博朋克风格的橘猫图片
-系统：先优化提示词，再调用图片生成工具，并把生成的图片发回微信
+用户：北京今天天气怎么样，适合出门吗？
+系统：调用天气工具，结合天气数据给出自然语言解释和出行建议。
 ```
 
 ```text
-用户：帮我查看今天杭州天气，然后用语音读一遍
-系统：先调用天气工具，再调用语音合成工具发送语音文件
+用户：帮我生成一张赛博朋克风格的橘猫图片
+系统：优化提示词，调用图片生成工具，并把图片发送到微信。
+```
+
+```text
+用户：这张图片里有什么？
+系统：调用图片理解能力，先描述图片内容，再根据用户问题继续回答。
+```
+
+```text
+用户：帮我生成三个随机故事，并用语音读一遍
+系统：先生成故事文本，再调用语音合成工具，把故事内容转成语音发送。
 ```
 
 ```text
 用户：换一个温柔的女声
-系统：调用音色修改工具，展示 3-5 个候选音色
+系统：筛选候选音色。
 用户：试听第一个
-系统：用第一个候选音色生成试听语音
+系统：发送试听音频。
 用户：就用这个
-系统：保存该用户音色偏好，后续语音回复优先使用该音色
+系统：保存该用户音色偏好，后续语音合成优先使用该音色。
 ```
 
-## 日志排查
+```text
+用户：发送一个 PDF 文件
+系统：先解析和归档文件；如果用户没说明需求，会追问想如何处理。
+用户：帮我总结这个 PDF，并生成一份 Word
+系统：读取文件上下文，先总结，再生成 Word 文件并发送。
+```
 
-iLink 接收日志：
+## 11. 新增微信工具的开发方式
+
+项目推荐把新增能力做成微信工具，而不是直接写死在主流程里。
+
+基本步骤：
+
+1. 在 `wechat/conversation/tools` 下新增一个实现 `WechatTool` 的类。
+2. 定义工具名称、描述、参数和能力边界。
+3. 在工具内部调用具体服务，例如地图、新闻、日程、文件分析等。
+4. 让工具作为 Spring Bean 被 `WechatToolRegistry` 自动收集。
+5. 如果工具参数比较严格，补充参数校验和测试。
+6. 更新 README 或 `docs/PROJECT_STRUCTURE.md` 中的工具说明。
+
+工具设计原则：
+
+- 工具只做自己负责的事情。
+- 用户意图交给大模型 Function Calling 判断。
+- 工具参数必须清晰，不能让工具自己猜太多。
+- 工具结果要返回给 Agent，让模型结合上下文继续判断下一步。
+- 媒体工具要说明能力边界，例如文件大小、格式、是否支持编辑原图等。
+
+## 12. 日志排查
+
+iLink 接收日志示例：
 
 ```text
 iLink 收到消息，messageId=..., fromUserId=..., contextToken=..., text=..., imageCount=..., voiceCount=...
 ```
 
-微信 Bot 处理日志：
+微信 Bot 处理日志示例：
 
 ```text
 微信收到消息，fromUserId=..., text=..., imageCount=..., voiceCount=...
@@ -328,17 +446,27 @@ iLink 收到消息，messageId=..., fromUserId=..., contextToken=..., text=..., 
 微信回复发送完成，fromUserId=..., replyLength=..., hasImage=...
 ```
 
-如果微信端没有回复，按顺序排查：
+如果微信端没有回复，建议按这个顺序排查：
 
-```text
-1. 是否出现 iLink 收到消息
-2. 是否出现 微信收到消息
-3. 是否进入 微信消息处理队列
-4. 是否出现 微信开始生成回复
-5. 是否出现 微信回复发送完成
+1. 是否出现 `iLink 收到消息`。
+2. 是否出现 `微信收到消息`。
+3. 是否进入微信消息处理队列。
+4. 是否出现 `Function Calling Agent Loop 开始`。
+5. 是否有工具调用失败日志。
+6. 是否出现微信发送失败日志。
+7. MySQL 是否连接正常，是否触发内存兜底。
+
+日志级别可在 `.env` 中调整：
+
+```properties
+LOGGING_LEVEL_ROOT=WARN
+LOGGING_LEVEL_WECHAT=INFO
+LOGGING_LEVEL_WECHAT_BOT=DEBUG
+LOGGING_LEVEL_WECHAT_CONVERSATION=DEBUG
+LOGGING_LEVEL_ILINK=INFO
 ```
 
-## 测试与构建
+## 13. 测试与构建
 
 运行测试：
 
@@ -351,3 +479,17 @@ mvn test
 ```powershell
 mvn clean test
 ```
+
+只检查补丁格式：
+
+```powershell
+git diff --check
+```
+
+## 14. 协作注意事项
+
+- 不要提交 `.env`、真实 API Key、微信登录态和本地生成文件。
+- 数据库表结构通过 Flyway 迁移维护，不要直接修改已经发布过的迁移脚本。
+- 新增表结构时创建新的 `V3__xxx.sql`、`V4__xxx.sql`。
+- 新增工具时优先走 `WechatTool` + `WechatToolRegistry`，不要把业务逻辑堆进 `WechatConversationService`。
+- 文档统一使用中文，方便学习、汇报和团队协作。

@@ -1,5 +1,8 @@
 package com.example.spring.wechat.memory.scheduler;
 
+import com.example.spring.wechat.image.archive.ImageArchiveCleanupResult;
+import com.example.spring.wechat.image.archive.ImageArchiveService;
+import com.example.spring.wechat.memory.config.WechatMemoryProperties;
 import com.example.spring.wechat.memory.service.WechatMemoryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,12 +23,18 @@ public class WechatMemoryMaintenanceScheduler {
 
     private final JdbcTemplate jdbcTemplate;
     private final WechatMemoryService memoryService;
+    private final ImageArchiveService imageArchiveService;
+    private final WechatMemoryProperties properties;
 
     public WechatMemoryMaintenanceScheduler(
             JdbcTemplate jdbcTemplate,
-            WechatMemoryService memoryService) {
+            WechatMemoryService memoryService,
+            ImageArchiveService imageArchiveService,
+            WechatMemoryProperties properties) {
         this.jdbcTemplate = jdbcTemplate;
         this.memoryService = memoryService;
+        this.imageArchiveService = imageArchiveService;
+        this.properties = properties;
     }
 
     /**
@@ -61,7 +70,8 @@ public class WechatMemoryMaintenanceScheduler {
         int toolLogs = jdbcTemplate.update(
                 "DELETE FROM tool_execution_logs WHERE expires_at < ?",
                 Timestamp.from(time));
-        if (messages > 0 || toolLogs > 0) {
+        ImageArchiveCleanupResult images = imageArchiveService.cleanExpiredImages(time, properties.rawRetentionDays());
+        if (messages > 0 || toolLogs > 0 || images.deletedMetadata() > 0) {
             log.info("已清理过期微信记忆数据，messages={}, toolLogs={}", messages, toolLogs);
         }
     }

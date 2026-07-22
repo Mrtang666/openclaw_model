@@ -102,7 +102,8 @@ public class DocumentGenerationWechatTool implements WechatTool {
 
         GeneratedDocument generated = documentGenerationService.generate(
                 new GeneratedDocumentRequest(title, content, template),
-                format);
+                format,
+                request.images());
         return WechatReply.ordered(List.of(WechatReply.Part.file(new WechatReply.FileAttachment(
                 generated.bytes(),
                 generated.fileName(),

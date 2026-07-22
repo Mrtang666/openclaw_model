@@ -9,30 +9,38 @@ import java.util.List;
 /**
  * 微信 Agent 上下文构造器。
  *
- * <p>这个类只负责把内存对象中已经存在的短期对话、滚动摘要、媒体摘要和工具状态整理成一段
- * 大模型更容易理解的文本；它不直接访问数据库，也不修改记忆内容，避免和持久化逻辑强耦合。</p>
+ * <p>这个类只负责把内存对象里的摘要、最近对话、媒体记忆、工具状态和待追问信息，
+ * 整理成大模型更容易读取的分层文本。它不访问数据库，也不修改记忆内容。</p>
  */
 @Component
 public class WechatAgentMemoryContextBuilder {
 
     private static final int DEFAULT_RECENT_TURN_LIMIT = 10;
+    private static final String EMPTY_CONTEXT = "无";
 
     public String build(WechatConversationMemory memory) {
+        return build(memory, "");
+    }
+
+    public String build(WechatConversationMemory memory, String resourceContext) {
         if (memory == null) {
-            return "无";
+            return EMPTY_CONTEXT;
         }
 
         StringBuilder context = new StringBuilder();
         appendSummary(context, memory);
         appendRecentTurns(context, memory.recentTurns(DEFAULT_RECENT_TURN_LIMIT));
         appendMediaMemory(context, memory);
+        appendResourceContext(context, resourceContext);
         appendToolState(context, memory);
+        appendPendingClarification(context, memory);
 
-        return context.isEmpty() ? "无" : context.toString().strip();
+        return context.isEmpty() ? EMPTY_CONTEXT : context.toString().strip();
     }
 
     private void appendSummary(StringBuilder context, WechatConversationMemory memory) {
-        memory.conversationSummary().ifPresent(summary -> appendSection(context, "滚动摘要", summary));
+        memory.conversationSummary().ifPresent(summary ->
+                appendSection(context, "conversation_summary / 会话摘要", summary));
     }
 
     private void appendRecentTurns(StringBuilder context, List<ConversationTurn> turns) {
@@ -48,12 +56,12 @@ public class WechatAgentMemoryContextBuilder {
             appendLine(text, "用户：" + safeText(turn.userText()));
             appendLine(text, "助手：" + safeText(turn.assistantText()));
         }
-        appendSection(context, "最近对话", text.toString());
+        appendSection(context, "recent_turns / 最近对话", text.toString());
     }
 
     private void appendMediaMemory(StringBuilder context, WechatConversationMemory memory) {
         StringBuilder text = new StringBuilder();
-        memory.lastImagePrompt().ifPresent(value -> appendLine(text, "最近图片：" + value));
+        memory.lastImagePrompt().ifPresent(value -> appendLine(text, "最近图片线索：" + value));
         memory.lastPendingImagePrompt().ifPresent(value -> appendLine(text, "待确认图片提示词：" + value));
         memory.lastFileName().ifPresent(value -> appendLine(text, "最近文件名：" + value));
         memory.lastFileFormat().ifPresent(value -> appendLine(text, "最近文件格式：" + value));
@@ -61,17 +69,36 @@ public class WechatAgentMemoryContextBuilder {
         memory.pendingFileQuestion().ifPresent(value -> appendLine(text, "待补充文件需求：" + value));
 
         if (!text.isEmpty()) {
-            appendSection(context, "媒体记忆", text.toString());
+            appendSection(context, "media_memory / 媒体记忆", text.toString());
+        }
+    }
+
+    private void appendResourceContext(StringBuilder context, String resourceContext) {
+        if (resourceContext != null && !resourceContext.isBlank()) {
+            appendSection(context, "resource_context / 可用资源", resourceContext);
         }
     }
 
     private void appendToolState(StringBuilder context, WechatConversationMemory memory) {
         StringBuilder text = new StringBuilder();
         memory.lastWeatherCity().ifPresent(value -> appendLine(text, "最近查询天气城市：" + value));
-        memory.pendingClarificationQuestion().ifPresent(value -> appendLine(text, "待澄清问题：" + value));
 
         if (!text.isEmpty()) {
-            appendSection(context, "工具状态", text.toString());
+            appendSection(context, "tool_state / 工具状态", text.toString());
+        }
+    }
+
+    private void appendPendingClarification(StringBuilder context, WechatConversationMemory memory) {
+        StringBuilder text = new StringBuilder();
+        memory.pendingClarificationUserText().ifPresent(value -> appendLine(text, "上一轮未完成需求：" + value));
+        memory.pendingClarificationQuestion().ifPresent(value -> appendLine(text, "上一轮追问：" + value));
+        memory.pendingClarificationToolName().ifPresent(value -> appendLine(text, "关联工具：" + value));
+        if (!memory.pendingClarificationMissingFields().isEmpty()) {
+            appendLine(text, "缺失字段：" + String.join(", ", memory.pendingClarificationMissingFields()));
+        }
+
+        if (!text.isEmpty()) {
+            appendSection(context, "pending_clarification / 待追问状态", text.toString());
         }
     }
 

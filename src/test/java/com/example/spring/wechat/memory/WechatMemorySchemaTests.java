@@ -39,6 +39,7 @@ class WechatMemorySchemaTests {
                 "conversation_states",
                 "user_preferences",
                 "conversation_summaries",
-                "tool_execution_logs");
+                "tool_execution_logs",
+                "wechat_images");
     }
 }

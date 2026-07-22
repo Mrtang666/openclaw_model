@@ -4,9 +4,19 @@ import com.example.spring.chat.ChatService;
 import com.example.spring.wechat.bot.WechatReply;
 import com.example.spring.wechat.document.service.DefaultDocumentGenerationService;
 import com.example.spring.wechat.document.service.DocumentParseService;
+import com.example.spring.wechat.model.ImageSourceType;
 import com.example.spring.wechat.model.WechatIncomingFile;
+import com.example.spring.wechat.model.WechatIncomingImage;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.junit.jupiter.api.Test;
 
+import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -104,5 +114,90 @@ class DocumentWechatToolTests {
                 .contains("计组实验 4 实验报告总结", "cache 直接相联映射")
                 .doesNotContain("上一步总结的结果");
         verify(chatService).reply(contains("最近文件：计组实验4实验报告.docx"));
+    }
+
+    @Test
+    void documentGenerationToolCanPlaceWechatImagesIntoPdf() throws IOException {
+        DocumentGenerationWechatTool tool = new DocumentGenerationWechatTool(
+                mock(ChatService.class),
+                new DefaultDocumentGenerationService());
+
+        WechatReply reply = tool.execute(new WechatToolRequest(
+                "user-1",
+                "帮我把这三张图片放在一个PDF文件中，并发给我",
+                Map.of("format", "pdf", "title", "图片整理"),
+                "当前可用图片资源：共 3 张",
+                List.of(),
+                List.of(),
+                List.of(image("one.png"), image("two.png"), image("three.png")),
+                null,
+                null));
+
+        assertThat(reply.parts()).hasSize(1);
+        assertThat(reply.parts().get(0).hasFile()).isTrue();
+        assertThat(reply.parts().get(0).file().fileName()).endsWith(".pdf");
+        try (PDDocument document = Loader.loadPDF(reply.parts().get(0).file().fileBytes())) {
+            assertThat(document.getNumberOfPages()).isGreaterThanOrEqualTo(3);
+        }
+    }
+
+    @Test
+    void documentGenerationToolKeepsGeneratedTextWhenPdfAlsoContainsImages() throws IOException {
+        ChatService chatService = mock(ChatService.class);
+        when(chatService.reply(anyString())).thenReturn("""
+                Full dish analysis report
+
+                Dish one: tomato beef, rich red color, balanced protein and vegetables.
+                Dish two: steamed fish, light taste, suitable for a balanced meal.
+                Overall advice: add green vegetables and reduce heavy oil.
+                """);
+        DocumentGenerationWechatTool tool = new DocumentGenerationWechatTool(
+                chatService,
+                new DefaultDocumentGenerationService());
+
+        WechatReply reply = tool.execute(new WechatToolRequest(
+                "user-1",
+                "Generate a complete PDF report for these dish photos",
+                Map.of("format", "pdf", "title", "Dish Report", "requirement", "complete dish photo analysis"),
+                "available images: 2",
+                List.of(),
+                List.of(),
+                List.of(image("dish-one.png"), image("dish-two.png")),
+                null,
+                null));
+
+        try (PDDocument document = Loader.loadPDF(reply.parts().get(0).file().fileBytes())) {
+            String text = new PDFTextStripper().getText(document);
+            assertThat(text)
+                    .contains("Full dish analysis report")
+                    .contains("tomato beef")
+                    .contains("steamed fish");
+            assertThat(document.getNumberOfPages()).isGreaterThanOrEqualTo(3);
+        }
+    }
+
+    private WechatIncomingImage image(String fileName) throws IOException {
+        return new WechatIncomingImage(
+                ImageSourceType.WECHAT_ATTACHMENT,
+                "wechat://" + fileName,
+                samplePngBytes(),
+                "image/png",
+                fileName,
+                20,
+                20,
+                "COLOR");
+    }
+
+    private byte[] samplePngBytes() throws IOException {
+        BufferedImage image = new BufferedImage(20, 20, BufferedImage.TYPE_INT_RGB);
+        for (int x = 0; x < 20; x++) {
+            for (int y = 0; y < 20; y++) {
+                image.setRGB(x, y, (x + y) % 2 == 0 ? Color.ORANGE.getRGB() : Color.WHITE.getRGB());
+            }
+        }
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            ImageIO.write(image, "png", output);
+            return output.toByteArray();
+        }
     }
 }

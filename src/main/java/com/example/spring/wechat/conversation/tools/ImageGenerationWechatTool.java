@@ -1,12 +1,14 @@
 package com.example.spring.wechat.conversation.tools;
 
 import com.example.spring.chat.ChatService;
+import com.example.spring.wechat.image.archive.ImageArchiveService;
 import com.example.spring.wechat.image.generation.model.ImageGenerationRequest;
 import com.example.spring.wechat.image.generation.model.ImageGenerationResult;
 import com.example.spring.wechat.image.generation.service.ImageGenerationService;
 import com.example.spring.wechat.bot.WechatReply;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -23,10 +25,20 @@ public class ImageGenerationWechatTool implements WechatTool {
 
     private final ChatService chatService;
     private final ImageGenerationService imageGenerationService;
+    private final ImageArchiveService imageArchiveService;
 
     public ImageGenerationWechatTool(ChatService chatService, ImageGenerationService imageGenerationService) {
+        this(chatService, imageGenerationService, new ImageArchiveService());
+    }
+
+    @Autowired
+    public ImageGenerationWechatTool(
+            ChatService chatService,
+            ImageGenerationService imageGenerationService,
+            ImageArchiveService imageArchiveService) {
         this.chatService = chatService;
         this.imageGenerationService = imageGenerationService;
+        this.imageArchiveService = imageArchiveService == null ? new ImageArchiveService() : imageArchiveService;
     }
 
     @Override
@@ -92,6 +104,7 @@ public class ImageGenerationWechatTool implements WechatTool {
         try {
             ImageGenerationResult image = imageGenerationService.generate(new ImageGenerationRequest(finalPrompt));
             request.rememberGeneratedImage(finalPrompt);
+            imageArchiveService.archiveGeneratedImage(request.sessionKey(), image);
             return WechatReply.textsAndImage(
                     optimizePrompt ? List.of(optimizedText) : List.of(),
                     "我已经帮你生成好了，图片如下：",

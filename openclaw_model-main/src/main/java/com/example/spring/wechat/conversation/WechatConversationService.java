@@ -9,9 +9,12 @@ import com.example.spring.wechat.image.generation.model.ImageGenerationResult;
 import com.example.spring.wechat.image.generation.service.ImageGenerationService;
 import com.example.spring.exception.WeatherServiceException;
 import com.example.spring.tool.protocol.ConversationIntentDecision;
-import com.example.spring.tool.protocol.ToolCall;
-import com.example.spring.tool.protocol.ToolCallPlanner;
+import com.example.spring.tool.protocol.ConversationToolPlanner;
+import com.example.spring.tool.protocol.legacy.ToolCall;
 import com.example.spring.wechat.bot.WechatReply;
+import com.example.spring.wechat.conversation.agent.FunctionCallingAgentLoop;
+import com.example.spring.wechat.conversation.agent.FunctionCallingAgentRequest;
+import com.example.spring.wechat.conversation.memory.WechatAgentMemoryContextBuilder;
 import com.example.spring.wechat.document.model.ParsedDocument;
 import com.example.spring.wechat.document.service.DocumentArchiveService;
 import com.example.spring.wechat.document.service.DocumentParseService;
@@ -36,6 +39,8 @@ import com.example.spring.weather.service.WeatherService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayDeque;
@@ -69,11 +74,14 @@ public class WechatConversationService {
     private final ImageInputResolver imageInputResolver;
     private final WeatherIntentParser weatherIntentParser;
     private final ImageGenerationIntentParser imageGenerationIntentParser;
-    private final ToolCallPlanner toolCallPlanner;
+    private final ConversationToolPlanner toolCallPlanner;
     private final WechatToolRegistry wechatToolRegistry;
     private final WechatMemoryService wechatMemoryService;
     private final DocumentParseService documentParseService;
     private final DocumentArchiveService documentArchiveService;
+    private final WechatAgentMemoryContextBuilder memoryContextBuilder = new WechatAgentMemoryContextBuilder();
+    private FunctionCallingAgentLoop functionCallingAgentLoop;
+    private String toolCallingMode = "prompt-json";
     private final Map<String, WechatConversationMemory> memories = new ConcurrentHashMap<>();
 
     @Autowired
@@ -86,7 +94,7 @@ public class WechatConversationService {
             ImageInputResolver imageInputResolver,
             WeatherIntentParser weatherIntentParser,
             ImageGenerationIntentParser imageGenerationIntentParser,
-            ToolCallPlanner toolCallPlanner,
+            ConversationToolPlanner toolCallPlanner,
             WechatToolRegistry wechatToolRegistry,
             WechatMemoryService wechatMemoryService,
             DocumentParseService documentParseService,
@@ -104,6 +112,39 @@ public class WechatConversationService {
         this.wechatMemoryService = wechatMemoryService;
         this.documentParseService = documentParseService == null ? DocumentParseService.defaultService() : documentParseService;
         this.documentArchiveService = documentArchiveService == null ? new DocumentArchiveService() : documentArchiveService;
+    }
+
+    @Autowired
+    void configureFunctionCallingAgentLoop(
+            ObjectProvider<FunctionCallingAgentLoop> functionCallingAgentLoopProvider,
+            @Value("${agent.tool-calling.mode:prompt-json}") String toolCallingMode) {
+        configureFunctionCallingAgentLoop(functionCallingAgentLoopProvider.getIfAvailable(), toolCallingMode);
+    }
+
+    void configureFunctionCallingAgentLoop(FunctionCallingAgentLoop functionCallingAgentLoop, String toolCallingMode) {
+        this.functionCallingAgentLoop = functionCallingAgentLoop;
+        this.toolCallingMode = toolCallingMode == null || toolCallingMode.isBlank()
+                ? "prompt-json"
+                : toolCallingMode.strip().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private boolean isFunctionCallingMode() {
+        return "function-calling".equalsIgnoreCase(toolCallingMode);
+    }
+
+    private boolean hasReplyContent(WechatReply reply) {
+        if (reply == null) {
+            return false;
+        }
+        if (reply.text() != null && !reply.text().isBlank()) {
+            return true;
+        }
+        return reply.parts() != null && reply.parts().stream()
+                .anyMatch(part -> part != null
+                        && (part.text() != null && !part.text().isBlank()
+                        || part.hasImage()
+                        || part.hasVoice()
+                        || part.hasFile()));
     }
 
     WechatConversationService(ChatService chatService, WeatherService weatherService) {
@@ -151,7 +192,7 @@ public class WechatConversationService {
             ImageGenerationService imageGenerationService,
             VoiceRecognitionService voiceRecognitionService,
             WeatherIntentParser weatherIntentParser,
-            ToolCallPlanner toolCallPlanner,
+            ConversationToolPlanner toolCallPlanner,
             WechatToolRegistry wechatToolRegistry) {
         this(chatService, weatherService, imageUnderstandingService, imageGenerationService, voiceRecognitionService, new ImageInputResolver(), weatherIntentParser, new ImageGenerationIntentParser(), toolCallPlanner, wechatToolRegistry, localMemoryService(), DocumentParseService.defaultService(), new DocumentArchiveService());
     }
@@ -165,7 +206,7 @@ public class WechatConversationService {
             ImageInputResolver imageInputResolver,
             WeatherIntentParser weatherIntentParser,
             ImageGenerationIntentParser imageGenerationIntentParser,
-            ToolCallPlanner toolCallPlanner,
+            ConversationToolPlanner toolCallPlanner,
             WechatToolRegistry wechatToolRegistry,
             WechatMemoryService wechatMemoryService) {
         this(chatService, weatherService, imageUnderstandingService, imageGenerationService, voiceRecognitionService,
@@ -321,7 +362,36 @@ public class WechatConversationService {
     }
 
     private Optional<WechatReply> handleIntentPlan(String sessionKey, String text, List<WechatIncomingFile> files) {
-        if (toolCallPlanner == null || wechatToolRegistry == null) {
+        if (wechatToolRegistry == null) {
+            return Optional.empty();
+        }
+
+        if (isFunctionCallingMode() && functionCallingAgentLoop != null) {
+            Optional<WechatReply> loopReply = functionCallingAgentLoop.run(new FunctionCallingAgentRequest(
+                    sessionKey,
+                    text,
+                    conversationContext(sessionKey),
+                    files,
+                    (userText, prompt) -> memoryFor(sessionKey).recordPendingImagePrompt(userText, prompt),
+                    (userText, prompt) -> memoryFor(sessionKey).recordImage(userText, prompt),
+                    (toolName, arguments, resultSummary, status) -> {
+                        if (!DEFAULT_SESSION_KEY.equals(sessionKey)) {
+                            wechatMemoryService.recordToolExecution(
+                                    sessionKey,
+                                    toolName,
+                                    arguments,
+                                    resultSummary,
+                                    status,
+                                    java.time.Instant.now());
+                        }
+                    }));
+            if (loopReply.isPresent() && hasReplyContent(loopReply.get())) {
+                rememberPlannedReply(sessionKey, text, loopReply.get());
+                return loopReply;
+            }
+        }
+
+        if (toolCallPlanner == null) {
             return Optional.empty();
         }
 
@@ -514,6 +584,19 @@ public class WechatConversationService {
         return text.toString().strip();
     }
 
+    private void rememberPlannedReply(String sessionKey, String userText, WechatReply reply) {
+        String assistantReply = replyMemoryText(toReplyParts(reply));
+        if (assistantReply.isBlank() && reply != null && reply.text() != null) {
+            assistantReply = reply.text().strip();
+        }
+        if (assistantReply.isBlank()) {
+            return;
+        }
+        memoryFor(sessionKey).record(userText, assistantReply);
+        memoryFor(sessionKey).clearPendingClarification();
+        rememberAssistantReply(sessionKey, assistantReply);
+    }
+
     private void appendDistinctMemoryText(StringBuilder text, String fragment) {
         if (fragment == null || fragment.isBlank()) {
             return;
@@ -558,6 +641,9 @@ public class WechatConversationService {
     }
 
     private String conversationContext(String sessionKey) {
+        if (memoryContextBuilder != null) {
+            return memoryContextBuilder.build(memoryFor(sessionKey));
+        }
         WechatConversationMemory memory = memoryFor(sessionKey);
         StringBuilder context = new StringBuilder();
         memory.pendingClarificationUserText().ifPresent(text ->

@@ -2,8 +2,8 @@ package com.example.spring.wechat.conversation;
 
 import com.example.spring.chat.ChatService;
 import com.example.spring.tool.protocol.ConversationIntentDecision;
-import com.example.spring.tool.protocol.ToolCall;
-import com.example.spring.tool.protocol.ToolCallPlanner;
+import com.example.spring.tool.protocol.legacy.ToolCall;
+import com.example.spring.tool.protocol.legacy.ToolCallPlanner;
 import com.example.spring.wechat.bot.WechatReply;
 import com.example.spring.wechat.conversation.intent.WeatherIntentParser;
 import com.example.spring.wechat.conversation.tools.DocumentAnalysisWechatTool;

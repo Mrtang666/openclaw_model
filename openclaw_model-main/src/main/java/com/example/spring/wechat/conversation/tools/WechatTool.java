@@ -16,6 +16,16 @@ public interface WechatTool {
 
     List<String> arguments();
 
+    default List<WechatToolParameter> parameters() {
+        return arguments().stream()
+                .map(argument -> WechatToolParameter.optionalString(argument, "", ""))
+                .toList();
+    }
+
+    default WechatToolCapability capability() {
+        return WechatToolCapability.empty();
+    }
+
     WechatReply execute(WechatToolRequest request);
 }
 

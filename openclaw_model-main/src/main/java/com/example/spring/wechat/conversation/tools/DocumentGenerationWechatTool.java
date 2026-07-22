@@ -47,6 +47,48 @@ public class DocumentGenerationWechatTool implements WechatTool {
     }
 
     @Override
+    public List<WechatToolParameter> parameters() {
+        return List.of(
+                WechatToolParameter.optionalEnum(
+                        "format",
+                        "要生成的文档格式",
+                        List.of("pdf", "docx", "txt", "markdown", "md"),
+                        "pdf"),
+                WechatToolParameter.optionalString(
+                        "title",
+                        "文档标题；如果用户没有明确标题，可以根据需求生成简短标题",
+                        "杭州天气出行建议"),
+                WechatToolParameter.optionalString(
+                        "template",
+                        "文档模板名称；没有特殊要求时使用 default",
+                        "default"),
+                WechatToolParameter.requiredString(
+                        "requirement",
+                        "用户对文档内容、用途、结构和风格的要求",
+                        "根据刚才的总结生成一份 PDF 报告"),
+                WechatToolParameter.optionalString(
+                        "content",
+                        "可以直接写入文档的正文内容；不要填占位句，信息不足时让工具重新生成正文",
+                        "一、背景说明\n二、核心结论\n三、建议"),
+                WechatToolParameter.optionalString(
+                        "previous_result",
+                        "前一个工具的输出结果，例如文件解析摘要；由系统在连续工具调用时自动传入",
+                        "文件主要介绍了项目架构和实现流程"));
+    }
+
+    @Override
+    public WechatToolCapability capability() {
+        return new WechatToolCapability(
+                "根据用户需求或最近文件上下文生成 DOCX、PDF、TXT、Markdown 文档。",
+                List.of(
+                        "缺少文档主题、用途或内容来源时需要追问。",
+                        "如果用户只要求分析文件，不要调用文档生成。",
+                        "content 参数不能填入“上一轮结果”这类占位句，信息不足时应重新生成正文。"),
+                List.of("format：目标格式", "title：文档标题", "requirement：用户具体要求", "content 或 previous_result：文档内容来源"),
+                List.of("可发送给微信用户的文件附件"));
+    }
+
+    @Override
     public WechatReply execute(WechatToolRequest request) {
         DocumentFormat format = DocumentFormat.fromName(firstNonBlank(
                 request.argument("format"),

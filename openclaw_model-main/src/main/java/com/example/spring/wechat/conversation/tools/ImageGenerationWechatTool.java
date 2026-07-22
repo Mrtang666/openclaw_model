@@ -45,6 +45,35 @@ public class ImageGenerationWechatTool implements WechatTool {
     }
 
     @Override
+    public List<WechatToolParameter> parameters() {
+        return List.of(
+                WechatToolParameter.requiredString(
+                        "prompt",
+                        "图片生成或图片修改需求的核心提示词；需要结合上下文、上一轮助手回复和用户当前要求补全",
+                        "一只赛博朋克风格的橘猫"),
+                WechatToolParameter.optionalBoolean(
+                        "optimize_prompt",
+                        "是否先调用文本大模型优化图片提示词；用户要求先优化提示词再生成图片时设为 true",
+                        true),
+                WechatToolParameter.optionalBoolean(
+                        "wait_for_approval",
+                        "是否只给出优化后的提示词并等待用户确认；用户说等我允许后再生成时设为 true",
+                        false));
+    }
+
+    @Override
+    public WechatToolCapability capability() {
+        return new WechatToolCapability(
+                "根据用户文本提示词生成图片，也可以结合最近图片上下文生成改图提示词。",
+                List.of(
+                        "如果用户明确说先优化提示词或等待确认，则不能直接生成图片。",
+                        "如果用户要求修改图片但上下文没有最近图片描述，需要先追问用户发送图片或补充参考内容。",
+                        "不要把流程性文字写进最终图片提示词。"),
+                List.of("prompt：最终图片需求", "optimize_prompt：是否先优化提示词", "wait_for_approval：是否等待用户确认"),
+                List.of("优化后的图片提示词", "生成后的图片"));
+    }
+
+    @Override
     public WechatReply execute(WechatToolRequest request) {
         String roughPrompt = firstNonBlank(request.argument("prompt"), request.argument("message"), request.userText());
         if (roughPrompt.isBlank()) {

@@ -47,6 +47,7 @@ public class DashScopeImageUnderstandingClient implements ImageUnderstandingClie
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
     private final String apiKey;
+    private final String baseUrl;
     private final String model;
     private final boolean enableThinking;
 
@@ -54,10 +55,11 @@ public class DashScopeImageUnderstandingClient implements ImageUnderstandingClie
             RestClient.Builder builder,
             ObjectMapper objectMapper,
             @Value("${dashscope.api-key:}") String apiKey,
-            @Value("${dashscope.base-url:https://ws-6gncy95g9skiwjfi.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}") String baseUrl,
+            @Value("${dashscope.base-url:}") String baseUrl,
             @Value("${dashscope.vision-model:qwen3.7-plus}") String model,
             @Value("${dashscope.enable-thinking:true}") boolean enableThinking) {
-        this.restClient = builder.baseUrl(stripTrailingSlash(baseUrl)).build();
+        this.baseUrl = stripTrailingSlash(baseUrl);
+        this.restClient = builder.baseUrl(this.baseUrl).build();
         this.objectMapper = objectMapper;
         this.apiKey = apiKey;
         this.model = model;
@@ -255,6 +257,9 @@ public class DashScopeImageUnderstandingClient implements ImageUnderstandingClie
     private void validateConfiguration() {
         if (apiKey == null || apiKey.isBlank()) {
             throw new ImageUnderstandingException("未配置 DASHSCOPE_API_KEY");
+        }
+        if (baseUrl.isBlank()) {
+            throw new ImageUnderstandingException("未配置 DASHSCOPE_BASE_URL，请在 .env 中填写你的模型 Host 完整地址");
         }
     }
 

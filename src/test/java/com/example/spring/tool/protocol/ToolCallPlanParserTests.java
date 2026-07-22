@@ -1,5 +1,7 @@
 package com.example.spring.tool.protocol;
 
+import com.example.spring.tool.protocol.legacy.ToolCallPlanParser;
+import com.example.spring.tool.protocol.legacy.ToolPlan;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 

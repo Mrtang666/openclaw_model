@@ -333,13 +333,23 @@ public class WechatBotService {
             return;
         }
 
+        String safeCaption = caption == null || caption.isBlank() ? "图片已生成" : caption;
         try {
-            activeClient.sendImage(userId, image.imageBytes(), image.fileName(), caption == null || caption.isBlank()
-                    ? "图片已生成"
-                    : caption);
-        } catch (IOException exception) {
-            String fallback = "图片已生成，但发送失败，请查看链接：" + image.imageUrl();
-            sendText(activeClient, userId, fallback);
+            sendMediaWithRetry(
+                    "图片",
+                    userId,
+                    image.fileName(),
+                    () -> activeClient.sendImage(userId, image.imageBytes(), image.fileName(), safeCaption));
+        } catch (IOException | RuntimeException exception) {
+            log.warn("微信图片上传失败，已改为发送图片链接，userId={}, fileName={}, error={}",
+                    userId,
+                    image.fileName(),
+                    rootMessage(exception));
+            if (image.imageUrl() != null && !image.imageUrl().isBlank()) {
+                sendText(activeClient, userId, "图片已生成，但微信图片上传失败，请查看链接：" + image.imageUrl());
+            } else {
+                sendText(activeClient, userId, "图片已生成，但微信图片上传失败，且图片平台没有返回可访问链接。");
+            }
         }
     }
 
@@ -409,12 +419,12 @@ public class WechatBotService {
     }
 
     private void sendMediaWithRetry(String mediaType, String userId, String fileName, IoSendOperation operation) throws IOException {
-        IOException lastException = null;
+        Exception lastException = null;
         for (int attempt = 1; attempt <= MEDIA_SEND_MAX_ATTEMPTS; attempt++) {
             try {
                 operation.send();
                 return;
-            } catch (IOException exception) {
+            } catch (IOException | RuntimeException exception) {
                 lastException = exception;
                 log.warn(
                         "微信{}发送失败，准备重试，userId={}, fileName={}, attempt={}/{}, error={}",
@@ -430,7 +440,13 @@ public class WechatBotService {
             }
         }
 
-        throw lastException == null ? new IOException(mediaType + "发送失败") : lastException;
+        if (lastException instanceof IOException ioException) {
+            throw ioException;
+        }
+        if (lastException instanceof RuntimeException runtimeException) {
+            throw runtimeException;
+        }
+        throw new IOException(mediaType + "发送失败");
     }
 
     private void pauseAfterReplyPart(WechatReply.Part part) {

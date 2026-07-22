@@ -1,4 +1,4 @@
-package com.example.spring.tool.protocol;
+package com.example.spring.tool.protocol.legacy;
 
 
 /**

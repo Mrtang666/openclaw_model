@@ -32,6 +32,7 @@ public class DashScopeImageGenerationClient implements ImageGenerationClient {
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
     private final String apiKey;
+    private final String baseUrl;
     private final String model;
     private final String defaultSize;
     private final boolean defaultWatermark;
@@ -41,12 +42,13 @@ public class DashScopeImageGenerationClient implements ImageGenerationClient {
             RestClient.Builder builder,
             ObjectMapper objectMapper,
             @Value("${dashscope.api-key:}") String apiKey,
-            @Value("${dashscope.image-base-url:https://ws-6gncy95g9skiwjfi.cn-beijing.maas.aliyuncs.com/api/v1}") String baseUrl,
+            @Value("${dashscope.image-base-url:}") String baseUrl,
             @Value("${openclaw.dashscope.image-model:${dashscope.image-model:qwen-image-2.0-pro}}") String model,
             @Value("${dashscope.image-size:1024*1024}") String defaultSize,
             @Value("${dashscope.image-watermark:false}") boolean defaultWatermark,
             @Value("${dashscope.image-prompt-extend:true}") boolean promptExtend) {
-        this.restClient = builder.baseUrl(stripTrailingSlash(baseUrl)).build();
+        this.baseUrl = stripTrailingSlash(baseUrl);
+        this.restClient = builder.baseUrl(this.baseUrl).build();
         this.objectMapper = objectMapper;
         this.apiKey = apiKey;
         this.model = model;
@@ -165,6 +167,9 @@ public class DashScopeImageGenerationClient implements ImageGenerationClient {
     private void validateConfiguration() {
         if (apiKey == null || apiKey.isBlank()) {
             throw new ImageGenerationException("未配置 DASHSCOPE_API_KEY");
+        }
+        if (baseUrl.isBlank()) {
+            throw new ImageGenerationException("未配置 DASHSCOPE_IMAGE_BASE_URL，请在 .env 中填写你的图片生成 Host 完整地址");
         }
     }
 

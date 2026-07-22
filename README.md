@@ -1,6 +1,6 @@
 # OpenClaw CLI / WeChat Agent
 
-OpenClaw 是一个基于 Java 17 + Spring Boot 的智能助手项目，支持 CLI 命令行入口和微信 iLink 入口。项目当前重点是微信端 Agent：用户可以在微信里发送文本、图片、语音、文件，系统会基于大模型 Function Calling 流程判断需求，并调用天气、图片理解、图片生成、语音识别、语音合成、音色修改、文件解析、文档生成等工具完成回复。
+OpenClaw 是一个基于 Java 17 + Spring Boot 的智能助手项目，支持 CLI 命令行入口和微信 iLink 入口。项目当前重点是微信端 Agent：用户可以在微信里发送文本、图片、语音、文件，系统会基于大模型 Function Calling 流程判断需求，并调用天气、地图、图片理解、图片生成、语音识别、语音合成、音色修改、文件解析、文档生成等工具完成回复。
 
 ## 1. 当前能力
 
@@ -19,6 +19,7 @@ OpenClaw 是一个基于 Java 17 + Spring Boot 的智能助手项目，支持 CL
 - 多需求处理：一句话包含多个需求时，按用户表达顺序逐个处理。
 - 上下文记忆：微信端使用 MySQL 保存用户、会话、消息、状态、摘要、工具日志和明确偏好。
 - 天气查询：接入高德天气 API，并由大模型整理为自然语言回复和出行建议。
+- 地图查询：支持地点搜索与介绍、两地驾车/公共交通/步行方案、周边美食/景点/商场推荐，并提供地图导航和票务平台搜索入口。
 - 图片理解：支持微信图片附件、图片链接、data URI 图片，先描述图片内容，再结合后续问题对话。
 - 图片生成：支持提示词优化、确认后生成、根据上下文修改图片，并发送图片给微信用户。
 - 语音识别：支持微信语音下载、格式检测、必要时 ffmpeg 转码，然后调用 ASR。
@@ -36,7 +37,7 @@ OpenClaw 是一个基于 Java 17 + Spring Boot 的智能助手项目，支持 CL
 - Flyway
 - JDBC
 - 阿里百炼 DashScope
-- 高德天气 API
+- 高德天气 / 地图 Web 服务 API
 - 微信 iLink SDK
 - Apache PDFBox
 - Apache POI
@@ -72,6 +73,7 @@ Agent 工具调用层
 微信工具层
   ├─ ChatWechatTool
   ├─ WeatherWechatTool
+  ├─ MapWechatTool
   ├─ ImageGenerationWechatTool
   ├─ VoiceRecognitionWechatTool
   ├─ VoiceSynthesisWechatTool
@@ -84,7 +86,7 @@ Agent 工具调用层
   ├─ 阿里百炼图片理解模型
   ├─ 阿里百炼图片生成模型
   ├─ 阿里百炼语音识别 / 语音合成模型
-  ├─ 高德天气 API
+  ├─ 高德天气 / 地图 Web 服务 API
   ├─ MySQL
   └─ 微信 iLink SDK
 ```
@@ -276,6 +278,7 @@ src/main/java/com/example/spring/
       ├─ document/                  # 文件解析、分块、归档和文档生成
       ├─ image/                     # 图片理解
       ├─ image/generation/          # 微信端图片生成
+      ├─ map/                       # 地点、路线、周边搜索与地图链接
       ├─ memory/                    # MySQL 记忆服务、兜底和清理任务
       ├─ model/                     # 微信入站消息模型
       └─ voice/                     # 语音识别、语音合成、音色管理
@@ -293,6 +296,7 @@ src/main/resources/
 docs/
   ├─ DATABASE_SETUP.md
   ├─ DOCUMENTATION_GUIDE.md
+  ├─ MAP_TOOL.md
   ├─ PROJECT_STRUCTURE.md
   └─ sql/create_database.sql
 ```
@@ -322,6 +326,9 @@ AGENT_TOOL_CALLING_MAX_LOOP_ROUNDS=5
 
 # 高德天气
 AMAP_WEATHER_KEY=你的高德Web服务Key
+
+# 高德地图工具；留空时自动复用 AMAP_WEATHER_KEY
+AMAP_MAP_KEY=
 
 # 阿里百炼
 DASHSCOPE_API_KEY=你的DashScope API Key
@@ -382,6 +389,16 @@ exit
 ```text
 用户：北京今天天气怎么样，适合出门吗？
 系统：调用天气工具，结合天气数据给出自然语言解释和出行建议。
+```
+
+```text
+用户：从杭州东站到西湖怎么走，开车和坐地铁分别多久？
+系统：调用地图工具，返回驾车和公共交通距离、预计时间、线路方案与高德导航链接。
+```
+
+```text
+用户：帮我推荐西湖附近的美食和景点，景点有票的话给我购票入口。
+系统：调用地图周边搜索；景点只提供第三方票务平台搜索入口，实时价格和余票以平台页面为准。
 ```
 
 ```text

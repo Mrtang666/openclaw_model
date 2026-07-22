@@ -25,11 +25,12 @@ public class DashScopeVoiceSynthesisClient implements VoiceSynthesisClient {
     private final RestClient downloadClient;
     private final ObjectMapper objectMapper;
     private final String apiKey;
+    private final String baseUrl;
 
     @Autowired
     public DashScopeVoiceSynthesisClient(
             @Value("${dashscope.api-key:}") String apiKey,
-            @Value("${dashscope.tts-base-url:https://dashscope.aliyuncs.com/api/v1}") String baseUrl,
+            @Value("${dashscope.tts-base-url:}") String baseUrl,
             ObjectMapper objectMapper) {
         this(RestClient.builder(), RestClient.builder(), objectMapper, apiKey, baseUrl);
     }
@@ -41,8 +42,9 @@ public class DashScopeVoiceSynthesisClient implements VoiceSynthesisClient {
             String apiKey,
             String baseUrl) {
         this.apiKey = apiKey == null ? "" : apiKey.strip();
+        this.baseUrl = trimTrailingSlash(baseUrl);
         this.objectMapper = objectMapper;
-        this.restClient = restClientBuilder.baseUrl(trimTrailingSlash(baseUrl)).build();
+        this.restClient = restClientBuilder.baseUrl(this.baseUrl).build();
         this.downloadClient = downloadClientBuilder.build();
     }
 
@@ -50,6 +52,9 @@ public class DashScopeVoiceSynthesisClient implements VoiceSynthesisClient {
     public VoiceSynthesisAudio synthesize(VoiceSynthesisRequest request) {
         if (apiKey.isBlank()) {
             throw new VoiceSynthesisException("缺少 DASHSCOPE_API_KEY，无法调用语音合成服务");
+        }
+        if (baseUrl.isBlank()) {
+            throw new VoiceSynthesisException("缺少 DASHSCOPE_TTS_BASE_URL，请在 .env 中填写你的语音合成 Host 完整地址");
         }
 
         try {

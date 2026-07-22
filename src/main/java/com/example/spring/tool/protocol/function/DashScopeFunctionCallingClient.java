@@ -42,6 +42,7 @@ public class DashScopeFunctionCallingClient {
     private final FunctionCallingToolSchemaConverter schemaConverter;
     private final FunctionCallingResponseParser responseParser;
     private final String apiKey;
+    private final String baseUrl;
     private final String model;
 
     public DashScopeFunctionCallingClient(
@@ -50,9 +51,10 @@ public class DashScopeFunctionCallingClient {
             FunctionCallingToolSchemaConverter schemaConverter,
             FunctionCallingResponseParser responseParser,
             @Value("${dashscope.api-key:}") String apiKey,
-            @Value("${dashscope.base-url:https://ws-6gncy95g9skiwjfi.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}") String baseUrl,
+            @Value("${dashscope.base-url:}") String baseUrl,
             @Value("${openclaw.dashscope.model:${dashscope.model:qwen3.7-max-2026-06-08}}") String model) {
-        this.restClient = builder.baseUrl(stripTrailingSlash(baseUrl)).build();
+        this.baseUrl = stripTrailingSlash(baseUrl);
+        this.restClient = builder.baseUrl(this.baseUrl).build();
         this.objectMapper = objectMapper;
         this.schemaConverter = schemaConverter;
         this.responseParser = responseParser;
@@ -190,7 +192,10 @@ public class DashScopeFunctionCallingClient {
 
     private void validateConfiguration() {
         if (apiKey == null || apiKey.isBlank()) {
-            throw new ChatServiceException("鏈厤缃?DASHSCOPE_API_KEY");
+            throw new ChatServiceException("未配置 DASHSCOPE_API_KEY");
+        }
+        if (baseUrl.isBlank()) {
+            throw new ChatServiceException("未配置 DASHSCOPE_BASE_URL，请在 .env 中填写你的模型 Host 完整地址");
         }
     }
 

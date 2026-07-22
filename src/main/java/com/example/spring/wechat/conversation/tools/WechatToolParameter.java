@@ -4,7 +4,7 @@ import java.util.List;
 
 /**
  * 微信工具参数定义。
- * 用它描述参数名、类型、是否必填、参数说明、可选值和示例值，为后续升级到 Function Calling JSON Schema 打基础。
+ * 用它描述参数名、类型、是否必填、参数说明、可选值和示例值。
  */
 public record WechatToolParameter(
         String name,

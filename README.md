@@ -325,10 +325,15 @@ AMAP_WEATHER_KEY=你的高德Web服务Key
 
 # 阿里百炼
 DASHSCOPE_API_KEY=你的DashScope API Key
+DASHSCOPE_BASE_URL=https://你的百炼工作空间Host/compatible-mode/v1
 DASHSCOPE_CHAT_MODEL=qwen3.7-max-2026-06-08
 DASHSCOPE_VISION_MODEL=qwen3.7-plus
+DASHSCOPE_IMAGE_BASE_URL=https://你的百炼工作空间Host/api/v1
 DASHSCOPE_IMAGE_MODEL=qwen-image-2.0-pro
+# 如果语音识别地址和 DASHSCOPE_BASE_URL 不同，再配置这一项：
+# DASHSCOPE_VOICE_BASE_URL=https://你的语音识别Host/compatible-mode/v1
 DASHSCOPE_VOICE_MODEL=qwen3-asr-flash
+DASHSCOPE_TTS_BASE_URL=https://dashscope.aliyuncs.com/api/v1
 DASHSCOPE_TTS_MODEL=qwen3-tts-flash
 DASHSCOPE_TTS_VOICE=Cherry
 ```
@@ -336,8 +341,10 @@ DASHSCOPE_TTS_VOICE=Cherry
 说明：
 
 - `.env` 保存真实密钥，不要提交到仓库。
-- `application.properties` 中保留默认值和环境变量占位。
+- `DASHSCOPE_BASE_URL`、`DASHSCOPE_IMAGE_BASE_URL` 这类模型 Host 和 `DASHSCOPE_API_KEY` 一样属于个人配置，应放在 `.env` 中，不要写死到代码或 `application.properties`。
+- `application.properties` 中只保留环境变量占位，不保存个人 Host。
 - 图片生成、语音识别、语音合成分别使用独立配置项，便于后续替换模型。
+- `DASHSCOPE_VOICE_BASE_URL` 可以留空，默认复用 `DASHSCOPE_BASE_URL`；如果语音识别服务地址不同，再单独填写。
 - 如果本机没有 ffmpeg，可以先关闭 `AUDIO_FFMPEG_ENABLED=false`，但部分语音格式可能无法识别。
 
 ## 9. 运行方式

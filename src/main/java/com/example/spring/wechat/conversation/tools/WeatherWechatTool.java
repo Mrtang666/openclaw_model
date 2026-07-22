@@ -2,7 +2,7 @@ package com.example.spring.wechat.conversation.tools;
 
 
 /**
- * CLI 工具封装层，负责统一封装本地工具能力。
+ * 天气查询工具，负责查询城市天气，并根据天气数据生成自然语言建议。
  */
 import com.example.spring.chat.ChatService;
 import com.example.spring.exception.WeatherServiceException;

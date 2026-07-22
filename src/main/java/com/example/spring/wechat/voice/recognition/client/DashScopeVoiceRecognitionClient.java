@@ -39,17 +39,19 @@ public class DashScopeVoiceRecognitionClient implements VoiceRecognitionClient {
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
     private final String apiKey;
+    private final String baseUrl;
     private final String model;
 
     public DashScopeVoiceRecognitionClient(
             RestClient.Builder builder,
             ObjectMapper objectMapper,
             @Value("${dashscope.api-key:}") String apiKey,
-            @Value("${dashscope.voice-base-url:${dashscope.base-url:https://ws-6gncy95g9skiwjfi.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}}") String baseUrl,
+            @Value("${dashscope.voice-base-url:${dashscope.base-url:}}") String baseUrl,
             @Value("${dashscope.voice-model:qwen3-asr-flash}") String model,
             @Value("${dashscope.voice-max-poll-attempts:20}") int ignoredMaxPollAttempts,
             @Value("${dashscope.voice-poll-interval-ms:1000}") long ignoredPollIntervalMillis) {
-        this.restClient = builder.baseUrl(stripTrailingSlash(baseUrl)).build();
+        this.baseUrl = stripTrailingSlash(baseUrl);
+        this.restClient = builder.baseUrl(this.baseUrl).build();
         this.objectMapper = objectMapper;
         this.apiKey = apiKey;
         this.model = model;
@@ -167,6 +169,9 @@ public class DashScopeVoiceRecognitionClient implements VoiceRecognitionClient {
     private void validateConfiguration() {
         if (apiKey == null || apiKey.isBlank()) {
             throw new VoiceRecognitionException("未配置 DASHSCOPE_API_KEY");
+        }
+        if (baseUrl.isBlank()) {
+            throw new VoiceRecognitionException("未配置 DASHSCOPE_VOICE_BASE_URL 或 DASHSCOPE_BASE_URL，请在 .env 中填写你的语音识别 Host 完整地址");
         }
     }
 

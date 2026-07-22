@@ -2,6 +2,7 @@ package com.example.spring.wechat.memory;
 
 import org.junit.jupiter.api.Test;
 
+import com.example.spring.wechat.memory.model.WechatConversationMemory;
 import java.lang.reflect.Method;
 import java.util.List;
 
@@ -43,5 +44,21 @@ class WechatConversationMemoryTests {
                 .hasToString("Optional[杭州]");
         assertThat(memoryType.getMethod("lastPendingImagePrompt").invoke(memory))
                 .hasToString("Optional[赛博朋克橘猫]");
+    }
+    @Test
+    void retainsStructuredClarificationState() {
+        WechatConversationMemory memory = WechatConversationMemory.empty(3);
+        memory.recordPendingClarification(
+                "make a file",
+                "Which format?",
+                "document_generation",
+                List.of("format", "title"));
+
+        WechatConversationMemory restored = WechatConversationMemory.empty(3);
+        restored.applyState(memory.state());
+
+        assertThat(restored.pendingClarificationToolName()).hasValue("document_generation");
+        assertThat(restored.pendingClarificationMissingFields()).containsExactly("format", "title");
+        assertThat(restored.pendingClarificationQuestion()).hasValue("Which format?");
     }
 }

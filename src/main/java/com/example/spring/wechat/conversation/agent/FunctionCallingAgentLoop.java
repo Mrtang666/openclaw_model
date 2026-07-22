@@ -18,9 +18,11 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * 完整标准 Function Calling Agent 循环。
@@ -86,6 +88,7 @@ public class FunctionCallingAgentLoop {
         List<WechatReply.Part> visibleParts = new ArrayList<>();
         String previousToolResult = "";
         String rollingHistory = request.historyText();
+        Set<String> executedVoiceSynthesisSignatures = new HashSet<>();
         log.info("Function Calling Agent Loop 开始，userId={}, text={}",
                 request.sessionKey(), preview(request.userText()));
 
@@ -117,8 +120,23 @@ public class FunctionCallingAgentLoop {
                     continue;
                 }
 
+                Map<String, String> arguments = argumentsWithPreviousResult(toolCall, previousToolResult);
+                String voiceSynthesisSignature = voiceSynthesisSignature(toolCall.name(), arguments);
+                if (!voiceSynthesisSignature.isBlank()
+                        && !executedVoiceSynthesisSignatures.add(voiceSynthesisSignature)) {
+                    String skippedResult = "语音已经生成，本次重复语音工具调用已跳过，避免重复发送相同音频。";
+                    log.info("Function Calling Agent Loop 跳过重复语音合成，userId={}, tool={}, signature={}",
+                            request.sessionKey(), toolCall.name(), voiceSynthesisSignature);
+                    messages.add(FunctionCallingMessage.tool(toolCall.id(), skippedResult));
+                    recordToolExecution(request, toolCall, skippedResult, "SKIPPED_DUPLICATE");
+                    previousToolResult = skippedResult;
+                    rollingHistory = appendRollingHistory(rollingHistory, toolCall.name(), skippedResult);
+                    continue;
+                }
+
                 AgentToolExecutionResult toolResult = executeTool(request, toolCall, rollingHistory, previousToolResult);
                 messages.add(FunctionCallingMessage.tool(toolCall.id(), toolResult.modelText()));
+                replaceExistingMediaOfSameType(visibleParts, toolResult.visibleParts());
                 visibleParts.addAll(toolResult.visibleParts());
                 previousToolResult = toolResult.modelText();
                 rollingHistory = appendRollingHistory(rollingHistory, toolCall.name(), toolResult.modelText());
@@ -129,6 +147,71 @@ public class FunctionCallingAgentLoop {
             return Optional.of(WechatReply.ordered(visibleParts));
         }
         return Optional.of(WechatReply.text("这次需求处理步骤比较多，我已经停止继续调用工具。你可以把需求拆短一点再发我。"));
+    }
+
+    private String voiceSynthesisSignature(String toolName, Map<String, String> arguments) {
+        if (!"voice_synthesis".equals(toolName) || arguments == null || arguments.isEmpty()) {
+            return "";
+        }
+        String target = firstNonBlank(
+                arguments.get("target_text"),
+                arguments.get("text"),
+                arguments.get("message"),
+                arguments.get("previous_result"));
+        if (target.isBlank()) {
+            return "";
+        }
+        String voice = firstNonBlank(arguments.get("voice")).toLowerCase(java.util.Locale.ROOT);
+        return toolName + "|" + voice + "|" + normalizeForSignature(target);
+    }
+
+    private String normalizeForSignature(String value) {
+        return value == null ? "" : value.replaceAll("\\s+", " ").strip();
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.strip();
+            }
+        }
+        return "";
+    }
+
+    private boolean containsVoicePart(List<WechatReply.Part> parts) {
+        return parts != null && parts.stream().anyMatch(part -> part != null && part.hasVoice());
+    }
+
+    private boolean containsImagePart(List<WechatReply.Part> parts) {
+        return parts != null && parts.stream().anyMatch(part -> part != null && part.hasImage());
+    }
+
+    private boolean containsFilePart(List<WechatReply.Part> parts) {
+        return parts != null && parts.stream().anyMatch(part -> part != null && part.hasFile());
+    }
+
+    private boolean containsVisibleMediaPart(List<WechatReply.Part> parts) {
+        return containsImagePart(parts) || containsVoicePart(parts) || containsFilePart(parts);
+    }
+
+    private void replaceExistingMediaOfSameType(
+            List<WechatReply.Part> currentParts,
+            List<WechatReply.Part> incomingParts) {
+        if (currentParts == null || currentParts.isEmpty() || incomingParts == null || incomingParts.isEmpty()) {
+            return;
+        }
+        if (containsImagePart(incomingParts)) {
+            currentParts.removeIf(part -> part != null && part.hasImage());
+        }
+        if (containsVoicePart(incomingParts)) {
+            currentParts.removeIf(part -> part != null && part.hasVoice());
+        }
+        if (containsFilePart(incomingParts)) {
+            currentParts.removeIf(part -> part != null && part.hasFile());
+        }
     }
 
     private AgentToolExecutionResult invalidToolCallResult(
@@ -162,6 +245,7 @@ public class FunctionCallingAgentLoop {
                     rollingHistory,
                     List.of(),
                     agentRequest.files(),
+                    agentRequest.images(),
                     agentRequest.pendingImagePromptRecorder(),
                     agentRequest.generatedImageRecorder());
             WechatReply reply = toolRegistry.execute(toolCall.name(), request);
@@ -212,7 +296,7 @@ public class FunctionCallingAgentLoop {
         if (visibleParts == null || visibleParts.isEmpty()) {
             return WechatReply.text(content);
         }
-        if (visibleParts.stream().anyMatch(WechatReply.Part::hasVoice)) {
+        if (containsVisibleMediaPart(visibleParts)) {
             return WechatReply.ordered(visibleParts);
         }
         if (content.isBlank()) {
@@ -314,7 +398,12 @@ public class FunctionCallingAgentLoop {
 
                 用户当前消息：
                 %s
-                """.formatted(request.historyText().isBlank() ? "无" : request.historyText(), request.userText());
+
+                当前可用图片资源：%d 张。若用户是在询问、分析、总结、提取或修改这些图片，请调用图片相关工具；不要假装已经看过图片。
+                """.formatted(
+                request.historyText().isBlank() ? "无" : request.historyText(),
+                request.userText(),
+                request.images().size());
     }
 
     private String toolNames(List<FunctionCallingToolCall> toolCalls) {

@@ -11,6 +11,8 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -39,6 +41,7 @@ class WechatMemoryMaintenanceSchedulerTests {
     @BeforeEach
     void clearMemoryTables() {
         TestDatabaseGuard.assertUsingTestDatabase(jdbcTemplate);
+        jdbcTemplate.update("DELETE FROM wechat_images");
         jdbcTemplate.update("DELETE FROM tool_execution_logs");
         jdbcTemplate.update("DELETE FROM conversation_summaries");
         jdbcTemplate.update("DELETE FROM conversation_messages");
@@ -74,6 +77,43 @@ class WechatMemoryMaintenanceSchedulerTests {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM tool_execution_logs",
                 Integer.class)).isZero();
+    }
+
+    @Test
+    void removesExpiredImageMetadataAndLocalFile() throws Exception {
+        Instant now = Instant.parse("2026-07-21T01:00:00Z");
+        Path localFile = Files.createTempFile("expired-wechat-image", ".png");
+        Files.writeString(localFile, "old image");
+        jdbcTemplate.update(
+                """
+                        INSERT INTO wechat_images
+                        (wechat_user_id, message_id, source_type, source_reference, image_index,
+                         file_name, mime_type, sha256, md5, size_bytes, local_path, image_url,
+                         prompt, description, status, created_at, used_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                "wx-user",
+                "image-message",
+                "USER_UPLOAD",
+                "wechat://image",
+                1,
+                "old.png",
+                "image/png",
+                "sha-old",
+                "md5-old",
+                9,
+                localFile.toString(),
+                "",
+                "",
+                "",
+                "USED",
+                java.sql.Timestamp.from(now.minusSeconds(31L * 86_400L)),
+                null);
+
+        scheduler.cleanExpiredRawData(now);
+
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM wechat_images", Integer.class)).isZero();
+        assertThat(Files.exists(localFile)).isFalse();
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.example.spring.wechat.conversation.agent;
 
 import com.example.spring.wechat.conversation.tools.WechatToolRequest;
 import com.example.spring.wechat.model.WechatIncomingFile;
+import com.example.spring.wechat.model.WechatIncomingImage;
 
 import java.util.List;
 import java.util.Map;
@@ -17,6 +18,7 @@ public record FunctionCallingAgentRequest(
         String userText,
         String historyText,
         List<WechatIncomingFile> files,
+        List<WechatIncomingImage> images,
         WechatToolRequest.PendingImagePromptRecorder pendingImagePromptRecorder,
         WechatToolRequest.GeneratedImageRecorder generatedImageRecorder,
         ToolExecutionRecorder toolExecutionRecorder) {
@@ -26,6 +28,26 @@ public record FunctionCallingAgentRequest(
         userText = userText == null ? "" : userText.strip();
         historyText = historyText == null ? "" : historyText;
         files = files == null ? List.of() : List.copyOf(files);
+        images = images == null ? List.of() : List.copyOf(images);
+    }
+
+    public FunctionCallingAgentRequest(
+            String sessionKey,
+            String userText,
+            String historyText,
+            List<WechatIncomingFile> files,
+            WechatToolRequest.PendingImagePromptRecorder pendingImagePromptRecorder,
+            WechatToolRequest.GeneratedImageRecorder generatedImageRecorder,
+            ToolExecutionRecorder toolExecutionRecorder) {
+        this(
+                sessionKey,
+                userText,
+                historyText,
+                files,
+                List.of(),
+                pendingImagePromptRecorder,
+                generatedImageRecorder,
+                toolExecutionRecorder);
     }
 
     @FunctionalInterface

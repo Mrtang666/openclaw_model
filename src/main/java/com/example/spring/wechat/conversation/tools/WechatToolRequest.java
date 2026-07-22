@@ -6,6 +6,7 @@ package com.example.spring.wechat.conversation.tools;
  */
 import com.example.spring.wechat.model.WechatIncomingVoice;
 import com.example.spring.wechat.model.WechatIncomingFile;
+import com.example.spring.wechat.model.WechatIncomingImage;
 
 import java.util.List;
 import java.util.Map;
@@ -17,6 +18,7 @@ public record WechatToolRequest(
         String historyText,
         List<WechatIncomingVoice> voices,
         List<WechatIncomingFile> files,
+        List<WechatIncomingImage> images,
         PendingImagePromptRecorder pendingImagePromptRecorder,
         GeneratedImageRecorder generatedImageRecorder) {
 
@@ -27,6 +29,7 @@ public record WechatToolRequest(
         historyText = historyText == null ? "" : historyText;
         voices = voices == null ? List.of() : List.copyOf(voices);
         files = files == null ? List.of() : List.copyOf(files);
+        images = images == null ? List.of() : List.copyOf(images);
     }
 
     public WechatToolRequest(
@@ -37,7 +40,19 @@ public record WechatToolRequest(
             List<WechatIncomingVoice> voices,
             PendingImagePromptRecorder pendingImagePromptRecorder,
             GeneratedImageRecorder generatedImageRecorder) {
-        this(sessionKey, userText, arguments, historyText, voices, List.of(), pendingImagePromptRecorder, generatedImageRecorder);
+        this(sessionKey, userText, arguments, historyText, voices, List.of(), List.of(), pendingImagePromptRecorder, generatedImageRecorder);
+    }
+
+    public WechatToolRequest(
+            String sessionKey,
+            String userText,
+            Map<String, String> arguments,
+            String historyText,
+            List<WechatIncomingVoice> voices,
+            List<WechatIncomingFile> files,
+            PendingImagePromptRecorder pendingImagePromptRecorder,
+            GeneratedImageRecorder generatedImageRecorder) {
+        this(sessionKey, userText, arguments, historyText, voices, files, List.of(), pendingImagePromptRecorder, generatedImageRecorder);
     }
 
     public WechatToolRequest(
@@ -47,7 +62,7 @@ public record WechatToolRequest(
             String historyText,
             PendingImagePromptRecorder pendingImagePromptRecorder,
             GeneratedImageRecorder generatedImageRecorder) {
-        this(sessionKey, userText, arguments, historyText, List.of(), List.of(), pendingImagePromptRecorder, generatedImageRecorder);
+        this(sessionKey, userText, arguments, historyText, List.of(), List.of(), List.of(), pendingImagePromptRecorder, generatedImageRecorder);
     }
 
     public String argument(String name) {

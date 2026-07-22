@@ -3,6 +3,7 @@ package com.example.spring.wechat.document.service;
 import com.example.spring.wechat.document.model.DocumentFormat;
 import com.example.spring.wechat.document.model.GeneratedDocument;
 import com.example.spring.wechat.document.model.GeneratedDocumentRequest;
+import com.example.spring.wechat.model.WechatIncomingImage;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -11,6 +12,7 @@ import org.apache.pdfbox.pdmodel.font.PDType0Font;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
@@ -52,6 +54,26 @@ public class DefaultDocumentGenerationService {
         }
     }
 
+    public GeneratedDocument generate(
+            GeneratedDocumentRequest request,
+            DocumentFormat format,
+            List<WechatIncomingImage> images) {
+        GeneratedDocumentRequest safeRequest = request == null
+                ? new GeneratedDocumentRequest("未命名文档", "", "default")
+                : request;
+        DocumentFormat targetFormat = writableFormat(format);
+        if (targetFormat == DocumentFormat.PDF
+                && images != null
+                && images.stream().anyMatch(WechatIncomingImage::hasBytes)) {
+            try {
+                return generateImagePdf(safeRequest, images);
+            } catch (IOException exception) {
+                throw new IllegalArgumentException("图片 PDF 生成失败：" + exception.getMessage(), exception);
+            }
+        }
+        return generate(safeRequest, targetFormat);
+    }
+
     private DocumentFormat writableFormat(DocumentFormat format) {
         if (format == null || format == DocumentFormat.UNKNOWN || format == DocumentFormat.XLSX || format == DocumentFormat.PPTX) {
             return DocumentFormat.DOCX;
@@ -90,38 +112,7 @@ public class DefaultDocumentGenerationService {
         try (PDDocument document = new PDDocument();
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             PDFont font = loadChineseFont(document);
-            PDPage page = new PDPage(PDRectangle.A4);
-            document.addPage(page);
-            PDPageContentStream content = new PDPageContentStream(document, page);
-            float y = 760;
-            content.beginText();
-            content.setFont(font, 16);
-            content.newLineAtOffset(60, y);
-            content.showText(safePdfText(request.title(), font));
-            content.endText();
-            y -= 36;
-
-            content.beginText();
-            content.setFont(font, 11);
-            content.newLineAtOffset(60, y);
-            for (String line : wrapForPdf(renderText(request), 42)) {
-                if (y < 80) {
-                    content.endText();
-                    content.close();
-                    page = new PDPage(PDRectangle.A4);
-                    document.addPage(page);
-                    content = new PDPageContentStream(document, page);
-                    y = 760;
-                    content.beginText();
-                    content.setFont(font, 11);
-                    content.newLineAtOffset(60, y);
-                }
-                content.showText(safePdfText(line, font));
-                content.newLineAtOffset(0, -18);
-                y -= 18;
-            }
-            content.endText();
-            content.close();
+            appendTextPages(document, font, request);
 
             document.save(output);
             return new GeneratedDocument(
@@ -131,6 +122,99 @@ public class DefaultDocumentGenerationService {
                     DocumentFormat.PDF.contentType(),
                     "PDF 文档已生成，请查收");
         }
+    }
+
+    private GeneratedDocument generateImagePdf(GeneratedDocumentRequest request, List<WechatIncomingImage> images) throws IOException {
+        try (PDDocument document = new PDDocument();
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            PDFont font = loadChineseFont(document);
+            if (!renderText(request).isBlank()) {
+                appendTextPages(document, font, request);
+            }
+            int imageIndex = 1;
+            for (WechatIncomingImage image : images) {
+                if (image == null || !image.hasBytes()) {
+                    continue;
+                }
+
+                PDPage page = new PDPage(PDRectangle.A4);
+                document.addPage(page);
+                PDImageXObject pdfImage = PDImageXObject.createFromByteArray(
+                        document,
+                        image.bytes(),
+                        image.fileName() == null || image.fileName().isBlank()
+                                ? "wechat-image-" + imageIndex
+                                : image.fileName());
+
+                PDRectangle pageSize = page.getMediaBox();
+                float margin = 48;
+                float captionHeight = 44;
+                float availableWidth = pageSize.getWidth() - margin * 2;
+                float availableHeight = pageSize.getHeight() - margin * 2 - captionHeight;
+                float scale = Math.min(availableWidth / pdfImage.getWidth(), availableHeight / pdfImage.getHeight());
+                float drawWidth = pdfImage.getWidth() * scale;
+                float drawHeight = pdfImage.getHeight() * scale;
+                float drawX = (pageSize.getWidth() - drawWidth) / 2;
+                float drawY = pageSize.getHeight() - margin - captionHeight - drawHeight;
+
+                try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+                    content.beginText();
+                    content.setFont(font, 13);
+                    content.newLineAtOffset(margin, pageSize.getHeight() - margin);
+                    content.showText(safePdfText("%s - 第 %d 张".formatted(request.title(), imageIndex), font));
+                    content.endText();
+                    content.drawImage(pdfImage, drawX, Math.max(margin, drawY), drawWidth, drawHeight);
+                }
+                imageIndex++;
+            }
+
+            if (document.getNumberOfPages() == 0) {
+                return generatePdf(request);
+            }
+
+            document.save(output);
+            return new GeneratedDocument(
+                    output.toByteArray(),
+                    safeFileName(request.title(), DocumentFormat.PDF),
+                    DocumentFormat.PDF,
+                    DocumentFormat.PDF.contentType(),
+                    "PDF 文档已生成，请查收");
+        }
+    }
+
+    private void appendTextPages(PDDocument document, PDFont font, GeneratedDocumentRequest request) throws IOException {
+        PDPage page = new PDPage(PDRectangle.A4);
+        document.addPage(page);
+        PDPageContentStream content = new PDPageContentStream(document, page);
+        float y = 760;
+        content.beginText();
+        content.setFont(font, 16);
+        content.newLineAtOffset(60, y);
+        content.showText(safePdfText(request.title(), font));
+        content.endText();
+        y -= 36;
+
+        content.beginText();
+        content.setFont(font, 11);
+        content.newLineAtOffset(60, y);
+        for (String line : wrapForPdf(renderText(request), 42)) {
+            if (y < 80) {
+                content.endText();
+                content.close();
+                page = new PDPage(PDRectangle.A4);
+                document.addPage(page);
+                content = new PDPageContentStream(document, page);
+                y = 760;
+                content.beginText();
+                content.setFont(font, 11);
+                content.newLineAtOffset(60, y);
+            }
+            content.showText(safePdfText(line, font));
+            content.newLineAtOffset(0, -18);
+            y -= 18;
+        }
+        content.endText();
+        content.close();
     }
 
     private GeneratedDocument generateTxt(GeneratedDocumentRequest request) {

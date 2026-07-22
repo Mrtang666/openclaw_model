@@ -25,6 +25,8 @@ public class WechatConversationMemory {
     private String lastWeatherCity;
     private String pendingClarificationUserText;
     private String pendingClarificationQuestion;
+    private String pendingClarificationToolName;
+    private List<String> pendingClarificationMissingFields = List.of();
     private String lastFileName;
     private String lastFileFormat;
     private String lastFileSummary;
@@ -93,12 +95,28 @@ public class WechatConversationMemory {
     }
 
     public synchronized void recordPendingClarification(String userText, String clarificationQuestion) {
+        recordPendingClarification(userText, clarificationQuestion, "", List.of());
+    }
+
+    public synchronized void recordPendingClarification(
+            String userText,
+            String clarificationQuestion,
+            String toolName,
+            List<String> missingFields) {
         if (isBlank(userText) || isBlank(clarificationQuestion)) {
             return;
         }
         record(userText, clarificationQuestion);
         pendingClarificationUserText = userText.strip();
         pendingClarificationQuestion = clarificationQuestion.strip();
+        pendingClarificationToolName = isBlank(toolName) ? null : toolName.strip();
+        pendingClarificationMissingFields = missingFields == null
+                ? List.of()
+                : missingFields.stream()
+                .filter(value -> !isBlank(value))
+                .map(String::strip)
+                .distinct()
+                .toList();
     }
 
     public synchronized void recordUserImage(String userText, String imageDescription) {
@@ -200,6 +218,14 @@ public class WechatConversationMemory {
         return optionalText(pendingClarificationQuestion);
     }
 
+    public synchronized Optional<String> pendingClarificationToolName() {
+        return optionalText(pendingClarificationToolName);
+    }
+
+    public synchronized List<String> pendingClarificationMissingFields() {
+        return List.copyOf(pendingClarificationMissingFields);
+    }
+
     public synchronized void clearPendingImagePrompt() {
         pendingImagePrompt = null;
     }
@@ -207,6 +233,8 @@ public class WechatConversationMemory {
     public synchronized void clearPendingClarification() {
         pendingClarificationUserText = null;
         pendingClarificationQuestion = null;
+        pendingClarificationToolName = null;
+        pendingClarificationMissingFields = List.of();
     }
 
     public synchronized void clearPendingFileQuestion() {
@@ -272,6 +300,8 @@ public class WechatConversationMemory {
                 lastWeatherCity,
                 pendingClarificationUserText,
                 pendingClarificationQuestion,
+                pendingClarificationToolName,
+                pendingClarificationMissingFields,
                 lastFileName,
                 lastFileFormat,
                 lastFileSummary,
@@ -291,6 +321,14 @@ public class WechatConversationMemory {
         lastWeatherCity = state.lastWeatherCity();
         pendingClarificationUserText = state.pendingClarificationUserText();
         pendingClarificationQuestion = state.pendingClarificationQuestion();
+        pendingClarificationToolName = state.pendingClarificationToolName();
+        pendingClarificationMissingFields = state.pendingClarificationMissingFields() == null
+                ? List.of()
+                : state.pendingClarificationMissingFields().stream()
+                .filter(value -> !isBlank(value))
+                .map(String::strip)
+                .distinct()
+                .toList();
         lastFileName = state.lastFileName();
         lastFileFormat = state.lastFileFormat();
         lastFileSummary = state.lastFileSummary();
@@ -307,11 +345,19 @@ public class WechatConversationMemory {
             String lastWeatherCity,
             String pendingClarificationUserText,
             String pendingClarificationQuestion,
+            String pendingClarificationToolName,
+            List<String> pendingClarificationMissingFields,
             String lastFileName,
             String lastFileFormat,
             String lastFileSummary,
             String pendingFileQuestion,
             int lastImagePromptTurnCount) {
+
+        public State {
+            pendingClarificationMissingFields = pendingClarificationMissingFields == null
+                    ? List.of()
+                    : List.copyOf(pendingClarificationMissingFields);
+        }
     }
 
     private Optional<String> optionalText(String value) {

@@ -17,12 +17,15 @@ class WechatCommandTests {
     @Test
     void startsWechatBotAndPrintsQrCodeContent() {
         WechatBotService service = mock(WechatBotService.class);
-        when(service.start()).thenReturn(new WechatStartResult(true, "请扫码登录", "QR-CONTENT"));
+        when(service.start()).thenReturn(new WechatStartResult(
+                true,
+                "请扫码登录",
+                "http://127.0.0.1:8080/wechat-login/index.html?session=session-1"));
         WechatCommand command = new WechatCommand(service);
 
         assertThat(command.execute(List.of("start")))
                 .contains("请扫码登录")
-                .contains("QR-CONTENT")
+                .contains("登录页面：http://127.0.0.1:8080/wechat-login/index.html?session=session-1")
                 .contains("wechat status");
     }
 

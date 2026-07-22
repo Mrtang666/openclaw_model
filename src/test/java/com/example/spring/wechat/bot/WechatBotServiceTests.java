@@ -6,6 +6,9 @@ import com.example.spring.wechat.conversation.WechatConversationService;
 import com.example.spring.wechat.image.generation.model.ImageGenerationResult;
 import com.example.spring.wechat.model.WechatIncomingMessage;
 import com.example.spring.wechat.model.WechatLoginInfo;
+import com.example.spring.wechat.login.WechatLoginPageProperties;
+import com.example.spring.wechat.login.WechatLoginPageSessionService;
+import com.example.spring.wechat.login.WechatLoginPageUrlService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 
@@ -37,8 +40,28 @@ class WechatBotServiceTests {
         WechatStartResult result = service.start();
 
         assertThat(result.started()).isTrue();
-        assertThat(result.qrCodeContent()).isEqualTo("QR-CONTENT");
+        assertThat(result.loginPageUrl()).isEqualTo("QR-CONTENT");
         assertThat(service.status().state()).isEqualTo(WechatBotState.WAITING_FOR_SCAN);
+        service.stop();
+    }
+
+    @Test
+    void startsClientAndReturnsConfiguredLoginPageUrl() {
+        FakeWechatClient client = new FakeWechatClient();
+        client.loginUrl = "https://liteapp.weixin.qq.com/q/example?qrcode=0123456789abcdef0123456789abcdef&bot_type=3";
+        WechatLoginPageProperties properties = new WechatLoginPageProperties();
+        properties.setBaseUrl("http://127.0.0.1:18080");
+        WechatLoginPageSessionService sessionService = new WechatLoginPageSessionService(properties);
+        WechatLoginPageUrlService urlService = new WechatLoginPageUrlService(properties, mock(org.springframework.context.ApplicationContext.class));
+        @SuppressWarnings("unchecked")
+        ObjectProvider<WechatConversationService> provider = mock(ObjectProvider.class);
+        WechatBotService service = new WechatBotService(() -> client, provider, sessionService, urlService);
+
+        WechatStartResult result = service.start();
+
+        assertThat(result.loginPageUrl())
+                .startsWith("http://127.0.0.1:18080/wechat-login/index.html?session=")
+                .doesNotContain("liteapp.weixin.qq.com");
         service.stop();
     }
 
@@ -319,6 +342,7 @@ class WechatBotServiceTests {
         private final Map<String, Integer> fileSendAttempts = new ConcurrentHashMap<>();
         private volatile RuntimeException imageSendFailure;
         private volatile String sentToUserId;
+        private volatile String loginUrl = "QR-CONTENT";
 
         private FakeWechatClient() {
             this(1);
@@ -330,7 +354,7 @@ class WechatBotServiceTests {
 
         @Override
         public String executeLogin() {
-            return "QR-CONTENT";
+            return loginUrl;
         }
 
         @Override

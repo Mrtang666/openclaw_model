@@ -50,11 +50,12 @@ public class WechatCommand implements Command {
     private String start() {
         WechatStartResult result = wechatBotService.start();
         StringBuilder output = new StringBuilder(result.message());
-        if (result.qrCodeContent() != null && !result.qrCodeContent().isBlank()) {
+        if (result.loginPageUrl() != null && !result.loginPageUrl().isBlank()) {
             output.append(System.lineSeparator())
-                    .append(result.qrCodeContent())
+                    .append("登录页面：")
+                    .append(result.loginPageUrl())
                     .append(System.lineSeparator())
-                    .append("扫码后输入 wechat status 查看状态。");
+                    .append("打开页面扫码后，可输入 wechat status 查看状态。");
         }
         return output.toString();
     }

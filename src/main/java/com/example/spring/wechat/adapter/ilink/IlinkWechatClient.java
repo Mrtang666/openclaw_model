@@ -23,6 +23,7 @@ import com.example.spring.wechat.model.WechatIncomingImage;
 import com.example.spring.wechat.model.WechatIncomingMessage;
 import com.example.spring.wechat.model.WechatIncomingVoice;
 import com.example.spring.wechat.model.WechatLoginInfo;
+import com.example.spring.wechat.model.WechatLoginState;
 
 public class IlinkWechatClient implements WechatClient {
 
@@ -46,6 +47,17 @@ public class IlinkWechatClient implements WechatClient {
     @Override
     public CompletableFuture<WechatLoginInfo> loginFuture() {
         return delegate.getLoginFuture().thenApply(this::toLoginInfo);
+    }
+
+    @Override
+    public WechatLoginState loginState() {
+        return switch (delegate.getLoginStatus().getStatus()) {
+            case SCANNED -> WechatLoginState.SCANNED;
+            case LOGGED_IN -> WechatLoginState.LOGGED_IN;
+            case EXPIRED -> WechatLoginState.EXPIRED;
+            case ERROR -> WechatLoginState.ERROR;
+            case NOT_LOGIN, WAITING -> WechatLoginState.WAITING;
+        };
     }
 
     @Override

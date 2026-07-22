@@ -9,12 +9,21 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import com.example.spring.wechat.model.WechatIncomingMessage;
 import com.example.spring.wechat.model.WechatLoginInfo;
+import com.example.spring.wechat.model.WechatLoginState;
 
 public interface WechatClient extends AutoCloseable {
 
     String executeLogin();
 
     CompletableFuture<WechatLoginInfo> loginFuture();
+
+    default WechatLoginState loginState() {
+        CompletableFuture<WechatLoginInfo> future = loginFuture();
+        if (future.isCompletedExceptionally() || future.isCancelled()) {
+            return WechatLoginState.ERROR;
+        }
+        return future.isDone() ? WechatLoginState.LOGGED_IN : WechatLoginState.WAITING;
+    }
 
     List<WechatIncomingMessage> getUpdates() throws IOException;
 

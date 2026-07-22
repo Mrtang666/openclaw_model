@@ -8,6 +8,9 @@ import com.example.spring.wechat.adapter.WechatClientFactory;
 import com.example.spring.wechat.model.WechatIncomingMessage;
 import com.example.spring.wechat.model.WechatLoginInfo;
 import com.example.spring.wechat.conversation.WechatConversationService;
+import com.example.spring.wechat.login.WechatLoginPageSession;
+import com.example.spring.wechat.login.WechatLoginPageSessionService;
+import com.example.spring.wechat.login.WechatLoginPageUrlService;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,6 +49,8 @@ public class WechatBotService {
 
     private final WechatClientFactory clientFactory;
     private final WechatMessageHandler messageHandler;
+    private final WechatLoginPageSessionService loginPageSessionService;
+    private final WechatLoginPageUrlService loginPageUrlService;
     private final ExecutorService executor = Executors.newSingleThreadExecutor(task -> {
         Thread thread = new Thread(task, "wechat-bot-worker");
         thread.setDaemon(true);
@@ -59,12 +64,25 @@ public class WechatBotService {
     private volatile boolean stopRequested;
     private volatile String botId;
     private volatile String lastError;
+    private volatile String activeLoginPageUrl;
+
+    public WechatBotService(
+            WechatClientFactory clientFactory,
+            ObjectProvider<WechatConversationService> conversationServiceProvider) {
+        this(clientFactory, message -> conversationServiceProvider.getObject().handleWechat(message), null, null);
+    }
 
     @Autowired
     public WechatBotService(
             WechatClientFactory clientFactory,
-            ObjectProvider<WechatConversationService> conversationServiceProvider) {
-        this(clientFactory, message -> conversationServiceProvider.getObject().handleWechat(message));
+            ObjectProvider<WechatConversationService> conversationServiceProvider,
+            WechatLoginPageSessionService loginPageSessionService,
+            WechatLoginPageUrlService loginPageUrlService) {
+        this(
+                clientFactory,
+                message -> conversationServiceProvider.getObject().handleWechat(message),
+                loginPageSessionService,
+                loginPageUrlService);
     }
 
     WechatBotService(WechatClientFactory clientFactory, AgentService agentService) {
@@ -72,19 +90,23 @@ public class WechatBotService {
             StringBuilder reply = new StringBuilder();
             agentService.handleStreaming(message.text() == null ? "" : message.text(), reply::append);
             return WechatReply.text(reply.toString().strip());
-        });
+        }, null, null);
     }
 
     private WechatBotService(
             WechatClientFactory clientFactory,
-            WechatMessageHandler messageHandler) {
+            WechatMessageHandler messageHandler,
+            WechatLoginPageSessionService loginPageSessionService,
+            WechatLoginPageUrlService loginPageUrlService) {
         this.clientFactory = clientFactory;
         this.messageHandler = messageHandler;
+        this.loginPageSessionService = loginPageSessionService;
+        this.loginPageUrlService = loginPageUrlService;
     }
 
     public synchronized WechatStartResult start() {
         if (state == WechatBotState.WAITING_FOR_SCAN || state == WechatBotState.RUNNING) {
-            return new WechatStartResult(false, "微信 Bot 已在运行", null);
+            return new WechatStartResult(false, "微信 Bot 已在运行", activeLoginPageUrl);
         }
 
         if (messageExecutor == null || messageExecutor.isShutdown() || messageExecutor.isTerminated()) {
@@ -96,13 +118,16 @@ public class WechatBotService {
         client = clientFactory.create();
 
         try {
-            String qrCodeContent = client.executeLogin();
+            String loginUrl = client.executeLogin();
+            String loginPageUrl = createLoginPage(loginUrl, client);
+            activeLoginPageUrl = loginPageUrl;
             state = WechatBotState.WAITING_FOR_SCAN;
             worker = executor.submit(() -> runMessageLoop(client));
-            return new WechatStartResult(true, "请使用微信扫码登录", qrCodeContent);
+            return new WechatStartResult(true, "请打开登录页面并使用微信扫码", loginPageUrl);
         } catch (RuntimeException exception) {
             lastError = rootMessage(exception);
             state = WechatBotState.ERROR;
+            activeLoginPageUrl = null;
             closeClient(client);
             return new WechatStartResult(false, "微信 Bot 启动失败：" + lastError, null);
         }
@@ -126,12 +151,21 @@ public class WechatBotService {
         client = null;
         botId = null;
         lastError = null;
+        activeLoginPageUrl = null;
         state = WechatBotState.STOPPED;
         return "微信 Bot 已停止";
     }
 
     public WechatBotStatus status() {
         return new WechatBotStatus(state, botId, lastError);
+    }
+
+    private String createLoginPage(String loginUrl, WechatClient activeClient) {
+        if (loginPageSessionService == null || loginPageUrlService == null) {
+            return loginUrl;
+        }
+        WechatLoginPageSession session = loginPageSessionService.create(loginUrl, activeClient::loginState);
+        return loginPageUrlService.pageUrl(session.id());
     }
 
     @PreDestroy
@@ -145,6 +179,7 @@ public class WechatBotService {
             WechatLoginInfo loginInfo = activeClient.loginFuture().get();
             botId = loginInfo.botId();
             state = WechatBotState.RUNNING;
+            activeLoginPageUrl = null;
             log.info("微信 Bot 已登录，botId={}", botId);
 
             while (!stopRequested && client == activeClient) {

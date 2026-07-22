@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>微信 iLink 登录</title>
+  <link rel="stylesheet" href="./styles.css?v=geminai-4">
+</head>
+<body>
+  <main class="login-scene" aria-live="polite">
+    <canvas id="particle-canvas" aria-label="可拖动的三维粒子背景"></canvas>
+    <div class="scene-vignette"></div>
+    <section class="login-overlay">
+      <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+      <p class="eyebrow">iLink BOT</p>
+      <h1>微信扫码登录</h1>
+      <p id="status-message" class="status-message">正在准备二维码...</p>
+    </section>
+    <div class="qr-shell" aria-label="微信登录二维码">
+      <canvas id="qr-canvas"></canvas>
+    </div>
+    <p id="status-detail" class="status-detail">二维码保持固定，按住并拖动背景可改变粒子方向和颜色</p>
+  </main>
+  <script type="module" src="./app.js?v=geminai-4"></script>
+</body>
+</html>
+

@@ -262,15 +262,24 @@ public class WechatConversationService {
     }
 
     public WechatReply handleWechat(WechatIncomingMessage message) {
-        return handleWechat(message, true);
+        return handleWechat(null, message, true);
     }
 
-    private WechatReply handleWechat(WechatIncomingMessage message, boolean persistIncomingMessage) {
+    public WechatReply handleWechat(String conversationSessionKey, WechatIncomingMessage message) {
+        return handleWechat(conversationSessionKey, message, true);
+    }
+
+    private WechatReply handleWechat(
+            String conversationSessionKey,
+            WechatIncomingMessage message,
+            boolean persistIncomingMessage) {
         if (message == null) {
             return WechatReply.text("");
         }
 
-        String sessionKey = sessionKey(message.fromUserId());
+        String sessionKey = conversationSessionKey == null || conversationSessionKey.isBlank()
+                ? sessionKey(message.fromUserId())
+                : conversationSessionKey.strip();
         if (persistIncomingMessage && !acceptWechatMessage(sessionKey, message)) {
             log.info("忽略微信重复消息，userId={}, messageId={}",
                     sessionKey, valueOrUnknown(message.messageId()));
@@ -963,7 +972,7 @@ public class WechatConversationService {
                     mergedText,
                     message.images(),
                     List.of());
-            WechatReply reply = handleWechat(syntheticMessage, false);
+            WechatReply reply = handleWechat(sessionKey, syntheticMessage, false);
             if (reply != null && reply.parts() != null && reply.parts().stream().anyMatch(WechatReply.Part::hasVoice)) {
                 return reply;
             }

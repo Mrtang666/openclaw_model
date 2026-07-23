@@ -45,11 +45,12 @@ public class FunctionCallingAgentLoop {
             4. 如果用户需求缺少关键信息，直接追问一个最关键的问题。
             5. 如果图片、语音或文件工具已经生成媒体内容，最终回复保持简短，不要重复描述内部执行过程。
             6. 多个需求按用户表达顺序逐个处理。
-            7. 用户要求“记住、保存、加入知识库、以后参考”时，优先调用 knowledge_add；用户要求“根据知识库、保存过的资料、我的资料”回答时，优先调用 knowledge_query。
-            8. 用户给出 URL 并要求阅读、总结或保存网页时，优先调用 web_read；用户要求查询最新资料、搜索互联网或找公开资料时，优先调用 web_search，必要时再对搜索结果中的 URL 调用 web_read。
-            9. 搜索结果只是摘要，不等于网页原文；当用户要求准确出处、技术细节、对比、报告、严谨回答时，搜索后应继续阅读 1-3 个高相关网页。
-            10. 普通微信回复在末尾简洁列出参考来源；用户要求“出处、引用、报告、严谨一点”时，关键结论可用 [来源1] 标注并在末尾列完整来源。
-            11. 上下文里如果出现最近搜索/最近阅读资源，用户说“第二个网页、刚才那个、上一个链接”时，应结合这些资源选择对应 URL，不要要求用户重复粘贴链接。
+            7. 如果地图工具提示地点存在歧义或需要补充地址，立即向用户确认，不要继续拆分调用地点详情来猜测。
+            8. 用户要求“记住、保存、加入知识库、以后参考”时，优先调用 knowledge_add；用户要求“根据知识库、保存过的资料、我的资料”回答时，优先调用 knowledge_query。
+            9. 用户给出 URL 并要求阅读、总结或保存网页时，优先调用 web_read；用户要求查询最新资料、搜索互联网或找公开资料时，优先调用 web_search，必要时再对搜索结果中的 URL 调用 web_read。
+            10. 搜索结果只是摘要，不等于网页原文；当用户要求准确出处、技术细节、对比、报告、严谨回答时，搜索后应继续阅读 1-3 个高相关网页。
+            11. 普通微信回复在末尾简洁列出参考来源；用户要求“出处、引用、报告、严谨一点”时，关键结论可用 [来源1] 标注并在末尾列完整来源。
+            12. 上下文里如果出现最近搜索/最近阅读资源，用户说“第二个网页、刚才那个、上一个链接”时，应结合这些资源选择对应 URL，不要要求用户重复粘贴链接。
             """;
 
     private final DashScopeFunctionCallingClient client;
@@ -144,6 +145,12 @@ public class FunctionCallingAgentLoop {
 
                 AgentToolExecutionResult toolResult = executeTool(request, toolCall, rollingHistory, previousToolResult);
                 messages.add(FunctionCallingMessage.tool(toolCall.id(), toolResult.modelText()));
+                if ("FAILED".equals(toolResult.status())) {
+                    lastToolFailure = toolResult.modelText();
+                    if ("map_search".equals(toolCall.name()) && requiresUserClarification(toolResult.modelText())) {
+                        return Optional.of(WechatReply.text(toolResult.modelText()));
+                    }
+                }
                 replaceExistingMediaOfSameType(visibleParts, toolResult.visibleParts());
                 visibleParts.addAll(toolResult.visibleParts());
                 previousToolResult = toolResult.modelText();
@@ -278,6 +285,11 @@ public class FunctionCallingAgentLoop {
             if (modelText.isBlank()) {
                 modelText = "工具已执行完成，但没有文本结果。";
             }
+            if (isToolFailureReply(toolCall.name(), modelText)) {
+                recordToolExecution(agentRequest, toolCall, modelText, "FAILED");
+                return AgentToolExecutionResult.failure(
+                        toolCall.name(), arguments, modelText, modelText);
+            }
             recordToolExecution(agentRequest, toolCall, modelText, "SUCCESS");
             return AgentToolExecutionResult.success(
                     toolCall.name(), arguments, modelText, visibleParts(toolCall.name(), replyParts));
@@ -287,6 +299,22 @@ public class FunctionCallingAgentLoop {
             recordToolExecution(agentRequest, toolCall, result, "FAILED");
             return AgentToolExecutionResult.failure(toolCall.name(), arguments, result, rootMessage(exception));
         }
+    }
+
+    private boolean isToolFailureReply(String toolName, String modelText) {
+        return "map_search".equals(toolName)
+                && modelText != null
+                && modelText.startsWith("地图查询失败：");
+    }
+
+    private boolean requiresUserClarification(String modelText) {
+        if (modelText == null || modelText.isBlank()) {
+            return false;
+        }
+        return modelText.contains("存在歧义")
+                || modelText.contains("请补充城市或详细地址")
+                || modelText.contains("至少需要两个地点")
+                || modelText.contains("需要同时提供起点和终点");
     }
 
     private Map<String, String> argumentsWithPreviousResult(FunctionCallingToolCall toolCall, String previousToolResult) {
@@ -303,6 +331,13 @@ public class FunctionCallingAgentLoop {
     private List<WechatReply.Part> visibleParts(String toolName, List<WechatReply.Part> parts) {
         if (parts == null || parts.isEmpty()) {
             return List.of();
+        }
+        if ("map_search".equals(toolName)
+                && parts.stream().anyMatch(part -> part != null && part.hasImage())) {
+            return parts.stream()
+                    .filter(part -> part != null && (part.hasImage()
+                            || (part.text() != null && !part.text().isBlank())))
+                    .toList();
         }
         boolean mediaTool = "image_generation".equals(toolName)
                 || "voice_synthesis".equals(toolName)

@@ -41,6 +41,10 @@ public record WechatToolParameter(
         return new WechatToolParameter(name, "boolean", false, description, List.of("true", "false"), String.valueOf(example));
     }
 
+    public static WechatToolParameter optionalStringArray(String name, String description, String example) {
+        return new WechatToolParameter(name, "array", false, description, List.of(), example);
+    }
+
     public static WechatToolParameter optionalEnum(
             String name,
             String description,

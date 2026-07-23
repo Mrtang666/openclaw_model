@@ -344,6 +344,7 @@ AMAP_WEATHER_KEY=你的高德Web服务Key
 
 # 高德地图工具；留空时自动复用 AMAP_WEATHER_KEY
 AMAP_MAP_KEY=
+AMAP_MAP_STATIC_IMAGE_ENABLED=true
 
 # 阿里百炼
 DASHSCOPE_API_KEY=你的DashScope API Key
@@ -414,6 +415,11 @@ exit
 ```text
 用户：从杭州东站到西湖怎么走，开车和坐地铁分别多久？
 系统：调用地图工具，返回驾车和公共交通距离、预计时间、线路方案与高德导航链接。
+```
+
+```text
+用户：帮我规划杭州东站、西湖断桥、灵隐寺、宋城的路线，顺路安排并生成完整路线图。
+系统：解析多个地点，近似优化途经顺序，返回逐段文本方案、总距离、总耗时和带地点标记的路线图。
 ```
 
 ```text

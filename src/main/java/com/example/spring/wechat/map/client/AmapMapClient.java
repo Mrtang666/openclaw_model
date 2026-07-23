@@ -184,7 +184,7 @@ public class AmapMapClient implements MapClient {
                         .queryParam("origin", origin.location())
                         .queryParam("destination", destination.location())
                         .queryParam("strategy", 0)
-                        .queryParam("extensions", "base")
+                        .queryParam("extensions", "all")
                         .queryParam("output", "JSON")
                         .build())
                 .retrieve()
@@ -203,7 +203,9 @@ public class AmapMapClient implements MapClient {
                         text(path, "tolls"),
                         null,
                         List.of(),
-                        firstNonBlank(text(path, "strategy"), "驾车方案")));
+                        firstNonBlank(text(path, "strategy"), "驾车方案"),
+                        routeInstructions(path.path("steps")),
+                        routePolyline(path.path("steps"))));
                 if (routes.size() >= 2) {
                     break;
                 }
@@ -228,7 +230,7 @@ public class AmapMapClient implements MapClient {
                         .queryParam("city", originCity)
                         .queryParam("cityd", destinationCity)
                         .queryParam("strategy", 0)
-                        .queryParam("extensions", "base")
+                        .queryParam("extensions", "all")
                         .queryParam("output", "JSON")
                         .build())
                 .retrieve()
@@ -248,7 +250,9 @@ public class AmapMapClient implements MapClient {
                         "",
                         integerValue(transit, "walking_distance"),
                         lines,
-                        lines.isEmpty() ? "公共交通方案" : String.join(" → ", lines)));
+                        lines.isEmpty() ? "公共交通方案" : String.join(" → ", lines),
+                        transitInstructions(transit.path("segments")),
+                        transitPolyline(transit.path("segments"))));
                 if (routes.size() >= 3) {
                     break;
                 }
@@ -282,7 +286,9 @@ public class AmapMapClient implements MapClient {
                     "",
                     integerValue(path, "distance"),
                     List.of(),
-                    "步行方案"));
+                    "步行方案",
+                    routeInstructions(path.path("steps")),
+                    routePolyline(path.path("steps"))));
         }
         return routes;
     }
@@ -347,6 +353,90 @@ public class AmapMapClient implements MapClient {
             }
         }
         return List.copyOf(lines);
+    }
+
+    private List<String> routeInstructions(JsonNode steps) {
+        List<String> instructions = new ArrayList<>();
+        if (!steps.isArray()) {
+            return List.of();
+        }
+        for (JsonNode step : steps) {
+            addIfPresent(instructions, text(step, "instruction"));
+        }
+        return List.copyOf(instructions);
+    }
+
+    private List<String> routePolyline(JsonNode steps) {
+        List<String> coordinates = new ArrayList<>();
+        if (!steps.isArray()) {
+            return List.of();
+        }
+        for (JsonNode step : steps) {
+            addPolyline(coordinates, text(step, "polyline"));
+        }
+        return List.copyOf(coordinates);
+    }
+
+    private List<String> transitInstructions(JsonNode segments) {
+        List<String> instructions = new ArrayList<>();
+        if (!segments.isArray()) {
+            return List.of();
+        }
+        for (JsonNode segment : segments) {
+            JsonNode walkingSteps = segment.path("walking").path("steps");
+            instructions.addAll(routeInstructions(walkingSteps));
+            JsonNode busLines = segment.path("bus").path("buslines");
+            if (busLines.isArray()) {
+                for (JsonNode busLine : busLines) {
+                    addIfPresent(instructions, text(busLine, "name"));
+                }
+            }
+            String railwayName = text(segment.path("railway"), "name");
+            addIfPresent(instructions, railwayName);
+        }
+        return List.copyOf(instructions);
+    }
+
+    private List<String> transitPolyline(JsonNode segments) {
+        List<String> coordinates = new ArrayList<>();
+        if (!segments.isArray()) {
+            return List.of();
+        }
+        for (JsonNode segment : segments) {
+            addPolyline(coordinates, text(segment.path("walking"), "polyline"));
+            JsonNode walkingSteps = segment.path("walking").path("steps");
+            coordinates.addAll(routePolyline(walkingSteps));
+            JsonNode busLines = segment.path("bus").path("buslines");
+            if (busLines.isArray()) {
+                for (JsonNode busLine : busLines) {
+                    addPolyline(coordinates, text(busLine, "polyline"));
+                }
+            }
+            JsonNode railway = segment.path("railway");
+            addIfPresent(coordinates, text(railway.path("departure_stop"), "location"));
+            addIfPresent(coordinates, text(railway.path("arrival_stop"), "location"));
+        }
+        return List.copyOf(new LinkedHashSet<>(coordinates));
+    }
+
+    private void addPolyline(List<String> coordinates, String polyline) {
+        if (polyline == null || polyline.isBlank()) {
+            return;
+        }
+        for (String coordinate : polyline.split(";")) {
+            if (coordinate != null && !coordinate.isBlank()) {
+                String clean = coordinate.strip();
+                if (coordinates.isEmpty() || !coordinates.get(coordinates.size() - 1).equals(clean)) {
+                    coordinates.add(clean);
+                }
+            }
+        }
+    }
+
+    private void addIfPresent(List<String> values, String value) {
+        if (value != null && !value.isBlank()) {
+            values.add(value.strip());
+        }
     }
 
     private void validateConfiguration() {

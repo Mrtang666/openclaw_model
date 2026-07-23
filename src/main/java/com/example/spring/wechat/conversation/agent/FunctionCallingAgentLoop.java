@@ -39,12 +39,17 @@ public class FunctionCallingAgentLoop {
             你是 OpenClaw 微信端 Agent。
             你可以根据用户需求调用工具，工具执行结果会以 tool message 形式返回给你。
             工作规则：
-            1. 需要天气、图片、语音、音色、文件解析、文档生成等能力时，必须调用对应工具。
+            1. 需要天气、地图、图片、语音、音色、文件解析、文档生成、知识库、网页阅读、网页搜索等能力时，必须调用对应工具。
             2. 工具返回结果后，你要结合工具结果和上下文继续思考，必要时继续调用下一个工具。
             3. 当用户需求已经全部完成，不再调用工具，直接输出最终回复。
             4. 如果用户需求缺少关键信息，直接追问一个最关键的问题。
             5. 如果图片、语音或文件工具已经生成媒体内容，最终回复保持简短，不要重复描述内部执行过程。
             6. 多个需求按用户表达顺序逐个处理。
+            7. 用户要求“记住、保存、加入知识库、以后参考”时，优先调用 knowledge_add；用户要求“根据知识库、保存过的资料、我的资料”回答时，优先调用 knowledge_query。
+            8. 用户给出 URL 并要求阅读、总结或保存网页时，优先调用 web_read；用户要求查询最新资料、搜索互联网或找公开资料时，优先调用 web_search，必要时再对搜索结果中的 URL 调用 web_read。
+            9. 搜索结果只是摘要，不等于网页原文；当用户要求准确出处、技术细节、对比、报告、严谨回答时，搜索后应继续阅读 1-3 个高相关网页。
+            10. 普通微信回复在末尾简洁列出参考来源；用户要求“出处、引用、报告、严谨一点”时，关键结论可用 [来源1] 标注并在末尾列完整来源。
+            11. 上下文里如果出现最近搜索/最近阅读资源，用户说“第二个网页、刚才那个、上一个链接”时，应结合这些资源选择对应 URL，不要要求用户重复粘贴链接。
             """;
 
     private final DashScopeFunctionCallingClient client;
@@ -87,8 +92,10 @@ public class FunctionCallingAgentLoop {
 
         List<WechatReply.Part> visibleParts = new ArrayList<>();
         String previousToolResult = "";
+        String lastToolFailure = "";
         String rollingHistory = request.historyText();
         Set<String> executedVoiceSynthesisSignatures = new HashSet<>();
+        Set<String> failedToolSignatures = new HashSet<>();
         log.info("Function Calling Agent Loop 开始，userId={}, text={}",
                 request.sessionKey(), preview(request.userText()));
 
@@ -116,6 +123,7 @@ public class FunctionCallingAgentLoop {
                     AgentToolExecutionResult validationFailure = invalidToolCallResult(request, toolCall, validation);
                     messages.add(FunctionCallingMessage.tool(toolCall.id(), validationFailure.modelText()));
                     previousToolResult = validationFailure.modelText();
+                    lastToolFailure = validationFailure.modelText();
                     rollingHistory = appendRollingHistory(rollingHistory, toolCall.name(), validationFailure.modelText());
                     continue;
                 }
@@ -139,12 +147,24 @@ public class FunctionCallingAgentLoop {
                 replaceExistingMediaOfSameType(visibleParts, toolResult.visibleParts());
                 visibleParts.addAll(toolResult.visibleParts());
                 previousToolResult = toolResult.modelText();
+                if ("FAILED".equalsIgnoreCase(toolResult.status())) {
+                    lastToolFailure = toolResult.modelText();
+                    String failedSignature = toolFailureSignature(toolCall.name(), arguments, toolResult.errorMessage());
+                    if (!failedToolSignatures.add(failedSignature) && visibleParts.isEmpty()) {
+                        return Optional.of(WechatReply.text(lastToolFailure));
+                    }
+                } else if (!toolResult.modelText().isBlank()) {
+                    lastToolFailure = "";
+                }
                 rollingHistory = appendRollingHistory(rollingHistory, toolCall.name(), toolResult.modelText());
             }
         }
 
         if (!visibleParts.isEmpty()) {
             return Optional.of(WechatReply.ordered(visibleParts));
+        }
+        if (!lastToolFailure.isBlank()) {
+            return Optional.of(WechatReply.text(lastToolFailure));
         }
         return Optional.of(WechatReply.text("这次需求处理步骤比较多，我已经停止继续调用工具。你可以把需求拆短一点再发我。"));
     }
@@ -163,6 +183,10 @@ public class FunctionCallingAgentLoop {
         }
         String voice = firstNonBlank(arguments.get("voice")).toLowerCase(java.util.Locale.ROOT);
         return toolName + "|" + voice + "|" + normalizeForSignature(target);
+    }
+
+    private String toolFailureSignature(String toolName, Map<String, String> arguments, String errorMessage) {
+        return firstNonBlank(toolName) + "|" + normalizeForSignature(String.valueOf(arguments)) + "|" + normalizeForSignature(errorMessage);
     }
 
     private String normalizeForSignature(String value) {

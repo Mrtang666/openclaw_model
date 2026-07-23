@@ -1,16 +1,18 @@
 package com.example.spring.wechat.conversation.tools;
 
-
-/**
- * CLI 工具封装层，负责统一封装本地工具能力。
- */
-import com.example.spring.wechat.model.WechatIncomingVoice;
 import com.example.spring.wechat.model.WechatIncomingFile;
 import com.example.spring.wechat.model.WechatIncomingImage;
+import com.example.spring.wechat.model.WechatIncomingVoice;
 
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 微信工具调用请求对象。
+ *
+ * <p>Agent Loop 在调用具体工具前，会把用户消息、工具参数、最近上下文、媒体资源和记忆回调统一封装到这里。
+ * 具体工具只依赖这个对象即可，不需要直接访问微信消息处理服务。</p>
+ */
 public record WechatToolRequest(
         String sessionKey,
         String userText,
@@ -40,7 +42,8 @@ public record WechatToolRequest(
             List<WechatIncomingVoice> voices,
             PendingImagePromptRecorder pendingImagePromptRecorder,
             GeneratedImageRecorder generatedImageRecorder) {
-        this(sessionKey, userText, arguments, historyText, voices, List.of(), List.of(), pendingImagePromptRecorder, generatedImageRecorder);
+        this(sessionKey, userText, arguments, historyText, voices, List.of(), List.of(),
+                pendingImagePromptRecorder, generatedImageRecorder);
     }
 
     public WechatToolRequest(
@@ -52,7 +55,8 @@ public record WechatToolRequest(
             List<WechatIncomingFile> files,
             PendingImagePromptRecorder pendingImagePromptRecorder,
             GeneratedImageRecorder generatedImageRecorder) {
-        this(sessionKey, userText, arguments, historyText, voices, files, List.of(), pendingImagePromptRecorder, generatedImageRecorder);
+        this(sessionKey, userText, arguments, historyText, voices, files, List.of(),
+                pendingImagePromptRecorder, generatedImageRecorder);
     }
 
     public WechatToolRequest(
@@ -62,7 +66,8 @@ public record WechatToolRequest(
             String historyText,
             PendingImagePromptRecorder pendingImagePromptRecorder,
             GeneratedImageRecorder generatedImageRecorder) {
-        this(sessionKey, userText, arguments, historyText, List.of(), List.of(), List.of(), pendingImagePromptRecorder, generatedImageRecorder);
+        this(sessionKey, userText, arguments, historyText, List.of(), List.of(), List.of(),
+                pendingImagePromptRecorder, generatedImageRecorder);
     }
 
     public String argument(String name) {
@@ -76,9 +81,11 @@ public record WechatToolRequest(
         String value = argument(name);
         return "true".equalsIgnoreCase(value)
                 || "yes".equalsIgnoreCase(value)
+                || "y".equalsIgnoreCase(value)
                 || "1".equals(value)
                 || "是".equals(value)
-                || "需要".equals(value);
+                || "需要".equals(value)
+                || "保存".equals(value);
     }
 
     public void rememberPendingImagePrompt(String prompt) {

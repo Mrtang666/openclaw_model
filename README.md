@@ -27,6 +27,9 @@ OpenClaw 是一个基于 Java 17 + Spring Boot 的智能助手项目，支持 CL
 - 音色修改：支持筛选、试听、确认音色；用户明确确认后的音色偏好会通过微信记忆服务持久化。
 - 文件解析：支持 PDF、Word、TXT、Markdown、Excel、PPT 等文件解析和内容分块。
 - 文档生成：支持根据用户需求生成 Word、PDF、TXT、Markdown 文档并回传。
+- 知识库：支持把文本、网页或文档内容保存到个人知识库，并通过 Qdrant 向量检索按上下文问答。
+- 网页阅读：支持读取公开网页 URL，提取标题和正文，并可按用户要求保存到知识库。
+- 网页搜索：支持通过可配置搜索客户端查询互联网资料；当前推荐接入阿里百炼 WebSearch MCP。
 
 ## 2. 技术栈
 
@@ -79,7 +82,12 @@ Agent 工具调用层
   ├─ VoiceSynthesisWechatTool
   ├─ VoiceStyleWechatTool
   ├─ DocumentAnalysisWechatTool
-  └─ DocumentGenerationWechatTool
+  ├─ DocumentGenerationWechatTool
+  ├─ KnowledgeAddWechatTool
+  ├─ KnowledgeQueryWechatTool
+  ├─ KnowledgeManageWechatTool
+  ├─ WebReadWechatTool
+  └─ WebSearchWechatTool
 
 外部服务
   ├─ 阿里百炼文本大模型
@@ -278,9 +286,11 @@ src/main/java/com/example/spring/
       ├─ document/                  # 文件解析、分块、归档和文档生成
       ├─ image/                     # 图片理解
       ├─ image/generation/          # 微信端图片生成
+      ├─ knowledge/                 # 个人知识库：MySQL 元数据、DashScope Embedding、Qdrant 向量检索
       ├─ map/                       # 地点、路线、周边搜索与地图链接
       ├─ memory/                    # MySQL 记忆服务、兜底和清理任务
       ├─ model/                     # 微信入站消息模型
+      ├─ web/                       # 网页阅读、网页正文提取、网页搜索和网页缓存
       └─ voice/                     # 语音识别、语音合成、音色管理
 ```
 
@@ -291,9 +301,13 @@ src/main/resources/
   ├─ application.properties
   └─ db/migration/
       ├─ V1__create_wechat_memory_tables.sql
-      └─ V2__create_wechat_document_tables.sql
+      ├─ V2__create_wechat_document_tables.sql
+      ├─ V3__create_wechat_image_tables.sql
+      ├─ V4__create_wechat_knowledge_tables.sql
+      └─ V5__create_wechat_web_tables.sql
 
 docs/
+  ├─ COLLABORATOR_BOOTSTRAP.md
   ├─ DATABASE_SETUP.md
   ├─ DOCUMENTATION_GUIDE.md
   ├─ MAP_TOOL.md
@@ -302,6 +316,7 @@ docs/
 ```
 
 更详细的包结构说明见 [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)。
+协作者本地启动、MySQL、Qdrant、`.env`、百炼/MCP 和微信端验证步骤见 [docs/COLLABORATOR_BOOTSTRAP.md](docs/COLLABORATOR_BOOTSTRAP.md)。
 
 ## 8. 环境配置
 
@@ -343,16 +358,21 @@ DASHSCOPE_VOICE_MODEL=qwen3-asr-flash
 DASHSCOPE_TTS_BASE_URL=https://dashscope.aliyuncs.com/api/v1
 DASHSCOPE_TTS_MODEL=qwen3-tts-flash
 DASHSCOPE_TTS_VOICE=Cherry
+
+# 本地生成/归档目录
+WECHAT_IMAGE_STORAGE_DIR=data/wechat/images
+WECHAT_DOCUMENT_STORAGE_DIR=data/wechat/documents
 ```
 
 说明：
 
 - `.env` 保存真实密钥，不要提交到仓库。
-- `DASHSCOPE_BASE_URL`、`DASHSCOPE_IMAGE_BASE_URL` 这类模型 Host 和 `DASHSCOPE_API_KEY` 一样属于个人配置，应放在 `.env` 中，不要写死到代码或 `application.properties`。
+- `DASHSCOPE_BASE_URL`、`DASHSCOPE_IMAGE_BASE_URL`、`DASHSCOPE_TTS_BASE_URL`、`WEB_SEARCH_ENDPOINT` 这类 Host/Endpoint 和 `DASHSCOPE_API_KEY` 一样属于个人配置，应放在 `.env` 中，不要写死到代码里。
 - `application.properties` 中只保留环境变量占位，不保存个人 Host。
 - 图片生成、语音识别、语音合成分别使用独立配置项，便于后续替换模型。
 - `DASHSCOPE_VOICE_BASE_URL` 可以留空，默认复用 `DASHSCOPE_BASE_URL`；如果语音识别服务地址不同，再单独填写。
 - 如果本机没有 ffmpeg，可以先关闭 `AUDIO_FFMPEG_ENABLED=false`，但部分语音格式可能无法识别。
+- 项目启动后会输出一条 `OpenClaw 配置检查` 日志，只显示 Host、模型名和 Key 的脱敏状态，不会打印真实密钥。
 
 ## 9. 运行方式
 
@@ -517,3 +537,115 @@ git diff --check
 - 新增表结构时创建新的 `V3__xxx.sql`、`V4__xxx.sql`。
 - 新增工具时优先走 `WechatTool` + `WechatToolRegistry`，不要把业务逻辑堆进 `WechatConversationService`。
 - 文档统一使用中文，方便学习、汇报和团队协作。
+
+## 知识库与网页工具配置
+
+新增的知识库和网页工具只覆盖微信端 Function Calling 流程，CLI 暂不接入。
+
+本地需要先启动 Qdrant：
+
+```powershell
+docker run -d `
+  --name openclaw-qdrant `
+  -p 6333:6333 `
+  -p 6334:6334 `
+  -v qdrant_storage:/qdrant/storage `
+  qdrant/qdrant
+```
+
+浏览器访问 `http://localhost:6333/dashboard` 可以查看 Qdrant 控制台。
+
+`.env` 中需要配置：
+
+```env
+QDRANT_HOST=localhost
+QDRANT_HTTP_PORT=6333
+QDRANT_COLLECTION=openclaw_knowledge
+QDRANT_DISTANCE=Cosine
+QDRANT_VECTOR_SIZE=0
+
+DASHSCOPE_EMBEDDING_MODEL=text-embedding-v4
+DASHSCOPE_EMBEDDING_BASE_URL=${DASHSCOPE_BASE_URL}
+DASHSCOPE_EMBEDDING_API_KEY=${DASHSCOPE_API_KEY}
+
+KNOWLEDGE_CHUNK_SIZE=800
+KNOWLEDGE_CHUNK_OVERLAP=120
+KNOWLEDGE_TOP_K=5
+KNOWLEDGE_MAX_CONTEXT_CHARS=6000
+KNOWLEDGE_MIN_SCORE=0.2
+
+WEB_SEARCH_PROVIDER=bailian-mcp
+WEB_SEARCH_ENDPOINT=https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp
+WEB_SEARCH_API_KEY=${DASHSCOPE_API_KEY}
+```
+
+新增工具：
+
+- `knowledge_add`：保存文本、网页或文档内容到知识库。
+- `knowledge_query`：根据用户问题从 Qdrant 检索相关知识片段。
+- `knowledge_manage`：列出、查看、筛选、改标题、改标签、删除、批量删除和重建索引入口。
+- `web_read`：读取公开网页 URL，提取标题和正文，可保存到知识库。
+- `web_search`：通过可配置搜索客户端搜索互联网资料；当前推荐阿里百炼 WebSearch MCP。
+
+网页搜索/阅读与上下文记忆规则：
+
+- 普通 `web_search` 默认只把标题、链接、摘要和 `[来源1]` 这类引用交给本轮大模型处理，不会把网页全文写入长期上下文。
+- `web_search` 会在用户会话里临时记录最近 3 次搜索，每次最多 5 条结果。用户后续说“第二个网页详细看看”时，`web_read` 可以自动解析到刚才搜索结果里的第 2 个链接。
+- `web_read` 会临时记录最近 5 个已阅读网页。用户后续说“上一个链接”“刚才那个网页”时，可以复用最近阅读过的网页上下文。
+- 如果用户明确说“记住、保存、加入知识库、以后参考、后续回答时参考”，`web_search` 会把搜索摘要保存到知识库。
+- `web_read` 默认只读取网页并返回正文片段；如果用户表达保存/记住意图，或模型显式传入 `save_to_knowledge=true`，才会把网页正文写入知识库。
+- 后续用户说“根据之前保存的资料/知识库回答”时，Agent 会调用 `knowledge_query` 检索这些资料。
+- 普通搜索/阅读结果属于“短期资源上下文”，只辅助当前和后续几轮引用；只有明确保存后才进入长期知识库。
+
+知识库检索和入库优化：
+
+- `knowledge_query` 会先用大模型把用户问题扩展成 2-3 个检索查询，再进行多路向量检索，最后按 `document_id + chunk_index` 去重并按相关度排序。
+- `KNOWLEDGE_MIN_SCORE` 用于过滤低相关度片段，默认 `0.2`。如果知识库经常答非所问，可以适当调高；如果经常检索不到，可以适当调低。
+- 长网页、长文档或文件类内容入库时，会尽量调用文本大模型提取标题、摘要和标签；失败时自动回退到规则提取，不会中断入库。
+- 搜索结果可信度主要通过“标题 + URL + 来源 + 发布时间 + 引用编号”呈现。最终回答应尽量带上来源编号，方便用户回看。
+
+知识库管理工具说明：
+
+- `list`：列出知识资料，可按 `keyword`、`tags`、`source_type` 筛选。
+- `detail`：查看单条知识资料的元信息，需要 `document_id`。
+- `update_title`：修改知识资料标题，需要 `document_id` 和 `title`。
+- `update_tags`：修改知识资料标签，需要 `document_id` 和 `tags`。
+- `delete`：删除单条知识资料，需要 `document_id`，属于风险操作，需要二次确认。
+- `batch_delete`：按 `document_ids` 或筛选条件批量删除，属于风险操作，需要二次确认。
+- `reindex`：预留重建索引入口；当前版本没有持久化原始 chunk 全文，无法安全重建，会提示重新添加原始资料，不会假装重建成功。
+
+### 百炼 WebSearch MCP 调用流程
+
+`web_search` 在项目内部仍然是一个普通微信工具，但它的底层优先走 MCP Streamable HTTP 协议。MCP 不是普通 HTTP API，不能只 POST 一次 `tools/call`，而是需要先建立会话并初始化。
+
+```mermaid
+flowchart TD
+    A["微信用户提出搜索需求"] --> B["FunctionCallingAgentLoop 判断调用 web_search"]
+    B --> C["WebSearchWechatTool"]
+    C --> D["BailianWebSearchClient"]
+    D --> E["StreamableHttpMcpToolClient"]
+    E --> F["initialize 协商协议版本和客户端信息"]
+    F --> G["tools/list 获取 MCP Server 可用工具"]
+    G --> H["tools/call 调用 bailian_web_search"]
+    H --> I["解析 MCP 返回的搜索结果"]
+    I --> J["结果回传给大模型组织回答"]
+    J --> K["微信发送最终回复"]
+    H -. "MCP 失败或空结果" .-> L["fallback: Chat Completions enable_search"]
+    L --> I
+```
+
+终端里可以通过以下日志判断是否真正进入 MCP：
+
+```text
+MCP Streamable HTTP initialize 开始
+MCP Streamable HTTP tools/list 开始
+MCP Streamable HTTP tools/call 开始，tool=bailian_web_search
+```
+
+如果 MCP 服务端临时没有返回可解析结果，会看到：
+
+```text
+百炼 MCP WebSearch 未返回可用结果，准备 fallback 到 Chat Completions 联网搜索
+```
+
+这时微信端仍然会尽量返回联网搜索摘要，不会因为 MCP 临时失败而直接无回复。

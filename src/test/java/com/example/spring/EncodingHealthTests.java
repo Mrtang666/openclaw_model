@@ -12,46 +12,63 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class EncodingHealthTests {
 
+    private static final List<String> SOURCE_ROOTS = List.of(
+            "src/main/java",
+            "src/test/java",
+            "src/main/resources");
+
     private static final List<String> MOJIBAKE_MARKERS = List.of(
-            "�", "鈧", "€", "寰俊", "璇", "鍥剧", "鐢熸", "浣犳", "锛", "绋嶅", "娴佸", "撳",
-            "宸ュ叿", "璋冪敤", "璁″垝", "鏈敞", "宸插彂", "閫佽", "閻", "鐢", "鍨", "顏");
+            "\u951f\u65a4\u62f7",
+            "\ufffd",
+            "\u00c3",
+            "\u00c2",
+            "\u95bf",
+            "\u9428",
+            "\u9422",
+            "\u7ecb",
+            "\u934f",
+            "\u5bf0",
+            "\u7f03",
+            "\u7487",
+            "\u59af");
 
     @Test
-    void mainJavaSourcesDoNotContainCommonChineseMojibakeMarkers() throws IOException {
-        Path sourceRoot = Path.of("src/main/java");
-
-        List<String> offenders;
-        try (var paths = Files.walk(sourceRoot)) {
-            offenders = paths
-                    .filter(path -> path.toString().endsWith(".java"))
-                    .flatMap(path -> offendingLines(path).stream())
-                    .toList();
-        }
+    void projectTextFilesDoNotContainReplacementCharactersOrCommonMojibakeMarkers() throws IOException {
+        List<String> offenders = SOURCE_ROOTS.stream()
+                .map(Path::of)
+                .filter(Files::exists)
+                .flatMap(root -> textFiles(root).stream())
+                .flatMap(path -> offendingLines(path).stream())
+                .toList();
 
         assertThat(offenders).isEmpty();
     }
 
-    @Test
-    void mainJavaSourcesDoNotContainSuspiciousQuestionMarkComments() throws IOException {
-        Path sourceRoot = Path.of("src/main/java");
-
-        List<String> offenders;
-        try (var paths = Files.walk(sourceRoot)) {
-            offenders = paths
-                    .filter(path -> path.toString().endsWith(".java"))
-                    .flatMap(path -> suspiciousQuestionMarkCommentLines(path).stream())
+    private List<Path> textFiles(Path root) {
+        try (var paths = Files.walk(root)) {
+            return paths
+                    .filter(Files::isRegularFile)
+                    .filter(this::isCheckedTextFile)
                     .toList();
+        } catch (IOException exception) {
+            throw new IllegalStateException("扫描源码文件失败：" + root, exception);
         }
+    }
 
-        assertThat(offenders).isEmpty();
+    private boolean isCheckedTextFile(Path path) {
+        String name = path.getFileName().toString();
+        return name.endsWith(".java")
+                || name.endsWith(".properties")
+                || name.endsWith(".sql")
+                || name.endsWith(".md");
     }
 
     private List<String> offendingLines(Path path) {
         try {
             List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
-            return lines.stream()
-                    .filter(EncodingHealthTests::containsMojibakeMarker)
-                    .map(line -> path + " :: " + line.strip())
+            return java.util.stream.IntStream.range(0, lines.size())
+                    .filter(index -> containsMojibakeMarker(lines.get(index)))
+                    .mapToObj(index -> path + ":" + (index + 1) + " :: " + lines.get(index).strip())
                     .toList();
         } catch (IOException exception) {
             throw new IllegalStateException("读取源码文件失败：" + path, exception);
@@ -60,22 +77,5 @@ class EncodingHealthTests {
 
     private static boolean containsMojibakeMarker(String line) {
         return MOJIBAKE_MARKERS.stream().anyMatch(line::contains);
-    }
-
-    private List<String> suspiciousQuestionMarkCommentLines(Path path) {
-        try {
-            List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
-            return lines.stream()
-                    .filter(EncodingHealthTests::isSuspiciousQuestionMarkComment)
-                    .map(line -> path + " :: " + line.strip())
-                    .toList();
-        } catch (IOException exception) {
-            throw new IllegalStateException("读取源码文件失败：" + path, exception);
-        }
-    }
-
-    private static boolean isSuspiciousQuestionMarkComment(String line) {
-        String trimmed = line.stripLeading();
-        return (trimmed.startsWith("*") || trimmed.startsWith("//")) && trimmed.contains("???");
     }
 }

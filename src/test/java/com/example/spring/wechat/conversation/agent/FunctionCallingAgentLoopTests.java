@@ -256,6 +256,76 @@ class FunctionCallingAgentLoopTests {
         assertThat(imageTool.callCount).isEqualTo(2);
     }
 
+    @Test
+    void preservesMapTextAndImageFromMapTool() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        WechatToolRegistry registry = new WechatToolRegistry(List.of(new FakeMapTool()));
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(client, registry, 3);
+
+        when(client.chat(anyList(), anyList()))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "",
+                        List.of(new FunctionCallingToolCall(
+                                "call_map_1",
+                                "map_search",
+                                Map.of("operation", "multi_route"))))))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "路线已经规划完成。",
+                        List.of())));
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "规划杭州东站、西湖和灵隐寺路线",
+                "No previous context",
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                }))
+                .orElseThrow();
+
+        assertThat(reply.parts()).hasSize(2);
+        assertThat(reply.parts().get(0).text()).contains("杭州东站 → 西湖 → 灵隐寺");
+        assertThat(reply.parts().get(1).hasImage()).isTrue();
+        assertThat(reply.parts().get(1).image().fileName()).isEqualTo("route-map.png");
+    }
+
+    @Test
+    void stopsImmediatelyAndShowsMapAmbiguityInsteadOfExhaustingLoopRounds() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        WechatToolRegistry registry = new WechatToolRegistry(List.of(new FakeFailingMapTool()));
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(client, registry, 5);
+
+        when(client.chat(anyList(), anyList()))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "",
+                        List.of(new FunctionCallingToolCall(
+                                "call_map_ambiguity",
+                                "map_search",
+                                Map.of("operation", "multi_route"))))));
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "规划杭州多个地点路线",
+                "No previous context",
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                }))
+                .orElseThrow();
+
+        assertThat(reply.text())
+                .contains("地图查询失败")
+                .contains("存在歧义")
+                .doesNotContain("把需求拆短");
+        verify(client, org.mockito.Mockito.times(1)).chat(anyList(), anyList());
+    }
+
     private static final class FakeWeatherTool implements WechatTool {
 
         private boolean called;
@@ -370,6 +440,72 @@ class FunctionCallingAgentLoopTests {
                     1024,
                     1024);
             return WechatReply.ordered(List.of(WechatReply.Part.image("图片已生成", image)));
+        }
+    }
+
+    private static final class FakeMapTool implements WechatTool {
+
+        @Override
+        public String name() {
+            return "map_search";
+        }
+
+        @Override
+        public String description() {
+            return "plan route";
+        }
+
+        @Override
+        public List<String> arguments() {
+            return List.of("operation");
+        }
+
+        @Override
+        public List<WechatToolParameter> parameters() {
+            return List.of(WechatToolParameter.requiredString("operation", "map operation", "multi_route"));
+        }
+
+        @Override
+        public WechatReply execute(WechatToolRequest request) {
+            ImageGenerationResult image = new ImageGenerationResult(
+                    "route-map",
+                    "",
+                    "MAP".getBytes(),
+                    "route-map.png",
+                    "image/png",
+                    800,
+                    700);
+            return WechatReply.ordered(List.of(
+                    WechatReply.Part.text("杭州东站 → 西湖 → 灵隐寺"),
+                    WechatReply.Part.image("完整路线图", image)));
+        }
+    }
+
+    private static final class FakeFailingMapTool implements WechatTool {
+
+        @Override
+        public String name() {
+            return "map_search";
+        }
+
+        @Override
+        public String description() {
+            return "plan route";
+        }
+
+        @Override
+        public List<String> arguments() {
+            return List.of("operation");
+        }
+
+        @Override
+        public List<WechatToolParameter> parameters() {
+            return List.of(WechatToolParameter.requiredString("operation", "map operation", "multi_route"));
+        }
+
+        @Override
+        public WechatReply execute(WechatToolRequest request) {
+            return WechatReply.text("地图查询失败：地点存在歧义，请补充城市或详细地址：候选一、候选二");
         }
     }
 }

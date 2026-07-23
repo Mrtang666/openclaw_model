@@ -7,10 +7,14 @@ import com.example.spring.tool.protocol.validation.ToolCallValidator;
 import com.example.spring.wechat.bot.WechatReply;
 import com.example.spring.wechat.map.model.MapLink;
 import com.example.spring.wechat.map.model.MapOperation;
+import com.example.spring.wechat.map.model.MapMultiRouteResult;
+import com.example.spring.wechat.map.model.MapOrderPolicy;
 import com.example.spring.wechat.map.model.MapPlace;
 import com.example.spring.wechat.map.model.MapResult;
+import com.example.spring.wechat.map.model.MapRouteLeg;
 import com.example.spring.wechat.map.model.MapRouteOption;
 import com.example.spring.wechat.map.model.MapTransportMode;
+import com.example.spring.wechat.image.generation.model.ImageGenerationResult;
 import com.example.spring.wechat.map.service.MapService;
 import org.junit.jupiter.api.Test;
 
@@ -104,6 +108,63 @@ class MapWechatToolTests {
     }
 
     @Test
+    void executesMultiRouteAndReturnsTextBeforeMapImage() {
+        MapService service = mock(MapService.class);
+        MapWechatTool tool = new MapWechatTool(service);
+        MapPlace station = place("杭州东站", "杭州市上城区全福桥路2号", "120.212", "30.290");
+        MapPlace westLake = place("西湖断桥", "杭州市西湖区北山街", "120.149", "30.258");
+        MapPlace temple = place("灵隐寺", "杭州市西湖区灵隐路", "120.102", "30.240");
+        MapRouteLeg firstLeg = new MapRouteLeg(station, westLake, new MapRouteOption(
+                MapTransportMode.DRIVING, 12500, 1800, "", "0", null, List.of(), "速度优先",
+                List.of("经天城路", "进入环城北路"), List.of("120.212,30.290", "120.149,30.258")));
+        MapRouteLeg secondLeg = new MapRouteLeg(westLake, temple, new MapRouteOption(
+                MapTransportMode.DRIVING, 6800, 1440, "", "0", null, List.of(), "常规路线",
+                List.of("经北山街"), List.of("120.149,30.258", "120.102,30.240")));
+        ImageGenerationResult image = new ImageGenerationResult(
+                "route-map", "", new byte[]{1, 2, 3}, "route-map.png", "image/png", 800, 700);
+        when(service.planMultiRoute(
+                List.of("杭州东站", "西湖断桥", "灵隐寺"),
+                "杭州",
+                MapTransportMode.DRIVING,
+                MapOrderPolicy.OPTIMIZE,
+                true,
+                false,
+                true))
+                .thenReturn(new MapMultiRouteResult(
+                        "杭州东站 → 西湖断桥 → 灵隐寺",
+                        List.of(station, westLake, temple),
+                        List.of(firstLeg, secondLeg),
+                        19300,
+                        3240,
+                        "",
+                        MapTransportMode.DRIVING,
+                        MapOrderPolicy.OPTIMIZE,
+                        image,
+                        List.of("路线时间是估算值。")));
+
+        WechatReply reply = tool.execute(request(Map.of(
+                "operation", "multi_route",
+                "locations", "[\"杭州东站\",\"西湖断桥\",\"灵隐寺\"]",
+                "city", "杭州",
+                "transport_mode", "driving",
+                "order_policy", "optimize")));
+
+        assertThat(reply.parts()).hasSize(2);
+        assertThat(reply.parts().get(0).text())
+                .contains("推荐路线：杭州东站 → 西湖断桥 → 灵隐寺")
+                .contains("19.3 公里", "54 分钟", "主要经过");
+        assertThat(reply.parts().get(1).hasImage()).isTrue();
+        verify(service).planMultiRoute(
+                List.of("杭州东站", "西湖断桥", "灵隐寺"),
+                "杭州",
+                MapTransportMode.DRIVING,
+                MapOrderPolicy.OPTIMIZE,
+                true,
+                false,
+                true);
+    }
+
+    @Test
     void functionCallingSchemaContainsMapEnumsAndCapabilityBoundaries() {
         MapWechatTool tool = new MapWechatTool(mock(MapService.class));
         FunctionCallingToolSchemaConverter converter = new FunctionCallingToolSchemaConverter();
@@ -122,7 +183,10 @@ class MapWechatToolTests {
             Map<?, ?> properties = (Map<?, ?>) parameters.get("properties");
             Map<?, ?> operation = (Map<?, ?>) properties.get("operation");
             assertThat(operation.get("enum")).isEqualTo(
-                    List.of("place_search", "place_detail", "route", "nearby_search"));
+                    List.of("place_search", "place_detail", "route", "multi_route", "nearby_search"));
+            Map<?, ?> locations = (Map<?, ?>) properties.get("locations");
+            assertThat(locations.get("type")).isEqualTo("array");
+            assertThat(locations.get("items")).isEqualTo(Map.of("type", "string"));
             Map<?, ?> category = (Map<?, ?>) properties.get("category");
             assertThat(category.get("enum")).isEqualTo(List.of("all", "food", "attraction", "shopping"));
         });

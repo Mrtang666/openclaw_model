@@ -94,7 +94,7 @@ src/main/java/com/example/spring/wechat/netdisk/
 路径：
 
 ```text
-src/main/resources/db/migration/V6__create_baidu_netdisk_tables.sql
+src/main/resources/db/migration/V10__create_baidu_netdisk_tables.sql
 ```
 
 保留的数据表：

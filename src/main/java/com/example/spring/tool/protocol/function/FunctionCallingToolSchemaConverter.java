@@ -81,6 +81,9 @@ public class FunctionCallingToolSchemaConverter {
     private Map<String, Object> parameterSchema(WechatToolParameter parameter) {
         Map<String, Object> schema = new LinkedHashMap<>();
         schema.put("type", normalizeType(parameter.type()));
+        if ("array".equalsIgnoreCase(parameter.type())) {
+            schema.put("items", Map.of("type", "string"));
+        }
         if (!parameter.description().isBlank()) {
             schema.put("description", parameter.description());
         }

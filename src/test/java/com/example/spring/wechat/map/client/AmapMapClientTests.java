@@ -77,7 +77,8 @@ class AmapMapClientTests {
         server.expect(once(), requestTo(allOf(
                         containsString("/v3/direction/driving"),
                         containsString("origin=120.212,30.290"),
-                        containsString("destination=120.149,30.258"))))
+                        containsString("destination=120.149,30.258"),
+                        containsString("extensions=all"))))
                 .andRespond(withSuccess("""
                         {
                           "status": "1",
@@ -87,7 +88,11 @@ class AmapMapClientTests {
                               "distance": "12500",
                               "duration": "1800",
                               "strategy": "速度优先",
-                              "tolls": "0"
+                              "tolls": "0",
+                              "steps": [
+                                {"instruction": "沿天城路向西行驶", "polyline": "120.212,30.290;120.180,30.275"},
+                                {"instruction": "进入北山街", "polyline": "120.180,30.275;120.149,30.258"}
+                              ]
                             }]
                           }
                         }
@@ -103,7 +108,9 @@ class AmapMapClientTests {
                 "0",
                 null,
                 List.of(),
-                "速度优先"));
+                "速度优先",
+                List.of("沿天城路向西行驶", "进入北山街"),
+                List.of("120.212,30.290", "120.180,30.275", "120.149,30.258")));
         server.verify();
     }
 

@@ -8,6 +8,8 @@ import com.example.spring.exception.CommandException;
 import com.example.spring.wechat.bot.WechatBotService;
 import com.example.spring.wechat.bot.WechatBotStatus;
 import com.example.spring.wechat.bot.WechatStartResult;
+import com.example.spring.wechat.bot.multiclient.ClawBotConnectionSnapshot;
+import com.example.spring.wechat.bot.multiclient.ClawBotManagerSnapshot;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -29,7 +31,7 @@ public class WechatCommand implements Command {
 
     @Override
     public String description() {
-        return "微信接入：wechat start/status/stop";
+        return "微信接入：wechat start/status/connections/stop";
     }
 
     @Override
@@ -42,8 +44,11 @@ public class WechatCommand implements Command {
         return switch (action) {
             case "start" -> start();
             case "status" -> status();
-            case "stop" -> wechatBotService.stop();
-            default -> throw new CommandException("未知微信命令：" + action + "，用法：wechat start/status/stop");
+            case "connections" -> connections();
+            case "reconnect" -> reconnect(arguments);
+            case "stop" -> stop(arguments);
+            default -> throw new CommandException("未知微信命令：" + action
+                    + "，用法：wechat start/status/connections/stop");
         };
     }
 
@@ -70,7 +75,57 @@ public class WechatCommand implements Command {
         if (status.lastError() != null && !status.lastError().isBlank()) {
             output.append(System.lineSeparator()).append("最近错误：").append(status.lastError());
         }
+        output.append(System.lineSeparator())
+                .append("连接：").append(status.connectedCount()).append(" 在线 / ")
+                .append(status.pendingCount()).append(" 待扫码 / ")
+                .append(status.totalConnections()).append(" 总计");
         return output.toString();
+    }
+
+    private String connections() {
+        ClawBotManagerSnapshot snapshot = wechatBotService.managerSnapshot();
+        StringBuilder output = new StringBuilder()
+                .append("ClawBot 连接：")
+                .append(snapshot.connectedCount()).append(" 在线，")
+                .append(snapshot.pendingCount()).append(" 待扫码，")
+                .append(snapshot.totalConnections()).append('/').append(snapshot.maxConnections()).append(" 总连接")
+                .append(System.lineSeparator())
+                .append("处理器：").append(snapshot.activeTasks()).append(" 处理中，")
+                .append(snapshot.queuedTasks()).append(" 排队，")
+                .append(snapshot.workerThreads()).append(" 工作线程，模型并发上限 ")
+                .append(snapshot.modelMaxConcurrency());
+        for (ClawBotConnectionSnapshot connection : snapshot.connections()) {
+            output.append(System.lineSeparator())
+                    .append("- ").append(connection.connectionId())
+                    .append(" [").append(connection.state()).append('/').append(connection.processingState()).append(']')
+                    .append(" queue=").append(connection.queuedMessages())
+                    .append(" active=").append(connection.activeMessages());
+            if (connection.botId() != null && !connection.botId().isBlank()) {
+                output.append(" botId=").append(connection.botId());
+            }
+            if (connection.lastError() != null && !connection.lastError().isBlank()) {
+                output.append(" error=").append(connection.lastError());
+            }
+        }
+        return output.toString();
+    }
+
+    private String stop(List<String> arguments) {
+        if (arguments.size() == 1) {
+            return wechatBotService.stop();
+        }
+        String connectionId = arguments.get(1);
+        return wechatBotService.stopConnection(connectionId)
+                ? "微信连接已停止：" + connectionId
+                : "未找到微信连接：" + connectionId;
+    }
+
+    private String reconnect(List<String> arguments) {
+        if (arguments.size() < 2) {
+            throw new CommandException("缺少 connectionId，用法：wechat reconnect <connectionId>");
+        }
+        ClawBotConnectionSnapshot connection = wechatBotService.reconnectConnection(arguments.get(1));
+        return "已生成新的登录二维码，会话：" + connection.loginSessionId();
     }
 
     private String usage() {
@@ -78,7 +133,9 @@ public class WechatCommand implements Command {
                 用法：
                 wechat start - 启动微信扫码登录
                 wechat status - 查看微信 Bot 状态
-                wechat stop - 停止微信 Bot
+                wechat connections - 查看全部连接及处理队列
+                wechat reconnect <connectionId> - 为指定连接重新生成登录二维码
+                wechat stop [connectionId] - 停止全部或指定连接
                 """.stripTrailing();
     }
 }

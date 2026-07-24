@@ -10,6 +10,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.scheduling.annotation.EnableScheduling;
+import com.example.spring.wechat.netdisk.config.BaiduNetdiskProperties;
 
 /**
  * Spring Boot 启动类，负责启动整个 OpenClaw 应用。
@@ -21,7 +22,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         QdrantProperties.class,
         WebToolProperties.class,
         DidiMcpProperties.class,
-        WechatPayProperties.class
+        WechatPayProperties.class,
+        BaiduNetdiskProperties.class
 })
 @EnableScheduling
 public class AgentClawApplication {

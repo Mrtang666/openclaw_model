@@ -145,6 +145,12 @@ public class FunctionCallingAgentLoop {
 
                 AgentToolExecutionResult toolResult = executeTool(request, toolCall, rollingHistory, previousToolResult);
                 messages.add(FunctionCallingMessage.tool(toolCall.id(), toolResult.modelText()));
+                if ("taxi_service".equals(toolCall.name())) {
+                    // Taxi operations are explicit conversation stages. Their result either asks
+                    // for user confirmation or reports one completed action, so continuing the
+                    // model loop would repeat POI lookup, quoting, or order creation.
+                    return Optional.of(WechatReply.text(toolResult.modelText()));
+                }
                 if ("FAILED".equals(toolResult.status())) {
                     lastToolFailure = toolResult.modelText();
                     if ("map_search".equals(toolCall.name()) && requiresUserClarification(toolResult.modelText())) {

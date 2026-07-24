@@ -4,6 +4,8 @@ import com.example.spring.wechat.knowledge.config.KnowledgeProperties;
 import com.example.spring.wechat.knowledge.config.QdrantProperties;
 import com.example.spring.wechat.memory.config.WechatMemoryProperties;
 import com.example.spring.wechat.web.config.WebToolProperties;
+import com.example.spring.wechat.taxi.client.DidiMcpProperties;
+import com.example.spring.wechat.payment.config.WechatPayProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -17,7 +19,9 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         WechatMemoryProperties.class,
         KnowledgeProperties.class,
         QdrantProperties.class,
-        WebToolProperties.class
+        WebToolProperties.class,
+        DidiMcpProperties.class,
+        WechatPayProperties.class
 })
 @EnableScheduling
 public class AgentClawApplication {

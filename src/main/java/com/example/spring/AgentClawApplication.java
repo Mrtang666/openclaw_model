@@ -1,6 +1,8 @@
 package com.example.spring;
 
+import com.example.spring.config.EnvFileLoader;
 import com.example.spring.wechat.knowledge.config.KnowledgeProperties;
+import com.example.spring.wechat.netdisk.config.BaiduNetdiskProperties;
 import com.example.spring.wechat.knowledge.config.QdrantProperties;
 import com.example.spring.wechat.memory.config.WechatMemoryProperties;
 import com.example.spring.wechat.web.config.WebToolProperties;
@@ -29,6 +31,7 @@ import com.example.spring.wechat.netdisk.config.BaiduNetdiskProperties;
 public class AgentClawApplication {
 
     public static void main(String[] args) {
+        EnvFileLoader.loadDefault();
         SpringApplication.run(AgentClawApplication.class, args);
     }
 }

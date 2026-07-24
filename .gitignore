@@ -7,4 +7,5 @@ logs/
 *.log
 generated-images/
 data/
+.mysql-data/
 .worktrees/

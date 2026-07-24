@@ -20,7 +20,9 @@ OpenClaw 是一个基于 Java 17 + Spring Boot 的智能助手项目，支持 CL
 - 上下文记忆：微信端使用 MySQL 保存用户、会话、消息、状态、摘要、工具日志和明确偏好。
 - 天气查询：接入高德天气 API，并由大模型整理为自然语言回复和出行建议。
 - 地图查询：支持地点搜索与介绍、两地驾车/公共交通/步行方案、周边美食/景点/商场推荐，并提供地图导航和票务平台搜索入口。
+- 选购建议：根据商品品类、预算、用途、偏好和限制条件，提供关键参数、预算取舍、避坑项与下单检查清单，不返回具体商品链接。
 - 图片理解：支持微信图片附件、图片链接、data URI 图片，先描述图片内容，再结合后续问题对话。
+- 快递物流查询：支持按快递单号查询物流状态、最新位置和近期轨迹；部分快递公司可补充手机号后四位校验。
 - 图片生成：支持提示词优化、确认后生成、根据上下文修改图片，并发送图片给微信用户。
 - 语音识别：支持微信语音下载、格式检测、必要时 ffmpeg 转码，然后调用 ASR。
 - 语音合成：支持把指定文本或上一轮回答转成语音文件发送，长文本会自动拆段。
@@ -288,6 +290,8 @@ src/main/java/com/example/spring/
       ├─ image/generation/          # 微信端图片生成
       ├─ knowledge/                 # 个人知识库：MySQL 元数据、DashScope Embedding、Qdrant 向量检索
       ├─ map/                       # 地点、路线、周边搜索与地图链接
+      ├─ commerce/advice/           # 中立选购建议、预算与品类规则
+      ├─ commerce/logistics/        # 快递物流查询、领域模型与客户端
       ├─ memory/                    # MySQL 记忆服务、兜底和清理任务
       ├─ model/                     # 微信入站消息模型
       ├─ web/                       # 网页阅读、网页正文提取、网页搜索和网页缓存
@@ -310,8 +314,10 @@ docs/
   ├─ COLLABORATOR_BOOTSTRAP.md
   ├─ DATABASE_SETUP.md
   ├─ DOCUMENTATION_GUIDE.md
+  ├─ LOGISTICS_TRACK_TOOL.md
   ├─ MAP_TOOL.md
   ├─ PROJECT_STRUCTURE.md
+  ├─ SHOPPING_ADVICE_TOOL.md
   └─ sql/create_database.sql
 ```
 
@@ -345,6 +351,10 @@ AMAP_WEATHER_KEY=你的高德Web服务Key
 # 高德地图工具；留空时自动复用 AMAP_WEATHER_KEY
 AMAP_MAP_KEY=
 AMAP_MAP_STATIC_IMAGE_ENABLED=true
+
+# 快递100物流查询
+KUAIDI100_CUSTOMER=你的快递100企业接口Customer
+KUAIDI100_KEY=你的快递100企业接口Key
 
 # 阿里百炼
 DASHSCOPE_API_KEY=你的DashScope API Key
@@ -426,6 +436,20 @@ exit
 用户：帮我推荐西湖附近的美食和景点，景点有票的话给我购票入口。
 系统：调用地图周边搜索；景点只提供第三方票务平台搜索入口，实时价格和余票以平台页面为准。
 ```
+
+```text
+用户：预算 500 元以内，空气炸锅应该关注哪些参数，有哪些常见坑？
+系统：调用 shopping_advice，根据预算和品类提供选购指标、取舍建议、避坑项与下单检查清单。
+```
+
+```text
+用户：先找西湖附近适合露营的地方，再推荐一套 800 元以内的露营装备。
+系统：先调用 map_search 查询附近地点，再调用 shopping_advice，结合地点、预算和露营场景给出装备选购建议。
+```
+
+选购工具参数、能力边界和 Function Calling JSON 示例见 [选购建议工具说明](docs/SHOPPING_ADVICE_TOOL.md)。
+
+物流工具参数、能力边界和 Function Calling JSON 示例见 [快递物流查询工具说明](docs/LOGISTICS_TRACK_TOOL.md)。
 
 ```text
 用户：帮我生成一张赛博朋克风格的橘猫图片

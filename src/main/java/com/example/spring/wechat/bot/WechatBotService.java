@@ -210,7 +210,8 @@ public class WechatBotService {
         boolean hasImages = message.images() != null && !message.images().isEmpty();
         boolean hasVoices = message.voices() != null && !message.voices().isEmpty();
         boolean hasFiles = message.files() != null && !message.files().isEmpty();
-        if (!hasText && !hasImages && !hasVoices && !hasFiles) {
+        boolean hasVideos = message.videos() != null && !message.videos().isEmpty();
+        if (!hasText && !hasImages && !hasVoices && !hasFiles && !hasVideos) {
             return;
         }
 
@@ -223,7 +224,7 @@ public class WechatBotService {
                 hasVoices ? message.voices().size() : 0,
                 hasFiles ? message.files().size() : 0);
         try {
-            String thinkingMessage = thinkingMessage(text, hasImages, hasVoices, hasFiles);
+            String thinkingMessage = thinkingMessage(text, hasImages, hasVoices, hasFiles, hasVideos);
             if (thinkingMessage != null) {
                 sendText(activeClient, message.fromUserId(), thinkingMessage);
             }
@@ -243,8 +244,8 @@ public class WechatBotService {
         }
     }
 
-    private String thinkingMessage(String text, boolean hasImages, boolean hasVoices, boolean hasFiles) {
-        if (hasImages || hasVoices || hasFiles) {
+    private String thinkingMessage(String text, boolean hasImages, boolean hasVoices, boolean hasFiles, boolean hasVideos) {
+        if (hasImages || hasVoices || hasFiles || hasVideos) {
             return THINKING_MESSAGE;
         }
         if (text == null || text.isBlank() || text.startsWith("/")) {

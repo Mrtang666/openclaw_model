@@ -1,12 +1,9 @@
 package com.example.spring.wechat.conversation.tools;
 
-
-/**
- * CLI 工具封装层，负责统一封装本地工具能力。
- */
-import com.example.spring.wechat.model.WechatIncomingVoice;
 import com.example.spring.wechat.model.WechatIncomingFile;
 import com.example.spring.wechat.model.WechatIncomingImage;
+import com.example.spring.wechat.model.WechatIncomingVideo;
+import com.example.spring.wechat.model.WechatIncomingVoice;
 
 import java.util.List;
 import java.util.Map;
@@ -19,6 +16,7 @@ public record WechatToolRequest(
         List<WechatIncomingVoice> voices,
         List<WechatIncomingFile> files,
         List<WechatIncomingImage> images,
+        List<WechatIncomingVideo> videos,
         PendingImagePromptRecorder pendingImagePromptRecorder,
         GeneratedImageRecorder generatedImageRecorder) {
 
@@ -30,6 +28,7 @@ public record WechatToolRequest(
         voices = voices == null ? List.of() : List.copyOf(voices);
         files = files == null ? List.of() : List.copyOf(files);
         images = images == null ? List.of() : List.copyOf(images);
+        videos = videos == null ? List.of() : List.copyOf(videos);
     }
 
     public WechatToolRequest(
@@ -40,7 +39,7 @@ public record WechatToolRequest(
             List<WechatIncomingVoice> voices,
             PendingImagePromptRecorder pendingImagePromptRecorder,
             GeneratedImageRecorder generatedImageRecorder) {
-        this(sessionKey, userText, arguments, historyText, voices, List.of(), List.of(), pendingImagePromptRecorder, generatedImageRecorder);
+        this(sessionKey, userText, arguments, historyText, voices, List.of(), List.of(), List.of(), pendingImagePromptRecorder, generatedImageRecorder);
     }
 
     public WechatToolRequest(
@@ -52,7 +51,20 @@ public record WechatToolRequest(
             List<WechatIncomingFile> files,
             PendingImagePromptRecorder pendingImagePromptRecorder,
             GeneratedImageRecorder generatedImageRecorder) {
-        this(sessionKey, userText, arguments, historyText, voices, files, List.of(), pendingImagePromptRecorder, generatedImageRecorder);
+        this(sessionKey, userText, arguments, historyText, voices, files, List.of(), List.of(), pendingImagePromptRecorder, generatedImageRecorder);
+    }
+
+    public WechatToolRequest(
+            String sessionKey,
+            String userText,
+            Map<String, String> arguments,
+            String historyText,
+            List<WechatIncomingVoice> voices,
+            List<WechatIncomingFile> files,
+            List<WechatIncomingImage> images,
+            PendingImagePromptRecorder pendingImagePromptRecorder,
+            GeneratedImageRecorder generatedImageRecorder) {
+        this(sessionKey, userText, arguments, historyText, voices, files, images, List.of(), pendingImagePromptRecorder, generatedImageRecorder);
     }
 
     public WechatToolRequest(
@@ -62,7 +74,7 @@ public record WechatToolRequest(
             String historyText,
             PendingImagePromptRecorder pendingImagePromptRecorder,
             GeneratedImageRecorder generatedImageRecorder) {
-        this(sessionKey, userText, arguments, historyText, List.of(), List.of(), List.of(), pendingImagePromptRecorder, generatedImageRecorder);
+        this(sessionKey, userText, arguments, historyText, List.of(), List.of(), List.of(), List.of(), pendingImagePromptRecorder, generatedImageRecorder);
     }
 
     public String argument(String name) {
@@ -77,8 +89,8 @@ public record WechatToolRequest(
         return "true".equalsIgnoreCase(value)
                 || "yes".equalsIgnoreCase(value)
                 || "1".equals(value)
-                || "是".equals(value)
-                || "需要".equals(value);
+                || "鏄?".equals(value)
+                || "闇€瑕?".equals(value);
     }
 
     public void rememberPendingImagePrompt(String prompt) {
@@ -91,6 +103,10 @@ public record WechatToolRequest(
         if (generatedImageRecorder != null) {
             generatedImageRecorder.record(userText, prompt);
         }
+    }
+
+    public boolean hasVideos() {
+        return !videos.isEmpty();
     }
 
     @FunctionalInterface

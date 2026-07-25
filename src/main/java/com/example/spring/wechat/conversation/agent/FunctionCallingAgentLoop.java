@@ -246,6 +246,7 @@ public class FunctionCallingAgentLoop {
                     List.of(),
                     agentRequest.files(),
                     agentRequest.images(),
+                    agentRequest.videos(),
                     agentRequest.pendingImagePromptRecorder(),
                     agentRequest.generatedImageRecorder());
             WechatReply reply = toolRegistry.execute(toolCall.name(), request);

@@ -26,6 +26,7 @@ import com.example.spring.wechat.image.archive.ImageReferenceSemanticResolver;
 import com.example.spring.wechat.model.WechatIncomingMessage;
 import com.example.spring.wechat.model.WechatIncomingFile;
 import com.example.spring.wechat.model.WechatIncomingImage;
+import com.example.spring.wechat.model.WechatIncomingVideo;
 import com.example.spring.wechat.model.WechatIncomingVoice;
 import com.example.spring.wechat.conversation.tools.WechatToolRegistry;
 import com.example.spring.wechat.conversation.tools.WechatToolRequest;
@@ -93,6 +94,8 @@ public class WechatConversationService {
     private FunctionCallingAgentLoop functionCallingAgentLoop;
     private String toolCallingMode = "prompt-json";
     private final Map<String, WechatConversationMemory> memories = new ConcurrentHashMap<>();
+    private final Map<String, List<WechatIncomingVideo>> pendingVideos = new ConcurrentHashMap<>();
+    private final Map<String, List<WechatIncomingVideo>> lastVideos = new ConcurrentHashMap<>();
 
     @Autowired
     public WechatConversationService(
@@ -279,6 +282,35 @@ public class WechatConversationService {
         try {
             if (message.hasVoices()) {
                 return handleVoiceMessage(sessionKey, message);
+            }
+
+            if (message.hasVideos()) {
+                String rawText = message.text() == null ? "" : message.text().strip();
+                lastVideos.put(sessionKey, message.videos());
+                if (rawText.isBlank()) {
+                    pendingVideos.put(sessionKey, message.videos());
+                    String reply = buildVideoRequirementPrompt(message.videos());
+                    memoryFor(sessionKey).record("发送视频", reply);
+                    rememberAssistantReply(sessionKey, reply);
+                    return WechatReply.text(reply);
+                }
+                return handleVideoUnderstand(sessionKey, rawText, message.videos());
+            }
+
+            String pendingVideoText = message.text() == null ? "" : message.text().strip();
+            if (!pendingVideoText.isBlank() && pendingVideos.containsKey(sessionKey)) {
+                List<WechatIncomingVideo> videos = pendingVideos.remove(sessionKey);
+                if (videos != null && !videos.isEmpty()) {
+                    lastVideos.put(sessionKey, videos);
+                    return handleVideoUnderstand(sessionKey, pendingVideoText, videos);
+                }
+            }
+
+            if (!pendingVideoText.isBlank() && referencesVideoResource(pendingVideoText) && lastVideos.containsKey(sessionKey)) {
+                List<WechatIncomingVideo> videos = lastVideos.get(sessionKey);
+                if (videos != null && !videos.isEmpty()) {
+                    return handleVideoUnderstand(sessionKey, pendingVideoText, videos);
+                }
             }
 
             if (message.hasFiles()) {
@@ -754,6 +786,10 @@ public class WechatConversationService {
         if (!imageContext.isBlank()) {
             history.append(imageContext).append('\n');
         }
+        String videoContext = videoContext(sessionKey);
+        if (!videoContext.isBlank()) {
+            history.append(videoContext).append('\n');
+        }
         if (turns.isEmpty()) {
             return history.isEmpty() ? "?" : history.toString().strip();
         }
@@ -775,9 +811,14 @@ public class WechatConversationService {
 
     private String conversationContext(String sessionKey) {
         if (memoryContextBuilder != null) {
-            return memoryContextBuilder.build(
+            String context = memoryContextBuilder.build(
                     memoryFor(sessionKey),
                     imageArchiveService.imageResourceContext(sessionKey));
+            String videoContext = videoContext(sessionKey);
+            if (!videoContext.isBlank()) {
+                return (context + '\n' + videoContext).strip();
+            }
+            return context;
         }
         WechatConversationMemory memory = memoryFor(sessionKey);
         StringBuilder context = new StringBuilder();
@@ -851,6 +892,20 @@ public class WechatConversationService {
                 """.formatted(imageText).strip();
     }
 
+    private String buildVideoRequirementPrompt(List<WechatIncomingVideo> videos) {
+        int count = videos == null ? 0 : videos.size();
+        String videoText = count <= 1 ? "这个视频" : "这 %d 个视频".formatted(count);
+        return """
+                我已经收到%s。
+
+                你想让我怎么处理？可以直接回复：
+                1. 描述视频内容
+                2. 深度分析视频
+                3. 提取关键信息
+                4. 按你的问题自定义分析
+                """.formatted(videoText).strip();
+    }
+
     private boolean referencesImageResource(String text) {
         if (text == null || text.isBlank()) {
             return false;
@@ -878,6 +933,28 @@ public class WechatConversationService {
                 || value.contains("picture");
     }
 
+    private boolean referencesVideoResource(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String value = text.strip().toLowerCase(java.util.Locale.ROOT);
+        return value.contains("视频")
+                || value.contains("录像")
+                || value.contains("短片")
+                || value.contains("刚才")
+                || value.contains("刚刚")
+                || value.contains("上一个")
+                || value.contains("前面")
+                || value.contains("这段")
+                || value.contains("画面")
+                || value.contains("镜头")
+                || value.contains("动作")
+                || value.contains("场景")
+                || value.contains("人物")
+                || value.contains("里面")
+                || value.contains("video");
+    }
+
     private boolean containsPendingImage(List<ArchivedWechatImage> images) {
         return images != null && images.stream()
                 .anyMatch(image -> image != null && "PENDING".equalsIgnoreCase(image.status()));
@@ -892,6 +969,30 @@ public class WechatConversationService {
         memory.lastFileName().ifPresent(context::append);
         memory.lastFileFormat().ifPresent(format -> context.append("，类型：").append(format));
         memory.lastFileSummary().ifPresent(summary -> context.append('\n').append("文件摘要：").append(summary));
+        return context.toString().strip();
+    }
+
+    private String videoContext(String sessionKey) {
+        List<WechatIncomingVideo> videos = lastVideos.get(sessionKey);
+        if (videos == null || videos.isEmpty()) {
+            return "";
+        }
+        StringBuilder context = new StringBuilder("当前可引用视频资源：共 ")
+                .append(videos.size())
+                .append(" 个。");
+        for (int i = 0; i < Math.min(videos.size(), 3); i++) {
+            WechatIncomingVideo video = videos.get(i);
+            if (video == null) {
+                continue;
+            }
+            context.append('\n')
+                    .append("- 视频")
+                    .append(i + 1)
+                    .append("：")
+                    .append(video.fileName())
+                    .append("，大小：")
+                    .append(video.size() == null ? "未知" : video.size() + " bytes");
+        }
         return context.toString().strip();
     }
 
@@ -942,6 +1043,27 @@ public class WechatConversationService {
                 .map(String::strip)
                 .distinct()
                 .toList();
+    }
+
+    private WechatReply handleVideoUnderstand(String sessionKey, String text, List<WechatIncomingVideo> videos) {
+        if (wechatToolRegistry == null || !wechatToolRegistry.contains("video_understand")) {
+            return WechatReply.text("视频分析服务暂未启用。");
+        }
+
+        WechatToolRequest request = new WechatToolRequest(
+                sessionKey,
+                text,
+                Map.of("custom_prompt", text),
+                historyText(sessionKey),
+                List.of(),
+                List.of(),
+                List.of(),
+                videos,
+                (userText, prompt) -> memoryFor(sessionKey).recordPendingImagePrompt(userText, prompt),
+                (userText, prompt) -> memoryFor(sessionKey).recordImage(userText, prompt));
+        WechatReply reply = wechatToolRegistry.execute("video_understand", request);
+        rememberPlannedReply(sessionKey, text, reply);
+        return reply;
     }
 
     private WechatReply handleVoiceMessage(String sessionKey, WechatIncomingMessage message) {
@@ -1472,7 +1594,15 @@ public class WechatConversationService {
     }
 
     private boolean acceptWechatMessage(String sessionKey, WechatIncomingMessage message) {
-        String contentType = message.hasVoices() ? "VOICE" : message.hasImages() ? "IMAGE" : message.hasFiles() ? "FILE" : "TEXT";
+        String contentType = message.hasVoices()
+                ? "VOICE"
+                : message.hasVideos()
+                ? "VIDEO"
+                : message.hasImages()
+                ? "IMAGE"
+                : message.hasFiles()
+                ? "FILE"
+                : "TEXT";
         boolean accepted = wechatMemoryService.acceptIncoming(
                 sessionKey,
                 message.messageId(),

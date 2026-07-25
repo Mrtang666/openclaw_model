@@ -6,6 +6,7 @@ public enum MapOperation {
     PLACE_SEARCH("place_search"),
     PLACE_DETAIL("place_detail"),
     ROUTE("route"),
+    MULTI_ROUTE("multi_route"),
     NEARBY_SEARCH("nearby_search");
 
     private final String value;

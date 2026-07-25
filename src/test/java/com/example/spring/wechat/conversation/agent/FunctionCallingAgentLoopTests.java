@@ -26,6 +26,22 @@ import static org.mockito.Mockito.when;
 class FunctionCallingAgentLoopTests {
 
     @Test
+    void taxiToolResultEndsCurrentAgentTurnWithoutAnotherModelRound() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        FakeTaxiTool taxi = new FakeTaxiTool();
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(client, new WechatToolRegistry(List.of(taxi)), 5);
+        when(client.chat(anyList(), anyList())).thenReturn(Optional.of(new FunctionCallingModelResponse("",
+                List.of(new FunctionCallingToolCall("taxi-1", "taxi_service", Map.of("operation", "open_didi_app"))))));
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest("user-1", "打开滴滴 1", "报价编号 quote-1",
+                List.of(), (a,b)->{}, (a,b)->{}, (a,b,c,d)->{})).orElseThrow();
+
+        assertThat(reply.text()).contains("滴滴链接");
+        assertThat(taxi.callCount).isEqualTo(1);
+        verify(client, org.mockito.Mockito.times(1)).chat(anyList(), anyList());
+    }
+
+    @Test
     void executesToolCallsReturnsToolResultToModelAndUsesFinalAssistantAnswer() {
         DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
         WechatToolRegistry registry = new WechatToolRegistry(List.of(new FakeWeatherTool()));
@@ -256,6 +272,44 @@ class FunctionCallingAgentLoopTests {
         assertThat(imageTool.callCount).isEqualTo(2);
     }
 
+    @Test
+    void returnsLastToolFailureInsteadOfGenericMaxLoopMessageWhenToolKeepsFailing() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        WechatToolRegistry registry = new WechatToolRegistry(List.of(new FakeFailingWebSearchTool()));
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(client, registry, 5);
+
+        when(client.chat(anyList(), anyList()))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "",
+                        List.of(new FunctionCallingToolCall(
+                                "call_search_1",
+                                "web_search",
+                                Map.of("query", "Qdrant Java 接入方式"))))))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "",
+                        List.of(new FunctionCallingToolCall(
+                                "call_search_2",
+                                "web_search",
+                                Map.of("query", "Qdrant Java 接入方式"))))));
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "帮我搜索Qdrant Java 接入方式",
+                "No previous context",
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                }))
+                .orElseThrow();
+
+        assertThat(reply.text()).contains("工具执行失败", "百炼 WebSearch 未返回可用搜索结果");
+        assertThat(reply.text()).doesNotContain("步骤比较多");
+        verify(client, org.mockito.Mockito.times(2)).chat(anyList(), anyList());
+    }
+
     private static final class FakeWeatherTool implements WechatTool {
 
         private boolean called;
@@ -371,5 +425,42 @@ class FunctionCallingAgentLoopTests {
                     1024);
             return WechatReply.ordered(List.of(WechatReply.Part.image("图片已生成", image)));
         }
+    }
+
+    private static final class FakeFailingWebSearchTool implements WechatTool {
+
+        @Override
+        public String name() {
+            return "web_search";
+        }
+
+        @Override
+        public String description() {
+            return "search web";
+        }
+
+        @Override
+        public List<String> arguments() {
+            return List.of("query");
+        }
+
+        @Override
+        public List<WechatToolParameter> parameters() {
+            return List.of(WechatToolParameter.requiredString("query", "search query", "Qdrant"));
+        }
+
+        @Override
+        public WechatReply execute(WechatToolRequest request) {
+            throw new RuntimeException("百炼 WebSearch 未返回可用搜索结果");
+        }
+    }
+
+    private static final class FakeTaxiTool implements WechatTool {
+        private int callCount;
+        public String name(){return "taxi_service";}
+        public String description(){return "taxi";}
+        public List<String> arguments(){return List.of("operation");}
+        public List<WechatToolParameter> parameters(){return List.of(WechatToolParameter.requiredString("operation","operation","open_didi_app"));}
+        public WechatReply execute(WechatToolRequest request){callCount++;return WechatReply.text("滴滴链接：https://v.didi.cn/test");}
     }
 }

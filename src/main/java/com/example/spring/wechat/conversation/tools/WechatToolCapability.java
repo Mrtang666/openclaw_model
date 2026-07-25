@@ -5,8 +5,9 @@ import java.util.List;
 /**
  * 微信工具能力边界说明。
  *
- * <p>它用于告诉大模型：工具能做什么、不能做什么、缺少哪些信息时要追问，以及执行后会产生什么输出。
- * 这些说明会被拼入 Function Calling 的工具描述中，降低模型误调用工具或参数不完整的概率。</p>
+ * <p>它用于告诉大模型：工具能做什么、不能做什么、缺少哪些信息时要追问，
+ * 以及执行后会产生什么输出。这些说明会被拼入 Function Calling 的工具描述中，
+ * 用来降低模型误调用工具或参数不完整的概率。</p>
  */
 public record WechatToolCapability(
         String summary,

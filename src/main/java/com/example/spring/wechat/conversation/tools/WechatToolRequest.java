@@ -39,7 +39,8 @@ public record WechatToolRequest(
             List<WechatIncomingVoice> voices,
             PendingImagePromptRecorder pendingImagePromptRecorder,
             GeneratedImageRecorder generatedImageRecorder) {
-        this(sessionKey, userText, arguments, historyText, voices, List.of(), List.of(), List.of(), pendingImagePromptRecorder, generatedImageRecorder);
+        this(sessionKey, userText, arguments, historyText, voices, List.of(), List.of(), List.of(),
+                pendingImagePromptRecorder, generatedImageRecorder);
     }
 
     public WechatToolRequest(
@@ -51,7 +52,8 @@ public record WechatToolRequest(
             List<WechatIncomingFile> files,
             PendingImagePromptRecorder pendingImagePromptRecorder,
             GeneratedImageRecorder generatedImageRecorder) {
-        this(sessionKey, userText, arguments, historyText, voices, files, List.of(), List.of(), pendingImagePromptRecorder, generatedImageRecorder);
+        this(sessionKey, userText, arguments, historyText, voices, files, List.of(), List.of(),
+                pendingImagePromptRecorder, generatedImageRecorder);
     }
 
     public WechatToolRequest(
@@ -64,7 +66,8 @@ public record WechatToolRequest(
             List<WechatIncomingImage> images,
             PendingImagePromptRecorder pendingImagePromptRecorder,
             GeneratedImageRecorder generatedImageRecorder) {
-        this(sessionKey, userText, arguments, historyText, voices, files, images, List.of(), pendingImagePromptRecorder, generatedImageRecorder);
+        this(sessionKey, userText, arguments, historyText, voices, files, images, List.of(),
+                pendingImagePromptRecorder, generatedImageRecorder);
     }
 
     public WechatToolRequest(
@@ -74,7 +77,8 @@ public record WechatToolRequest(
             String historyText,
             PendingImagePromptRecorder pendingImagePromptRecorder,
             GeneratedImageRecorder generatedImageRecorder) {
-        this(sessionKey, userText, arguments, historyText, List.of(), List.of(), List.of(), List.of(), pendingImagePromptRecorder, generatedImageRecorder);
+        this(sessionKey, userText, arguments, historyText, List.of(), List.of(), List.of(), List.of(),
+                pendingImagePromptRecorder, generatedImageRecorder);
     }
 
     public String argument(String name) {
@@ -88,9 +92,11 @@ public record WechatToolRequest(
         String value = argument(name);
         return "true".equalsIgnoreCase(value)
                 || "yes".equalsIgnoreCase(value)
+                || "y".equalsIgnoreCase(value)
                 || "1".equals(value)
-                || "鏄?".equals(value)
-                || "闇€瑕?".equals(value);
+                || "\u662f".equals(value)
+                || "\u9700\u8981".equals(value)
+                || "\u4fdd\u5b58".equals(value);
     }
 
     public void rememberPendingImagePrompt(String prompt) {

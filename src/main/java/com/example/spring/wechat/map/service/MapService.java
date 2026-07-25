@@ -1,30 +1,47 @@
 package com.example.spring.wechat.map.service;
 
 import com.example.spring.wechat.map.client.MapClient;
+import com.example.spring.wechat.map.client.MapStaticImageClient;
 import com.example.spring.wechat.map.model.MapLink;
+import com.example.spring.wechat.map.model.MapMultiRouteResult;
 import com.example.spring.wechat.map.model.MapNearbyCategory;
 import com.example.spring.wechat.map.model.MapOperation;
+import com.example.spring.wechat.map.model.MapOrderPolicy;
 import com.example.spring.wechat.map.model.MapPlace;
 import com.example.spring.wechat.map.model.MapResult;
+import com.example.spring.wechat.map.model.MapRouteLeg;
 import com.example.spring.wechat.map.model.MapRouteOption;
 import com.example.spring.wechat.map.model.MapServiceException;
 import com.example.spring.wechat.map.model.MapTransportMode;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 public class MapService {
 
     private static final int DEFAULT_RESULT_LIMIT = 5;
+    private static final int MAX_MULTI_ROUTE_PLACES = 12;
 
     private final MapClient mapClient;
+    private final MapStaticImageClient mapStaticImageClient;
 
     public MapService(MapClient mapClient) {
+        this(mapClient, null);
+    }
+
+    @Autowired
+    public MapService(MapClient mapClient, MapStaticImageClient mapStaticImageClient) {
         this.mapClient = mapClient;
+        this.mapStaticImageClient = mapStaticImageClient;
     }
 
     public MapResult searchPlaces(String query, String city) {
@@ -109,6 +126,89 @@ public class MapService {
                 notices);
     }
 
+    public MapMultiRouteResult planMultiRoute(
+            List<String> locationQueries,
+            String city,
+            MapTransportMode mode,
+            MapOrderPolicy orderPolicy,
+            boolean fixedEnd,
+            boolean roundTrip,
+            boolean includeMapImage) {
+        List<String> queries = cleanLocations(locationQueries);
+        if (queries.size() < 2) {
+            throw new MapServiceException("多地点路线至少需要两个地点");
+        }
+        if (queries.size() > MAX_MULTI_ROUTE_PLACES) {
+            throw new MapServiceException("一次最多规划 " + MAX_MULTI_ROUTE_PLACES + " 个地点");
+        }
+
+        List<MapPlace> places = queries.stream()
+                .map(query -> resolvePlace(query, city, "地点"))
+                .toList();
+        MapOrderPolicy safeOrderPolicy = orderPolicy == null ? MapOrderPolicy.PRESERVE : orderPolicy;
+        List<MapPlace> orderedPlaces = safeOrderPolicy == MapOrderPolicy.OPTIMIZE
+                ? optimizePlaces(places, fixedEnd)
+                : new ArrayList<>(places);
+        if (roundTrip) {
+            orderedPlaces = new ArrayList<>(orderedPlaces);
+            orderedPlaces.add(orderedPlaces.get(0));
+        }
+
+        MapTransportMode safeMode = mode == null || mode == MapTransportMode.ALL
+                ? MapTransportMode.DRIVING
+                : mode;
+        List<MapRouteLeg> legs = new ArrayList<>();
+        for (int index = 0; index < orderedPlaces.size() - 1; index++) {
+            MapPlace origin = orderedPlaces.get(index);
+            MapPlace destination = orderedPlaces.get(index + 1);
+            List<MapRouteOption> routes = mapClient.planRoutes(origin, destination, safeMode);
+            MapRouteOption selected = routes.stream()
+                    .min(Comparator.comparingInt(route -> safeInteger(route.durationSeconds())))
+                    .orElseThrow(() -> new MapServiceException(
+                            "未找到可用路线：" + origin.name() + " → " + destination.name()));
+            legs.add(new MapRouteLeg(origin, destination, selected));
+        }
+
+        int totalDistance = legs.stream()
+                .map(MapRouteLeg::route)
+                .mapToInt(route -> safeInteger(route.distanceMeters()))
+                .sum();
+        int totalDuration = legs.stream()
+                .map(MapRouteLeg::route)
+                .mapToInt(route -> safeInteger(route.durationSeconds()))
+                .sum();
+        String totalCost = totalCost(legs);
+        String title = orderedPlaces.stream().map(MapPlace::name).reduce((left, right) -> left + " → " + right).orElse("多地点路线");
+
+        List<String> notices = new ArrayList<>();
+        notices.add("路线时间是地图服务估算值，实际情况会受实时路况、候车和换乘影响。");
+        if (safeOrderPolicy == MapOrderPolicy.OPTIMIZE) {
+            notices.add("地点顺序按坐标距离进行近似优化，不代表实时路况下的全局最优路线。");
+        }
+        if (mode == MapTransportMode.ALL) {
+            notices.add("多地点路线未指定交通方式时默认按驾车规划。");
+        }
+
+        var image = includeMapImage && mapStaticImageClient != null
+                ? mapStaticImageClient.renderRoute(title, orderedPlaces, legs).orElse(null)
+                : null;
+        if (includeMapImage && image == null) {
+            notices.add("本次路线图生成失败，已保留完整文本路线方案。");
+        }
+
+        return new MapMultiRouteResult(
+                title,
+                orderedPlaces,
+                legs,
+                totalDistance,
+                totalDuration,
+                totalCost,
+                safeMode,
+                safeOrderPolicy,
+                image,
+                notices);
+    }
+
     public MapResult searchNearby(
             String centerQuery,
             String city,
@@ -144,7 +244,167 @@ public class MapService {
         if (places.isEmpty()) {
             throw new MapServiceException("未找到" + label + "：" + keyword);
         }
-        return places.get(0);
+        List<MapPlace> ranked = places.stream()
+                .sorted(Comparator.comparingInt((MapPlace place) -> placeScore(place, keyword, city)).reversed())
+                .toList();
+        if (ranked.size() > 1) {
+            int firstScore = placeScore(ranked.get(0), keyword, city);
+            int secondScore = placeScore(ranked.get(1), keyword, city);
+            if (firstScore < 900
+                    && firstScore - secondScore <= 5
+                    && !ranked.get(0).name().equals(ranked.get(1).name())) {
+                throw new MapServiceException(label + "存在歧义，请补充城市或详细地址："
+                        + ranked.get(0).name() + "、" + ranked.get(1).name());
+            }
+        }
+        return ranked.get(0);
+    }
+
+    private List<String> cleanLocations(List<String> locations) {
+        if (locations == null) {
+            return List.of();
+        }
+        Set<String> unique = new LinkedHashSet<>();
+        for (String location : locations) {
+            if (location != null && !location.isBlank()) {
+                unique.add(location.strip());
+            }
+        }
+        return List.copyOf(unique);
+    }
+
+    private int placeScore(MapPlace place, String query, String city) {
+        String normalizedQuery = normalize(query);
+        String normalizedName = normalize(place.name());
+        int lengthDifference = Math.abs(normalizedName.length() - normalizedQuery.length());
+        int score;
+        if (normalizedName.equals(normalizedQuery)) {
+            score = 1000;
+        } else if (normalizedName.endsWith(normalizedQuery)) {
+            score = 760 - Math.min(lengthDifference, 200);
+        } else if (normalizedName.startsWith(normalizedQuery)) {
+            score = 720 - Math.min(lengthDifference, 200);
+        } else if (normalizedName.contains(normalizedQuery)) {
+            score = 560 - Math.min(lengthDifference, 200);
+        } else if (normalizedQuery.contains(normalizedName)) {
+            score = 420 - Math.min(lengthDifference, 200);
+        } else {
+            score = 0;
+        }
+        if (!normalize(city).isBlank() && normalize(place.city()).contains(normalize(city))) {
+            score += 50;
+        }
+        if (normalize(place.address()).contains(normalizedQuery)) {
+            score += 20;
+        }
+        boolean queryLooksLikeStation = normalizedQuery.contains("站")
+                || normalizedQuery.contains("机场")
+                || normalizedQuery.contains("码头");
+        boolean placeLooksLikeStation = normalize(place.type()).contains("车站")
+                || normalize(place.type()).contains("地铁站")
+                || normalize(place.type()).contains("机场")
+                || normalize(place.type()).contains("港口码头");
+        if (queryLooksLikeStation == placeLooksLikeStation) {
+            score += 35;
+        }
+        if (!queryLooksLikeStation && place.isAttraction()) {
+            score += 30;
+        }
+        return score;
+    }
+
+    private List<MapPlace> optimizePlaces(List<MapPlace> places, boolean fixedEnd) {
+        if (places.size() <= 2) {
+            return new ArrayList<>(places);
+        }
+        MapPlace start = places.get(0);
+        MapPlace end = fixedEnd ? places.get(places.size() - 1) : null;
+        List<MapPlace> remaining = new ArrayList<>(places.subList(1, fixedEnd ? places.size() - 1 : places.size()));
+        List<MapPlace> ordered = new ArrayList<>();
+        ordered.add(start);
+        MapPlace current = start;
+        while (!remaining.isEmpty()) {
+            MapPlace from = current;
+            MapPlace nearest = remaining.stream()
+                    .min(Comparator.comparingDouble(candidate -> aerialDistance(from, candidate)))
+                    .orElseThrow();
+            ordered.add(nearest);
+            remaining.remove(nearest);
+            current = nearest;
+        }
+        if (end != null) {
+            ordered.add(end);
+        }
+        improveWithTwoOpt(ordered, fixedEnd);
+        return ordered;
+    }
+
+    private void improveWithTwoOpt(List<MapPlace> places, boolean fixedEnd) {
+        if (places.size() < 4) {
+            return;
+        }
+        int lastMutable = fixedEnd ? places.size() - 2 : places.size() - 1;
+        boolean improved = true;
+        while (improved) {
+            improved = false;
+            for (int left = 1; left < lastMutable; left++) {
+                for (int right = left + 1; right <= lastMutable; right++) {
+                    MapPlace before = places.get(left - 1);
+                    MapPlace leftPlace = places.get(left);
+                    MapPlace rightPlace = places.get(right);
+                    MapPlace after = right + 1 < places.size() ? places.get(right + 1) : null;
+                    double current = aerialDistance(before, leftPlace)
+                            + (after == null ? 0 : aerialDistance(rightPlace, after));
+                    double swapped = aerialDistance(before, rightPlace)
+                            + (after == null ? 0 : aerialDistance(leftPlace, after));
+                    if (swapped + 0.001 < current) {
+                        java.util.Collections.reverse(places.subList(left, right + 1));
+                        improved = true;
+                    }
+                }
+            }
+        }
+    }
+
+    private double aerialDistance(MapPlace left, MapPlace right) {
+        try {
+            double lat1 = Math.toRadians(Double.parseDouble(left.latitude()));
+            double lat2 = Math.toRadians(Double.parseDouble(right.latitude()));
+            double deltaLat = lat2 - lat1;
+            double deltaLon = Math.toRadians(Double.parseDouble(right.longitude()) - Double.parseDouble(left.longitude()));
+            double a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2)
+                    + Math.cos(lat1) * Math.cos(lat2)
+                    * Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2);
+            return 6371.0 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        } catch (NumberFormatException exception) {
+            return Double.MAX_VALUE;
+        }
+    }
+
+    private String totalCost(List<MapRouteLeg> legs) {
+        BigDecimal total = BigDecimal.ZERO;
+        boolean found = false;
+        for (MapRouteLeg leg : legs) {
+            String cost = leg.route().costYuan();
+            if (cost == null || cost.isBlank()) {
+                continue;
+            }
+            try {
+                total = total.add(new BigDecimal(cost.replace("元", "").strip()));
+                found = true;
+            } catch (NumberFormatException ignored) {
+                // Some route providers may return a descriptive cost instead of a number.
+            }
+        }
+        return found ? total.stripTrailingZeros().toPlainString() : "";
+    }
+
+    private int safeInteger(Integer value) {
+        return value == null || value < 0 ? 0 : value;
+    }
+
+    private String normalize(String value) {
+        return value == null ? "" : value.replaceAll("\\s+", "").strip().toLowerCase(java.util.Locale.ROOT);
     }
 
     private List<MapLink> placeLinks(List<MapPlace> places, boolean includeTicketLinks) {

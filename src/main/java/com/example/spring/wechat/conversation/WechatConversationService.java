@@ -41,6 +41,7 @@ import com.example.spring.wechat.memory.service.WechatMemoryService;
 import com.example.spring.wechat.voice.recognition.VoiceRecognitionException;
 import com.example.spring.wechat.voice.recognition.model.VoiceRecognitionResult;
 import com.example.spring.wechat.voice.recognition.service.VoiceRecognitionService;
+import com.example.spring.wechat.web.context.WebResourceContextService;
 import com.example.spring.weather.model.WeatherResult;
 import com.example.spring.weather.service.WeatherService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -91,6 +92,7 @@ public class WechatConversationService {
     private final ImageReferenceResolver imageReferenceResolver = new ImageReferenceResolver();
     private final ImageReferenceSemanticResolver imageReferenceSemanticResolver;
     private final WechatAgentMemoryContextBuilder memoryContextBuilder = new WechatAgentMemoryContextBuilder();
+    private WebResourceContextService webResourceContextService = new WebResourceContextService();
     private FunctionCallingAgentLoop functionCallingAgentLoop;
     private String toolCallingMode = "prompt-json";
     private final Map<String, WechatConversationMemory> memories = new ConcurrentHashMap<>();
@@ -142,6 +144,14 @@ public class WechatConversationService {
         this.toolCallingMode = toolCallingMode == null || toolCallingMode.isBlank()
                 ? "prompt-json"
                 : toolCallingMode.strip().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    @Autowired
+    void configureWebResourceContextService(ObjectProvider<WebResourceContextService> provider) {
+        WebResourceContextService service = provider.getIfAvailable();
+        if (service != null) {
+            this.webResourceContextService = service;
+        }
     }
 
     private boolean isFunctionCallingMode() {
@@ -265,15 +275,24 @@ public class WechatConversationService {
     }
 
     public WechatReply handleWechat(WechatIncomingMessage message) {
-        return handleWechat(message, true);
+        return handleWechat(null, message, true);
     }
 
-    private WechatReply handleWechat(WechatIncomingMessage message, boolean persistIncomingMessage) {
+    public WechatReply handleWechat(String conversationSessionKey, WechatIncomingMessage message) {
+        return handleWechat(conversationSessionKey, message, true);
+    }
+
+    private WechatReply handleWechat(
+            String conversationSessionKey,
+            WechatIncomingMessage message,
+            boolean persistIncomingMessage) {
         if (message == null) {
             return WechatReply.text("");
         }
 
-        String sessionKey = sessionKey(message.fromUserId());
+        String sessionKey = conversationSessionKey == null || conversationSessionKey.isBlank()
+                ? sessionKey(message.fromUserId())
+                : conversationSessionKey.strip();
         if (persistIncomingMessage && !acceptWechatMessage(sessionKey, message)) {
             log.info("忽略微信重复消息，userId={}, messageId={}",
                     sessionKey, valueOrUnknown(message.messageId()));
@@ -813,12 +832,7 @@ public class WechatConversationService {
         if (memoryContextBuilder != null) {
             String context = memoryContextBuilder.build(
                     memoryFor(sessionKey),
-                    imageArchiveService.imageResourceContext(sessionKey));
-            String videoContext = videoContext(sessionKey);
-            if (!videoContext.isBlank()) {
-                return (context + '\n' + videoContext).strip();
-            }
-            return context;
+                    combinedResourceContext(sessionKey));
         }
         WechatConversationMemory memory = memoryFor(sessionKey);
         StringBuilder context = new StringBuilder();
@@ -835,6 +849,16 @@ public class WechatConversationService {
             context.append("最近对话：").append('\n').append(history).append('\n');
         }
         return context.toString().strip();
+    }
+
+    private String combinedResourceContext(String sessionKey) {
+        String imageContext = imageArchiveService.imageResourceContext(sessionKey);
+        String webContext = webResourceContextService == null ? "" : webResourceContextService.contextText(sessionKey);
+        String videoContext = videoContext(sessionKey);
+        return java.util.stream.Stream.of(imageContext, webContext, videoContext)
+                .filter(value -> value != null && !value.isBlank())
+                .map(String::strip)
+                .collect(java.util.stream.Collectors.joining(System.lineSeparator() + System.lineSeparator()));
     }
 
     private void rememberIncomingFiles(String sessionKey, List<WechatIncomingFile> files) {
@@ -1085,7 +1109,7 @@ public class WechatConversationService {
                     mergedText,
                     message.images(),
                     List.of());
-            WechatReply reply = handleWechat(syntheticMessage, false);
+            WechatReply reply = handleWechat(sessionKey, syntheticMessage, false);
             if (reply != null && reply.parts() != null && reply.parts().stream().anyMatch(WechatReply.Part::hasVoice)) {
                 return reply;
             }

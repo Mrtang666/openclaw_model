@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <title>微信 iLink 登录</title>
-  <link rel="stylesheet" href="./styles.css?v=geminai-4">
+  <link rel="stylesheet" href="./styles.css?v=clawbot-1">
 </head>
 <body>
   <main class="login-scene" aria-live="polite">
@@ -16,13 +16,43 @@
       <p class="eyebrow">iLink BOT</p>
       <h1>微信扫码登录</h1>
       <p id="status-message" class="status-message">正在准备二维码...</p>
+      <button id="add-user-button" class="add-user-button" type="button">
+        <span aria-hidden="true">＋</span> 增加用户
+      </button>
     </section>
     <div class="qr-shell" aria-label="微信登录二维码">
       <canvas id="qr-canvas"></canvas>
     </div>
     <p id="status-detail" class="status-detail">二维码保持固定，按住并拖动背景可改变粒子方向和颜色</p>
+    <aside id="connection-panel" class="connection-panel" aria-label="ClawBot 连接状态">
+      <header class="panel-header">
+        <div>
+          <p class="panel-kicker">CLAWBOT STATUS</p>
+          <h2>连接管理</h2>
+        </div>
+        <strong id="connected-count" class="connected-count">0</strong>
+      </header>
+      <div class="metric-grid">
+        <div><span>在线</span><strong id="online-count">0</strong></div>
+        <div><span>待扫码</span><strong id="pending-count">0</strong></div>
+        <div><span>处理中</span><strong id="active-count">0</strong></div>
+        <div><span>排队</span><strong id="queued-count">0</strong></div>
+      </div>
+      <div id="connection-list" class="connection-list"></div>
+      <footer id="capacity-detail" class="capacity-detail">正在读取运行状态...</footer>
+    </aside>
+    <button id="mobile-panel-toggle" class="mobile-panel-toggle" type="button" aria-expanded="false">
+      连接状态 <span id="mobile-connected-count">0</span>
+    </button>
+    <dialog id="new-login-dialog" class="login-dialog">
+      <button id="close-dialog" class="dialog-close" type="button" aria-label="关闭">×</button>
+      <p class="panel-kicker">NEW CONNECTION</p>
+      <h2>新增用户扫码登录</h2>
+      <p id="dialog-status" class="dialog-status">正在生成二维码...</p>
+      <div class="dialog-qr-shell"><canvas id="dialog-qr-canvas"></canvas></div>
+    </dialog>
   </main>
-  <script type="module" src="./app.js?v=geminai-4"></script>
+  <script type="module" src="./app.js?v=clawbot-1"></script>
 </body>
 </html>
 

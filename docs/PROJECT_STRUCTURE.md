@@ -112,6 +112,9 @@ wechat/conversation/
       ├─ WechatToolRequest.java
       ├─ ChatWechatTool.java
       ├─ WeatherWechatTool.java
+      ├─ MapWechatTool.java
+      ├─ LogisticsTrackWechatTool.java
+      ├─ ShoppingAdviceWechatTool.java
       ├─ ImageGenerationWechatTool.java
       ├─ DocumentAnalysisWechatTool.java
       ├─ DocumentGenerationWechatTool.java

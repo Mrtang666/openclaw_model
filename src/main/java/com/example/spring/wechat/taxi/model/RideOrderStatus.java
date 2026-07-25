@@ -1,0 +1,20 @@
+package com.example.spring.wechat.taxi.model;
+
+public enum RideOrderStatus {
+    DRAFT,
+    QUOTE_CREATED,
+    WAITING_CONFIRMATION,
+    ORDER_CREATING,
+    DRIVER_SEARCHING,
+    DRIVER_ASSIGNED,
+    DRIVER_ARRIVING,
+    PASSENGER_ONBOARD,
+    IN_TRIP,
+    COMPLETED,
+    PAYMENT_PENDING,
+    PAID,
+    ORDER_FAILED,
+    NO_DRIVER,
+    CANCELLED,
+    PAYMENT_FAILED
+}

@@ -5,6 +5,14 @@ const qrCanvas = document.querySelector("#qr-canvas");
 const message = document.querySelector("#status-message");
 const detail = document.querySelector("#status-detail");
 const sessionId = new URLSearchParams(location.search).get("session");
+const addUserButton = document.querySelector("#add-user-button");
+const connectionPanel = document.querySelector("#connection-panel");
+const connectionList = document.querySelector("#connection-list");
+const mobilePanelToggle = document.querySelector("#mobile-panel-toggle");
+const loginDialog = document.querySelector("#new-login-dialog");
+const dialogQrCanvas = document.querySelector("#dialog-qr-canvas");
+const dialogStatus = document.querySelector("#dialog-status");
+const closeDialogButton = document.querySelector("#close-dialog");
 const statusLabels = {
   WAITING: ["请使用微信扫描二维码", "二维码保持固定，背景粒子可以拖动交互"],
   SCANNED: ["已扫码，请在微信中确认登录", "请在手机微信中确认登录"],
@@ -31,12 +39,12 @@ function setStatus(status) {
   message.style.color = status === "LOGGED_IN" ? "#7dffbf" : (status === "ERROR" || status === "EXPIRED" ? "#ff9c9c" : "#d9f7e7");
 }
 
-function drawQr(matrix, matrixSize) {
+function drawQr(matrix, matrixSize, targetCanvas = qrCanvas) {
   if (!Array.isArray(matrix) || !matrix.length || !matrixSize) throw new Error("二维码矩阵为空");
   const size = 768;
-  const context = qrCanvas.getContext("2d", { alpha: false });
-  qrCanvas.width = size;
-  qrCanvas.height = size;
+  const context = targetCanvas.getContext("2d", { alpha: false });
+  targetCanvas.width = size;
+  targetCanvas.height = size;
   context.imageSmoothingEnabled = false;
   context.fillStyle = "#ffffff";
   context.fillRect(0, 0, size, size);
@@ -53,7 +61,7 @@ function drawQr(matrix, matrixSize) {
       }
     });
   });
-  qrCanvas.classList.add("ready");
+  targetCanvas.classList.add("ready");
 }
 
 function createParticleCloud() {
@@ -222,20 +230,20 @@ function animate() {
   renderer.render(scene, camera);
 }
 
-async function fetchSession() {
-  if (!sessionId) throw new Error("缺少登录会话");
-  const response = await fetch(`/api/wechat-login/${encodeURIComponent(sessionId)}`, { cache: "no-store" });
+async function fetchSession(targetSessionId, targetCanvas = qrCanvas) {
+  if (!targetSessionId) throw new Error("缺少登录会话");
+  const response = await fetch(`/api/wechat-login/${encodeURIComponent(targetSessionId)}`, { cache: "no-store" });
   if (!response.ok) throw new Error("登录会话不存在或已过期");
   const data = await response.json();
-  if (!qrCanvas.classList.contains("ready")) drawQr(data.matrix, data.matrixSize);
-  setStatus(data.status);
-  return data.status;
+  if (!targetCanvas.classList.contains("ready")) drawQr(data.matrix, data.matrixSize, targetCanvas);
+  return data;
 }
 
 async function poll() {
   try {
-    const status = await fetchSession();
-    if (["LOGGED_IN", "EXPIRED", "ERROR"].includes(status)) return;
+    const data = await fetchSession(sessionId);
+    setStatus(data.status);
+    if (["LOGGED_IN", "EXPIRED", "ERROR"].includes(data.status)) return;
   } catch (error) {
     message.textContent = error.message;
     detail.textContent = "请返回 IDEA 查看机器人日志";
@@ -243,6 +251,96 @@ async function poll() {
   setTimeout(poll, 1500);
 }
 
+function connectionStateLabel(connection) {
+  if (connection.state === "RUNNING") return connection.processingState === "PROCESSING" ? "处理中" : "在线";
+  if (connection.state === "WAITING_FOR_SCAN") return "待扫码";
+  if (connection.state === "ERROR") return "异常";
+  return "已停止";
+}
+
+function renderManager(snapshot) {
+  document.querySelector("#connected-count").textContent = snapshot.connectedCount;
+  document.querySelector("#mobile-connected-count").textContent = snapshot.connectedCount;
+  document.querySelector("#online-count").textContent = snapshot.connectedCount;
+  document.querySelector("#pending-count").textContent = snapshot.pendingCount;
+  document.querySelector("#active-count").textContent = snapshot.activeTasks;
+  document.querySelector("#queued-count").textContent = snapshot.queuedTasks;
+  document.querySelector("#capacity-detail").textContent =
+    `${snapshot.totalConnections}/${snapshot.maxConnections} 连接 · ${snapshot.workerThreads} 工作线程 · 模型并发 ${snapshot.modelMaxConcurrency}`;
+  addUserButton.disabled = snapshot.totalConnections >= snapshot.maxConnections || snapshot.pendingCount >= snapshot.maxPendingLogins;
+  connectionList.replaceChildren(...snapshot.connections.map((connection, index) => {
+    const item = document.createElement("article");
+    item.className = `connection-item state-${connection.state.toLowerCase()}`;
+    const title = document.createElement("div");
+    title.className = "connection-title";
+    const stateDot = document.createElement("span");
+    stateDot.className = "state-dot";
+    const name = document.createElement("strong");
+    name.textContent = connection.displayName || `用户 ${index + 1}`;
+    const state = document.createElement("em");
+    state.textContent = connectionStateLabel(connection);
+    title.append(stateDot, name, state);
+    const meta = document.createElement("p");
+    meta.textContent = `队列 ${connection.queuedMessages} · 处理中 ${connection.activeMessages}`;
+    item.append(title, meta);
+    if (connection.lastError) {
+      const error = document.createElement("p");
+      error.className = "connection-error";
+      error.textContent = connection.lastError;
+      item.append(error);
+    }
+    return item;
+  }));
+}
+
+async function pollManager() {
+  try {
+    const response = await fetch("/api/clawbot/connections", { cache: "no-store" });
+    if (response.ok) renderManager(await response.json());
+  } catch (error) {
+    document.querySelector("#capacity-detail").textContent = "状态服务暂时不可用";
+  }
+  setTimeout(pollManager, 1200);
+}
+
+async function pollDialogSession(targetSessionId) {
+  try {
+    const data = await fetchSession(targetSessionId, dialogQrCanvas);
+    const labels = statusLabels[data.status] || [data.message, ""];
+    dialogStatus.textContent = labels[0];
+    if (["LOGGED_IN", "EXPIRED", "ERROR"].includes(data.status)) return;
+  } catch (error) {
+    dialogStatus.textContent = error.message;
+    return;
+  }
+  setTimeout(() => pollDialogSession(targetSessionId), 1200);
+}
+
+async function addUser() {
+  addUserButton.disabled = true;
+  dialogQrCanvas.classList.remove("ready");
+  dialogStatus.textContent = "正在生成二维码...";
+  loginDialog.showModal();
+  try {
+    const response = await fetch("/api/clawbot/connections", { method: "POST" });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.message || "无法新增连接");
+    await pollDialogSession(body.loginSessionId);
+  } catch (error) {
+    dialogStatus.textContent = error.message;
+  } finally {
+    addUserButton.disabled = false;
+  }
+}
+
+addUserButton.addEventListener("click", addUser);
+closeDialogButton.addEventListener("click", () => loginDialog.close());
+mobilePanelToggle.addEventListener("click", () => {
+  const open = connectionPanel.classList.toggle("mobile-open");
+  mobilePanelToggle.setAttribute("aria-expanded", String(open));
+});
+
 initBackground();
 poll();
+pollManager();
 

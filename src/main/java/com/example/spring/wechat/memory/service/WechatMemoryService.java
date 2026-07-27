@@ -23,6 +23,8 @@ public interface WechatMemoryService {
 
     WechatConversationMemory memoryFor(String wechatUserId);
 
+    void startNewConversation(String wechatUserId, Instant now);
+
     void saveMemory(String wechatUserId, WechatConversationMemory memory, Instant now);
 
     void recordAssistantMessage(String wechatUserId, String content, String contentType, Instant now);

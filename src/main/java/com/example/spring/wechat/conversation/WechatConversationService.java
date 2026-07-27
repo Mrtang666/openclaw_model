@@ -74,6 +74,8 @@ public class WechatConversationService {
     private static final Logger log = LoggerFactory.getLogger(WechatConversationService.class);
     private static final int MAX_HISTORY_TURNS = 6;
     private static final String DEFAULT_SESSION_KEY = "default";
+    private static final String NEW_CONVERSATION_COMMAND = "#new";
+    private static final String NEW_CONVERSATION_CONFIRMATION = "已开启新的对话。";
 
     private final ChatService chatService;
     private final WeatherService weatherService;
@@ -293,6 +295,10 @@ public class WechatConversationService {
         String sessionKey = conversationSessionKey == null || conversationSessionKey.isBlank()
                 ? sessionKey(message.fromUserId())
                 : conversationSessionKey.strip();
+        if (isNewConversationCommand(message)) {
+            startNewConversation(sessionKey);
+            return WechatReply.text(NEW_CONVERSATION_CONFIRMATION);
+        }
         if (persistIncomingMessage && !acceptWechatMessage(sessionKey, message)) {
             log.info("忽略微信重复消息，userId={}, messageId={}",
                     sessionKey, valueOrUnknown(message.messageId()));
@@ -1637,6 +1643,21 @@ public class WechatConversationService {
             memories.put(sessionKey, wechatMemoryService.memoryFor(sessionKey));
         }
         return accepted;
+    }
+
+    private boolean isNewConversationCommand(WechatIncomingMessage message) {
+        return message != null
+                && message.text() != null
+                && NEW_CONVERSATION_COMMAND.equals(message.text().strip());
+    }
+
+    private void startNewConversation(String sessionKey) {
+        if (!DEFAULT_SESSION_KEY.equals(sessionKey)) {
+            wechatMemoryService.startNewConversation(sessionKey, java.time.Instant.now());
+        }
+        memories.remove(sessionKey);
+        pendingVideos.remove(sessionKey);
+        lastVideos.remove(sessionKey);
     }
 
     private void persistWechatMemory(String sessionKey) {

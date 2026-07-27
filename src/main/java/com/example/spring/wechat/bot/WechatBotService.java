@@ -39,6 +39,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 微信 Bot 的生命周期与消息收发入口。
@@ -54,6 +56,8 @@ public class WechatBotService {
     private static final long MEDIA_SEND_RETRY_DELAY_MS = 600;
     private static final long TEXT_CHUNK_PAUSE_MS = 50;
     private static final long VOICE_PART_PAUSE_MS = 1_000;
+    private static final Pattern URL_PATTERN = Pattern.compile("https?://\\S+");
+    private static final int MAX_LEAD_IN_LENGTH = 80;
 
     private final WechatClientFactory clientFactory;
     private final WechatMessageHandler messageHandler;
@@ -428,16 +432,238 @@ public class WechatBotService {
             return List.of();
         }
 
-        if (text.length() <= MAX_WECHAT_MESSAGE_LENGTH) {
-            return List.of(text);
+        List<String> chunks = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        for (ReplySegment segment : attachLeadIns(parseReplySegments(text))) {
+            if (segment.atomic) {
+                appendUnit(chunks, current, segment.text, true);
+                continue;
+            }
+            for (String unit : splitPlainText(segment.text)) {
+                appendUnit(chunks, current, unit, false);
+            }
+        }
+        flushChunk(chunks, current);
+        return chunks;
+    }
+
+    private static List<ReplySegment> parseReplySegments(String text) {
+        List<ReplySegment> segments = new ArrayList<>();
+        int index = 0;
+        while (index < text.length()) {
+            int fenceStart = text.indexOf("```", index);
+            Matcher urlMatcher = URL_PATTERN.matcher(text);
+            boolean hasUrl = urlMatcher.find(index);
+            int urlStart = hasUrl ? urlMatcher.start() : -1;
+
+            if (fenceStart >= 0 && (urlStart < 0 || fenceStart < urlStart)) {
+                addTextSegment(segments, text.substring(index, fenceStart));
+                int fenceEnd = text.indexOf("```", fenceStart + 3);
+                int blockEnd = fenceEnd < 0 ? text.length() : fenceEnd + 3;
+                segments.add(new ReplySegment(text.substring(fenceStart, blockEnd), true));
+                index = blockEnd;
+            } else if (hasUrl) {
+                addTextSegment(segments, text.substring(index, urlStart));
+                segments.add(new ReplySegment(text.substring(urlStart, urlMatcher.end()), true));
+                index = urlMatcher.end();
+            } else {
+                addTextSegment(segments, text.substring(index));
+                break;
+            }
+        }
+        return segments;
+    }
+
+    private static List<ReplySegment> attachLeadIns(List<ReplySegment> segments) {
+        for (int index = 1; index < segments.size(); index++) {
+            ReplySegment segment = segments.get(index);
+            ReplySegment previous = segments.get(index - 1);
+            if (!segment.atomic || previous.atomic || previous.text.isEmpty()) {
+                continue;
+            }
+
+            int leadInStart = leadInStart(previous.text);
+            if (leadInStart < 0) {
+                continue;
+            }
+
+            String leadIn = previous.text.substring(leadInStart);
+            if (leadIn.isBlank()
+                    || leadIn.strip().length() > MAX_LEAD_IN_LENGTH
+                    || endsWithSentencePunctuation(leadIn.strip())) {
+                continue;
+            }
+
+            previous.text = previous.text.substring(0, leadInStart);
+            segment.text = leadIn + segment.text;
+        }
+        return segments.stream()
+                .filter(segment -> !segment.text.isEmpty())
+                .toList();
+    }
+
+    private static int leadInStart(String text) {
+        int scanEnd = text.length();
+        while (scanEnd > 0 && isTrailingLineWhitespace(text.charAt(scanEnd - 1))) {
+            scanEnd--;
+        }
+        if (scanEnd <= 0) {
+            return -1;
         }
 
-        List<String> chunks = new ArrayList<>();
-        for (int start = 0; start < text.length(); start += MAX_WECHAT_MESSAGE_LENGTH) {
-            int end = Math.min(text.length(), start + MAX_WECHAT_MESSAGE_LENGTH);
-            chunks.add(text.substring(start, end));
+        int boundary = -1;
+        for (int index = scanEnd - 1; index >= 0; index--) {
+            if (isLeadInBoundary(text.charAt(index))) {
+                boundary = index;
+                break;
+            }
         }
-        return chunks;
+        int start = boundary + 1;
+        return text.substring(start).strip().isEmpty() ? -1 : start;
+    }
+
+    private static List<String> splitPlainText(String text) {
+        List<String> units = new ArrayList<>();
+        StringBuilder unit = new StringBuilder();
+        for (int index = 0; index < text.length(); index++) {
+            char value = text.charAt(index);
+            unit.append(value);
+            if (isStrongBoundary(value)) {
+                addPlainUnit(units, unit.toString());
+                unit.setLength(0);
+            }
+        }
+        addPlainUnit(units, unit.toString());
+        return units;
+    }
+
+    private static void addPlainUnit(List<String> units, String unit) {
+        if (unit.isEmpty()) {
+            return;
+        }
+        if (unit.length() <= MAX_WECHAT_MESSAGE_LENGTH) {
+            units.add(unit);
+            return;
+        }
+        units.addAll(splitOversizedPlainUnit(unit));
+    }
+
+    private static List<String> splitOversizedPlainUnit(String unit) {
+        List<String> units = new ArrayList<>();
+        int start = 0;
+        while (start < unit.length()) {
+            int limit = Math.min(unit.length(), start + MAX_WECHAT_MESSAGE_LENGTH);
+            if (limit == unit.length()) {
+                units.add(unit.substring(start));
+                break;
+            }
+
+            int end = weakBoundaryBefore(unit, start, limit);
+            if (end <= start) {
+                end = limit;
+            }
+            units.add(unit.substring(start, end));
+            start = end;
+        }
+        return units;
+    }
+
+    private static int weakBoundaryBefore(String value, int start, int limit) {
+        for (int index = limit - 1; index > start; index--) {
+            if (isWeakBoundary(value.charAt(index))) {
+                return index + 1;
+            }
+        }
+        return -1;
+    }
+
+    private static void appendUnit(List<String> chunks, StringBuilder current, String unit, boolean atomic) {
+        if (unit.isEmpty()) {
+            return;
+        }
+
+        if (current.length() + unit.length() <= MAX_WECHAT_MESSAGE_LENGTH) {
+            current.append(unit);
+            return;
+        }
+
+        flushChunk(chunks, current);
+        if (unit.length() <= MAX_WECHAT_MESSAGE_LENGTH || atomic) {
+            current.append(unit);
+            return;
+        }
+
+        for (String subUnit : splitOversizedPlainUnit(unit)) {
+            appendUnit(chunks, current, subUnit, false);
+        }
+    }
+
+    private static void flushChunk(List<String> chunks, StringBuilder current) {
+        if (current.isEmpty()) {
+            return;
+        }
+        chunks.add(current.toString());
+        current.setLength(0);
+    }
+
+    private static void addTextSegment(List<ReplySegment> segments, String text) {
+        if (!text.isEmpty()) {
+            segments.add(new ReplySegment(text, false));
+        }
+    }
+
+    private static boolean isStrongBoundary(char value) {
+        return value == '\n'
+                || value == '\r'
+                || value == '。'
+                || value == '！'
+                || value == '？'
+                || value == '；'
+                || value == '!'
+                || value == '?'
+                || value == ';'
+                || value == '.';
+    }
+
+    private static boolean isLeadInBoundary(char value) {
+        return isStrongBoundary(value);
+    }
+
+    private static boolean isWeakBoundary(char value) {
+        return value == '，'
+                || value == '、'
+                || value == ','
+                || value == ' '
+                || value == '\t';
+    }
+
+    private static boolean isTrailingLineWhitespace(char value) {
+        return value == '\n' || value == '\r';
+    }
+
+    private static boolean endsWithSentencePunctuation(String value) {
+        if (value.isEmpty()) {
+            return false;
+        }
+        char last = value.charAt(value.length() - 1);
+        return last == '。'
+                || last == '！'
+                || last == '？'
+                || last == '；'
+                || last == '!'
+                || last == '?'
+                || last == ';'
+                || last == '.';
+    }
+
+    private static final class ReplySegment {
+        private String text;
+        private final boolean atomic;
+
+        private ReplySegment(String text, boolean atomic) {
+            this.text = text;
+            this.atomic = atomic;
+        }
     }
 
     private void sendText(WechatClient activeClient, String userId, String chunk) {

@@ -124,6 +124,47 @@ class WechatBotServiceTests {
     }
 
     @Test
+    void splitsWechatRepliesAtCompleteSentenceBoundariesWhenPossible() {
+        String sentence = "这是一个完整句子。";
+        String reply = sentence.repeat(90);
+
+        List<String> chunks = WechatBotService.splitForWechat(reply);
+
+        assertThat(chunks).hasSizeGreaterThan(1);
+        assertThat(chunks).allMatch(chunk -> chunk.length() <= 800);
+        assertThat(String.join("", chunks)).isEqualTo(reply);
+        assertThat(chunks.subList(0, chunks.size() - 1))
+                .allMatch(chunk -> chunk.endsWith("。"));
+    }
+
+    @Test
+    void keepsUrlWithItsLeadInWhenSplittingWechatReplies() {
+        String leadIn = "参考链接：";
+        String url = "https://example.com/articles/openclaw-agent-loop?from=wechat";
+        String reply = "背景说明。".repeat(158) + "\n" + leadIn + url + "\n后续说明。";
+
+        List<String> chunks = WechatBotService.splitForWechat(reply);
+
+        assertThat(chunks).hasSizeGreaterThan(1);
+        assertThat(chunks).allMatch(chunk -> chunk.length() <= 800);
+        assertThat(String.join("", chunks)).isEqualTo(reply);
+        assertThat(chunks).anySatisfy(chunk -> assertThat(chunk).contains(leadIn + url));
+    }
+
+    @Test
+    void keepsFencedCodeBlockTogetherWhenSplittingWechatReplies() {
+        String codeBlock = "```java\nSystem.out.println(\"hello\");\n```";
+        String reply = "背景说明。".repeat(158) + "\n代码如下：\n" + codeBlock + "\n收尾说明。";
+
+        List<String> chunks = WechatBotService.splitForWechat(reply);
+
+        assertThat(chunks).hasSizeGreaterThan(1);
+        assertThat(chunks).allMatch(chunk -> chunk.length() <= 800);
+        assertThat(String.join("", chunks)).isEqualTo(reply);
+        assertThat(chunks).anySatisfy(chunk -> assertThat(chunk).contains("代码如下：\n" + codeBlock));
+    }
+
+    @Test
     void sendsGeneratedImageBackToWechat() throws Exception {
         FakeWechatClient client = new FakeWechatClient(1);
         WechatConversationService conversationService = mock(WechatConversationService.class);

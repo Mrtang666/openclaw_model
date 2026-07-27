@@ -1,0 +1,4 @@
+interface:
+  display_name: "微信外卖点餐"
+  short_description: "在微信中确认地址、选择外卖并安全完成下单支付"
+  default_prompt: "Use $wechat-food-ordering to help me order food safely in WeChat."

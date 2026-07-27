@@ -51,6 +51,7 @@ public class FunctionCallingAgentLoop {
             10. 搜索结果只是摘要，不等于网页原文；当用户要求准确出处、技术细节、对比、报告、严谨回答时，搜索后应继续阅读 1-3 个高相关网页。
             11. 普通微信回复在末尾简洁列出参考来源；用户要求“出处、引用、报告、严谨一点”时，关键结论可用 [来源1] 标注并在末尾列完整来源。
             12. 上下文里如果出现最近搜索/最近阅读资源，用户说“第二个网页、刚才那个、上一个链接”时，应结合这些资源选择对应 URL，不要要求用户重复粘贴链接。
+            13. 用户询问国内酒店、机票、火车票、景点门票、度假推荐或组合旅行规划时，优先调用 meituan_travel；缺少关键日期、城市或人数时先追问。
             """;
 
     private final DashScopeFunctionCallingClient client;
@@ -145,10 +146,11 @@ public class FunctionCallingAgentLoop {
 
                 AgentToolExecutionResult toolResult = executeTool(request, toolCall, rollingHistory, previousToolResult);
                 messages.add(FunctionCallingMessage.tool(toolCall.id(), toolResult.modelText()));
-                if ("taxi_service".equals(toolCall.name())) {
-                    // Taxi operations are explicit conversation stages. Their result either asks
-                    // for user confirmation or reports one completed action, so continuing the
-                    // model loop would repeat POI lookup, quoting, or order creation.
+                if ("taxi_service".equals(toolCall.name())
+                        || "food_delivery".equals(toolCall.name())
+                        || "meituan_travel".equals(toolCall.name())) {
+                    // These tools own their user-facing response. Continuing the model loop would
+                    // duplicate a staged action or rewrite an official provider result.
                     return Optional.of(WechatReply.text(toolResult.modelText()));
                 }
                 if ("FAILED".equals(toolResult.status())) {

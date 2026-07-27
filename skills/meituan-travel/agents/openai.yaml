@@ -1,0 +1,4 @@
+interface:
+  display_name: "美团酒旅行程"
+  short_description: "通过美团酒旅查询酒店、交通、门票并规划国内旅行行程"
+  default_prompt: "Use $meituan-travel to plan my trip with official Meituan travel results."

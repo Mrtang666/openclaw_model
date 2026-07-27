@@ -77,6 +77,13 @@ public record WechatToolRequest(
         return arguments.getOrDefault(name, "").strip();
     }
 
+    public String userId() {
+        int separator = sessionKey.lastIndexOf(':');
+        return separator < 0 || separator == sessionKey.length() - 1
+                ? sessionKey
+                : sessionKey.substring(separator + 1);
+    }
+
     public boolean booleanArgument(String name) {
         String value = argument(name);
         return "true".equalsIgnoreCase(value)

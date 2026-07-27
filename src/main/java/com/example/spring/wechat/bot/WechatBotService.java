@@ -49,7 +49,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class WechatBotService {
 
     private static final Logger log = LoggerFactory.getLogger(WechatBotService.class);
-    private static final String THINKING_MESSAGE = "[自动回复]正在生成中，请耐心等待哦~";
     private static final int MAX_WECHAT_MESSAGE_LENGTH = 800;
     private static final int MEDIA_SEND_MAX_ATTEMPTS = 3;
     private static final long MEDIA_SEND_RETRY_DELAY_MS = 600;
@@ -288,10 +287,6 @@ public class WechatBotService {
                 hasVoices ? message.voices().size() : 0,
                 hasFiles ? message.files().size() : 0);
         try {
-            String thinkingMessage = thinkingMessage(text, hasImages, hasVoices, hasFiles, hasVideos);
-            if (thinkingMessage != null) {
-                sendText(runtime.client, message.fromUserId(), thinkingMessage);
-            }
             ConversationKey key = new ConversationKey(runtime.connectionId, message.fromUserId());
             runtime.queuedMessages.incrementAndGet();
             messageDispatcher.submit(key, () -> {
@@ -310,23 +305,15 @@ public class WechatBotService {
         }
     }
 
-    private String thinkingMessage(String text, boolean hasImages, boolean hasVoices, boolean hasFiles, boolean hasVideos) {
-        if (hasImages || hasVoices || hasFiles || hasVideos) {
-            return THINKING_MESSAGE;
-        }
-        if (text == null || text.isBlank() || text.startsWith("/")) {
-            return null;
-        }
-        return THINKING_MESSAGE;
-    }
-
     private void processMessage(ClientRuntime runtime, ConversationKey key, WechatIncomingMessage message) {
         if (runtime.stopRequested || runtimes.get(runtime.connectionId) != runtime) {
             return;
         }
 
         boolean acquired = false;
+        boolean typingStarted = false;
         try {
+            typingStarted = startTyping(runtime.client, message.fromUserId());
             modelSlots.acquire();
             acquired = true;
             runtime.activeMessages.incrementAndGet();
@@ -362,10 +349,31 @@ public class WechatBotService {
                 runtime.activeMessages.decrementAndGet();
                 modelSlots.release();
             }
+            if (typingStarted) {
+                stopTyping(runtime.client, message.fromUserId());
+            }
             runtime.processingState = runtime.activeMessages.get() > 0
                     ? ClawBotProcessingState.PROCESSING
                     : ClawBotProcessingState.IDLE;
             runtime.lastActivityAt = Instant.now();
+        }
+    }
+
+    private boolean startTyping(WechatClient activeClient, String userId) {
+        try {
+            activeClient.startTyping(userId);
+            return true;
+        } catch (Exception exception) {
+            log.debug("Wechat typing start failed, userId={}, error={}", userId, rootMessage(exception));
+            return false;
+        }
+    }
+
+    private void stopTyping(WechatClient activeClient, String userId) {
+        try {
+            activeClient.stopTyping(userId);
+        } catch (Exception exception) {
+            log.debug("Wechat typing stop failed, userId={}, error={}", userId, rootMessage(exception));
         }
     }
 

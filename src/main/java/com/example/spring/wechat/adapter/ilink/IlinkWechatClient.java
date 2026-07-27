@@ -1,12 +1,24 @@
 package com.example.spring.wechat.adapter.ilink;
 
-
-/**
- * 微信 iLink 适配层，负责消息转换、下载和发送。
- */
+import com.example.spring.wechat.adapter.WechatClient;
+import com.example.spring.wechat.model.ImageSourceType;
+import com.example.spring.wechat.model.VideoSourceType;
+import com.example.spring.wechat.model.VoiceSourceType;
+import com.example.spring.wechat.model.WechatIncomingFile;
+import com.example.spring.wechat.model.WechatIncomingImage;
+import com.example.spring.wechat.model.WechatIncomingMessage;
+import com.example.spring.wechat.model.WechatIncomingVideo;
+import com.example.spring.wechat.model.WechatIncomingVoice;
+import com.example.spring.wechat.model.WechatLoginInfo;
+import com.example.spring.wechat.model.WechatLoginState;
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.login.LoginContext;
+import com.github.wechat.ilink.sdk.core.model.CDNMedia;
+import com.github.wechat.ilink.sdk.core.model.FileItem;
+import com.github.wechat.ilink.sdk.core.model.ImageItem;
 import com.github.wechat.ilink.sdk.core.model.MessageItem;
+import com.github.wechat.ilink.sdk.core.model.VideoItem;
+import com.github.wechat.ilink.sdk.core.model.VoiceItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,15 +27,6 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import com.example.spring.wechat.adapter.WechatClient;
-import com.example.spring.wechat.model.ImageSourceType;
-import com.example.spring.wechat.model.VoiceSourceType;
-import com.example.spring.wechat.model.WechatIncomingFile;
-import com.example.spring.wechat.model.WechatIncomingImage;
-import com.example.spring.wechat.model.WechatIncomingMessage;
-import com.example.spring.wechat.model.WechatIncomingVoice;
-import com.example.spring.wechat.model.WechatLoginInfo;
-import com.example.spring.wechat.model.WechatLoginState;
 
 public class IlinkWechatClient implements WechatClient {
 
@@ -68,7 +71,6 @@ public class IlinkWechatClient implements WechatClient {
             return List.of();
         }
 
-        log.debug("iLink getUpdates 拉取到 {} 条原始消息", messages.size());
         List<WechatIncomingMessage> incomingMessages = new ArrayList<>();
         for (WeixinMessage message : messages) {
             WechatIncomingMessage incoming = toIncomingMessage(message);
@@ -76,14 +78,22 @@ public class IlinkWechatClient implements WechatClient {
                 incomingMessages.add(incoming);
             }
         }
-
-        log.debug("iLink 本次映射出 {} 条消息", incomingMessages.size());
         return incomingMessages;
     }
 
     @Override
     public void sendText(String toUserId, String text) throws IOException {
         delegate.sendText(toUserId, text);
+    }
+
+    @Override
+    public void startTyping(String toUserId) throws IOException {
+        delegate.startTyping(toUserId);
+    }
+
+    @Override
+    public void stopTyping(String toUserId) throws IOException {
+        delegate.stopTyping(toUserId);
     }
 
     @Override
@@ -125,9 +135,6 @@ public class IlinkWechatClient implements WechatClient {
 
     private WechatIncomingMessage toIncomingMessage(WeixinMessage message) throws IOException {
         if (message == null || message.getFrom_user_id() == null || message.getItem_list() == null) {
-            log.debug("iLink 消息被跳过：fromUserId 或 itemList 为空，messageId={}, messageType={}",
-                    valueOrUnknown(message == null ? null : String.valueOf(message.getMessage_id())),
-                    valueOrUnknown(message == null ? null : String.valueOf(message.getMessage_type())));
             return null;
         }
 
@@ -135,9 +142,12 @@ public class IlinkWechatClient implements WechatClient {
         List<WechatIncomingImage> images = new ArrayList<>();
         List<WechatIncomingVoice> voices = new ArrayList<>();
         List<WechatIncomingFile> files = new ArrayList<>();
+        List<WechatIncomingVideo> videos = new ArrayList<>();
         int imageIndex = 0;
         int voiceIndex = 0;
         int fileIndex = 0;
+        int videoIndex = 0;
+
         for (MessageItem item : message.getItem_list()) {
             if (item == null) {
                 continue;
@@ -156,27 +166,26 @@ public class IlinkWechatClient implements WechatClient {
             if (item.getImage_item() != null) {
                 try {
                     byte[] imageBytes = delegate.downloadImageFromMessageItem(item);
-                    String sourceReference = buildSourceReference(message, imageIndex);
                     images.add(new WechatIncomingImage(
                             ImageSourceType.WECHAT_ATTACHMENT,
-                            sourceReference,
+                            buildSourceReference(message, "image", imageIndex),
                             imageBytes,
                             null,
-                            buildFileName(message, imageIndex),
+                            buildImageFileName(message, imageIndex),
                             null,
                             null,
                             null));
-                    imageIndex++;
                 } catch (Exception exception) {
                     log.warn("iLink 图片下载失败，messageId={}, fromUserId={}, error={}",
                             valueOrUnknown(String.valueOf(message.getMessage_id())),
                             valueOrUnknown(message.getFrom_user_id()),
                             rootMessage(exception));
                 }
+                imageIndex++;
             }
 
             if (item.getVoice_item() != null) {
-                String sourceReference = buildVoiceSourceReference(message, voiceIndex);
+                String sourceReference = buildSourceReference(message, "voice", voiceIndex);
                 String fileName = buildVoiceFileName(message, voiceIndex, item);
                 Integer durationMs = item.getVoice_item().getPlaytime();
                 Integer sampleRate = item.getVoice_item().getSample_rate();
@@ -215,7 +224,7 @@ public class IlinkWechatClient implements WechatClient {
             }
 
             if (item.getFile_item() != null) {
-                String sourceReference = buildFileSourceReference(message, fileIndex);
+                String sourceReference = buildSourceReference(message, "file", fileIndex);
                 String fileName = item.getFile_item().getFile_name();
                 Long size = parseLong(item.getFile_item().getLen());
                 String md5 = item.getFile_item().getMd5();
@@ -246,23 +255,62 @@ public class IlinkWechatClient implements WechatClient {
                 }
                 fileIndex++;
             }
+
+            if (item.getVideo_item() != null) {
+                String sourceReference = buildSourceReference(message, "video", videoIndex);
+                String fileName = buildVideoFileName(message, videoIndex);
+                Integer durationMs = item.getVideo_item().getPlay_length();
+                Long size = item.getVideo_item().getVideo_size();
+                String md5 = item.getVideo_item().getVideo_md5();
+                try {
+                    byte[] videoBytes = delegate.downloadVideoFromMessageItem(item);
+                    videos.add(new WechatIncomingVideo(
+                            VideoSourceType.WECHAT_ATTACHMENT,
+                            sourceReference,
+                            videoBytes,
+                            "video/mp4",
+                            fileName,
+                            size,
+                            durationMs,
+                            md5,
+                            null,
+                            null));
+                } catch (Exception exception) {
+                    log.warn("iLink 视频下载失败，messageId={}, fromUserId={}, error={}",
+                            valueOrUnknown(String.valueOf(message.getMessage_id())),
+                            valueOrUnknown(message.getFrom_user_id()),
+                            rootMessage(exception));
+                    videos.add(new WechatIncomingVideo(
+                            VideoSourceType.WECHAT_ATTACHMENT,
+                            sourceReference,
+                            null,
+                            "video/mp4",
+                            fileName,
+                            size,
+                            durationMs,
+                            md5,
+                            null,
+                            null));
+                }
+                videoIndex++;
+            }
         }
 
         String normalizedText = text.toString().strip();
-        if (normalizedText.isBlank() && images.isEmpty() && voices.isEmpty() && files.isEmpty()) {
-            log.debug("iLink 消息没有可用文本、图片、语音或文件，messageId={}", valueOrUnknown(String.valueOf(message.getMessage_id())));
+        if (normalizedText.isBlank() && images.isEmpty() && voices.isEmpty() && files.isEmpty() && videos.isEmpty()) {
             return null;
         }
 
         log.info(
-                "iLink 收到消息，messageId={}, fromUserId={}, contextToken={}, text={}, imageCount={}, voiceCount={}, fileCount={}",
+                "iLink 收到消息，messageId={}, fromUserId={}, contextToken={}, text={}, imageCount={}, voiceCount={}, fileCount={}, videoCount={}",
                 valueOrUnknown(String.valueOf(message.getMessage_id())),
                 valueOrUnknown(message.getFrom_user_id()),
                 valueOrUnknown(message.getContext_token()),
                 preview(normalizedText),
                 images.size(),
                 voices.size(),
-                files.size());
+                files.size(),
+                videos.size());
 
         return new WechatIncomingMessage(
                 message.getMessage_id() == null ? null : String.valueOf(message.getMessage_id()),
@@ -271,26 +319,19 @@ public class IlinkWechatClient implements WechatClient {
                 normalizedText,
                 images,
                 voices,
-                files);
+                files,
+                videos);
     }
 
     private WechatLoginInfo toLoginInfo(LoginContext context) {
         return new WechatLoginInfo(context.getBotId());
     }
 
-    private String buildSourceReference(WeixinMessage message, int imageIndex) {
-        return "wechat://" + valueOrUnknown(String.valueOf(message.getMessage_id())) + "/image/" + (imageIndex + 1);
+    private String buildSourceReference(WeixinMessage message, String mediaType, int index) {
+        return "wechat://" + valueOrUnknown(String.valueOf(message.getMessage_id())) + "/" + mediaType + "/" + (index + 1);
     }
 
-    private String buildVoiceSourceReference(WeixinMessage message, int voiceIndex) {
-        return "wechat://" + valueOrUnknown(String.valueOf(message.getMessage_id())) + "/voice/" + (voiceIndex + 1);
-    }
-
-    private String buildFileSourceReference(WeixinMessage message, int fileIndex) {
-        return "wechat://" + valueOrUnknown(String.valueOf(message.getMessage_id())) + "/file/" + (fileIndex + 1);
-    }
-
-    private String buildFileName(WeixinMessage message, int imageIndex) {
+    private String buildImageFileName(WeixinMessage message, int imageIndex) {
         return "wechat-" + valueOrUnknown(String.valueOf(message.getMessage_id())) + "-image-" + (imageIndex + 1) + ".png";
     }
 
@@ -301,6 +342,10 @@ public class IlinkWechatClient implements WechatClient {
                 + (voiceIndex + 1)
                 + "."
                 + formatForVoice(item);
+    }
+
+    private String buildVideoFileName(WeixinMessage message, int videoIndex) {
+        return "wechat-" + valueOrUnknown(String.valueOf(message.getMessage_id())) + "-video-" + (videoIndex + 1) + ".mp4";
     }
 
     private String formatForVoice(MessageItem item) {
@@ -314,8 +359,7 @@ public class IlinkWechatClient implements WechatClient {
     }
 
     private String mimeTypeForVoice(MessageItem item) {
-        String format = formatForVoice(item);
-        return switch (format) {
+        return switch (formatForVoice(item)) {
             case "silk" -> "audio/silk";
             default -> "application/octet-stream";
         };
@@ -363,10 +407,7 @@ public class IlinkWechatClient implements WechatClient {
             return "null";
         }
         String text = value.strip();
-        if (text.length() <= 80) {
-            return text;
-        }
-        return text.substring(0, 77) + "...";
+        return text.length() <= 80 ? text : text.substring(0, 77) + "...";
     }
 
     private String rootMessage(Throwable exception) {

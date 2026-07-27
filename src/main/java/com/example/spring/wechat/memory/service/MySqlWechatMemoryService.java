@@ -110,6 +110,30 @@ public class MySqlWechatMemoryService implements WechatMemoryService {
 
     @Override
     @Transactional
+    public void startNewConversation(String wechatUserId, Instant now) {
+        Instant time = safeTime(now);
+        String userKey = safeUserId(wechatUserId);
+        try {
+            Long userId = findUserId(userKey);
+            if (userId == null) {
+                return;
+            }
+            List<Long> activeConversationIds = activeConversationIds(userId);
+            for (Long conversationId : activeConversationIds) {
+                if (conversationId != null) {
+                    summarizeConversation(conversationId, time);
+                }
+            }
+            closeActiveConversations(userId, time);
+        } catch (DataAccessException exception) {
+            log.warn("MySQL 新对话切换失败，改用进程内存，userId={}, error={}",
+                    userKey, rootMessage(exception));
+            fallback.startNewConversation(userKey, time);
+        }
+    }
+
+    @Override
+    @Transactional
     public void saveMemory(String wechatUserId, WechatConversationMemory memory, Instant now) {
         if (memory == null) {
             return;
@@ -417,6 +441,34 @@ public class MySqlWechatMemoryService implements WechatMemoryService {
                 closeExpiredConversationsAfterSummary(userId, now);
             }
         }
+    }
+
+    private List<Long> activeConversationIds(long userId) {
+        return jdbcTemplate.query(
+                """
+                        SELECT id
+                        FROM conversations
+                        WHERE user_id = ? AND channel = ? AND status = ?
+                        ORDER BY last_active_at, id
+                        """,
+                (resultSet, rowNumber) -> resultSet.getLong(1),
+                userId,
+                CHANNEL_WECHAT,
+                STATUS_ACTIVE);
+    }
+
+    private void closeActiveConversations(long userId, Instant now) {
+        jdbcTemplate.update(
+                """
+                        UPDATE conversations
+                        SET status = ?, closed_at = ?
+                        WHERE user_id = ? AND channel = ? AND status = ?
+                        """,
+                STATUS_CLOSED,
+                Timestamp.from(now),
+                userId,
+                CHANNEL_WECHAT,
+                STATUS_ACTIVE);
     }
 
     private void createRollingSummaries(Instant now) {

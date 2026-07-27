@@ -36,6 +36,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import com.example.spring.wechat.conversation.intent.WeatherIntentParser;
 
@@ -92,6 +93,85 @@ class WechatConversationServiceTests {
 
         verify(chatService).streamReply(org.mockito.ArgumentMatchers.argThat(prompt ->
                 prompt.contains("\u676d\u5dde\u65c5\u884c") && prompt.contains("\u63a5\u7740\u8bf4")), any());
+    }
+
+    @Test
+    void hashNewStartsNewConversationBeforePersistingCommand() {
+        ChatService chatService = mock(ChatService.class);
+        WeatherService weatherService = mock(WeatherService.class);
+        WechatMemoryService memoryService = mock(WechatMemoryService.class);
+        when(memoryService.memoryFor("wx-command")).thenReturn(WechatConversationMemory.empty(10));
+        WechatConversationService service = new WechatConversationService(
+                chatService,
+                weatherService,
+                null,
+                null,
+                null,
+                new ImageInputResolver(),
+                new WeatherIntentParser(),
+                new ImageGenerationIntentParser(),
+                null,
+                null,
+                memoryService);
+
+        WechatReply reply = service.handleWechat(new WechatIncomingMessage(
+                "msg-new",
+                "wx-command",
+                null,
+                " #new ",
+                List.of(),
+                List.of(),
+                List.of()));
+
+        assertThat(reply.text()).isEqualTo("\u5df2\u5f00\u542f\u65b0\u7684\u5bf9\u8bdd\u3002");
+        verify(memoryService).startNewConversation(org.mockito.ArgumentMatchers.eq("wx-command"), any());
+        verify(memoryService, never()).acceptIncoming(anyString(), anyString(), anyString(), anyString(), any());
+        verifyNoInteractions(chatService);
+    }
+
+    @Test
+    void hashNewWithExtraTextIsNormalInput() {
+        ChatService chatService = mock(ChatService.class);
+        WeatherService weatherService = mock(WeatherService.class);
+        WechatMemoryService memoryService = mock(WechatMemoryService.class);
+        when(memoryService.acceptIncoming(anyString(), anyString(), anyString(), anyString(), any()))
+                .thenReturn(true);
+        when(memoryService.memoryFor("wx-normal")).thenReturn(WechatConversationMemory.empty(10));
+        doAnswer(invocation -> {
+            com.example.spring.agent.ReplyEmitter emitter = invocation.getArgument(1);
+            emitter.emit("normal reply");
+            return null;
+        }).when(chatService).streamReply(anyString(), any());
+        WechatConversationService service = new WechatConversationService(
+                chatService,
+                weatherService,
+                null,
+                null,
+                null,
+                new ImageInputResolver(),
+                new WeatherIntentParser(),
+                new ImageGenerationIntentParser(),
+                null,
+                null,
+                memoryService);
+
+        WechatReply reply = service.handleWechat(new WechatIncomingMessage(
+                "msg-c",
+                "wx-normal",
+                null,
+                "#new foo",
+                List.of(),
+                List.of(),
+                List.of()));
+
+        assertThat(reply.text()).isEqualTo("normal reply");
+        verify(memoryService).acceptIncoming(
+                org.mockito.ArgumentMatchers.eq("wx-normal"),
+                org.mockito.ArgumentMatchers.eq("msg-c"),
+                org.mockito.ArgumentMatchers.eq("#new foo"),
+                org.mockito.ArgumentMatchers.eq("TEXT"),
+                any());
+        verify(memoryService, never()).startNewConversation(anyString(), any());
     }
 
     @Test

@@ -11,6 +11,7 @@ import org.springframework.test.context.ActiveProfiles;
 import java.lang.reflect.Method;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -99,6 +100,47 @@ class MySqlWechatMemoryServiceTests {
         assertThat(turns).hasToString("[ConversationTurn[userText=我在杭州, assistantText=记住了，你在杭州。]]");
     }
 
+    @Test
+    void startNewConversationClosesActiveConversationAndNextMessageCreatesAnother() throws Exception {
+        Object service = memoryService();
+        Method acceptIncoming = service.getClass().getMethod(
+                "acceptIncoming",
+                String.class,
+                String.class,
+                String.class,
+                String.class,
+                Instant.class);
+        Method recordAssistantMessage = service.getClass().getMethod(
+                "recordAssistantMessage",
+                String.class,
+                String.class,
+                String.class,
+                Instant.class);
+        Method startNewConversation = service.getClass().getMethod(
+                "startNewConversation",
+                String.class,
+                Instant.class);
+        Instant first = Instant.parse("2026-07-27T00:00:00Z");
+
+        assertThat(acceptIncoming.invoke(service, "wx-new", "msg-1", "hello", "TEXT", first))
+                .isEqualTo(true);
+        recordAssistantMessage.invoke(service, "wx-new", "hi", "TEXT", first.plusSeconds(1));
+        Long firstConversationId = activeConversationId("wx-new");
+
+        startNewConversation.invoke(service, "wx-new", first.plusSeconds(2));
+
+        assertThat(activeConversationId("wx-new")).isNull();
+        assertThat(conversationStatus(firstConversationId)).isEqualTo("CLOSED");
+        assertThat(messageContents()).doesNotContain("#new");
+
+        assertThat(acceptIncoming.invoke(service, "wx-new", "msg-2", "fresh topic", "TEXT", first.plusSeconds(3)))
+                .isEqualTo(true);
+        Long secondConversationId = activeConversationId("wx-new");
+
+        assertThat(secondConversationId).isNotNull();
+        assertThat(secondConversationId).isNotEqualTo(firstConversationId);
+    }
+
     private Object memoryService() throws Exception {
         try {
             Class<?> serviceType = Class.forName(
@@ -108,5 +150,32 @@ class MySqlWechatMemoryServiceTests {
             fail("MySQL 微信记忆服务尚未实现");
             return null;
         }
+    }
+
+    private Long activeConversationId(String wechatUserId) {
+        List<Long> ids = jdbcTemplate.query(
+                """
+                        SELECT c.id
+                        FROM conversations c
+                        JOIN users u ON u.id = c.user_id
+                        WHERE u.wechat_user_id = ? AND c.status = 'ACTIVE'
+                        ORDER BY c.id
+                        """,
+                (resultSet, rowNumber) -> resultSet.getLong(1),
+                wechatUserId);
+        return ids.isEmpty() ? null : ids.get(0);
+    }
+
+    private String conversationStatus(Long conversationId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT status FROM conversations WHERE id = ?",
+                String.class,
+                conversationId);
+    }
+
+    private List<String> messageContents() {
+        return jdbcTemplate.query(
+                "SELECT content FROM conversation_messages ORDER BY id",
+                (resultSet, rowNumber) -> resultSet.getString(1));
     }
 }

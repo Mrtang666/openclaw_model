@@ -2,6 +2,7 @@ package com.example.spring;
 
 import com.example.spring.cli.command.core.CommandRegistry;
 import com.example.spring.chat.DashScopeChatClient;
+import com.example.spring.wechat.conversation.tools.WechatToolRegistry;
 import com.example.spring.wechat.image.generation.client.DashScopeImageGenerationClient;
 import com.example.spring.wechat.voice.synthesis.service.DefaultVoiceSynthesisService;
 import org.junit.jupiter.api.Test;
@@ -32,6 +33,9 @@ class ApplicationContextTests {
     @Autowired
     private DefaultVoiceSynthesisService voiceSynthesisService;
 
+    @Autowired
+    private WechatToolRegistry wechatToolRegistry;
+
     @Test
     void contextLoadsWithCliRunner() {
     }
@@ -39,6 +43,11 @@ class ApplicationContextTests {
     @Test
     void cliDoesNotRegisterImageGenerationCommand() {
         assertThat(commandRegistry.find("image")).isEmpty();
+    }
+
+    @Test
+    void disabledFoodDeliveryFeatureIsNotExposedToConversations() {
+        assertThat(wechatToolRegistry.contains("food_delivery")).isFalse();
     }
 
     @Test

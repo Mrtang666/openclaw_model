@@ -29,6 +29,12 @@ public interface WechatClient extends AutoCloseable {
 
     void sendText(String toUserId, String text) throws IOException;
 
+    default void startTyping(String toUserId) throws IOException {
+    }
+
+    default void stopTyping(String toUserId) throws IOException {
+    }
+
     void sendImage(String toUserId, byte[] imageBytes, String fileName, String caption) throws IOException;
 
     default void sendFile(String toUserId, byte[] fileBytes, String fileName, String caption) throws IOException {

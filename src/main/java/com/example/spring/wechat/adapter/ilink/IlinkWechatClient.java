@@ -87,6 +87,16 @@ public class IlinkWechatClient implements WechatClient {
     }
 
     @Override
+    public void startTyping(String toUserId) throws IOException {
+        delegate.startTyping(toUserId);
+    }
+
+    @Override
+    public void stopTyping(String toUserId) throws IOException {
+        delegate.stopTyping(toUserId);
+    }
+
+    @Override
     public void sendImage(String toUserId, byte[] imageBytes, String fileName, String caption) throws IOException {
         delegate.sendImage(toUserId, imageBytes, fileName, caption);
     }

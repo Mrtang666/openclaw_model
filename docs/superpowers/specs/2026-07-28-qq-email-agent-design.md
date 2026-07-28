@@ -1,38 +1,38 @@
-# QQ Email Agent Tool Design
+# QQ 邮箱 Agent 工具设计
 
-## Goal
+## 目标
 
-Add an email capability to OpenClaw so the WeChat agent can send email through QQ Mail SMTP. The agent may send automatically only when all recipients are explicitly whitelisted. Messages to any non-whitelisted recipient must be held as a pending draft until the user confirms the exact send action.
+为 OpenClaw 增加邮件发送能力，让微信 Agent 可以通过 QQ 邮箱 SMTP 自动发送邮件。Agent 只有在所有收件人都明确位于白名单中时，才可以直接发送。只要存在任何非白名单收件人，就必须先生成待确认草稿，等用户明确确认后再发送。
 
-## Scope
+## 范围
 
-This design covers outbound email only. The first version will not read inboxes, search mail, download attachments, poll delivery status, schedule future messages, or manage contact books.
+第一版只支持外发邮件，不支持读取收件箱、搜索邮件、下载附件、查询投递状态、定时发送或管理联系人。
 
-## User Experience
+## 用户体验
 
-When the user asks the agent to send an email, the agent gathers the recipient, subject, and body. Optional fields are cc and bcc. If required information is missing, the agent asks one focused follow-up question.
+当用户要求发送邮件时，Agent 需要收集收件人、主题和正文。可选字段包括抄送和密送。如果缺少必要信息，Agent 只追问一个最关键的问题。
 
-If every recipient is in the configured whitelist, the tool sends the email immediately and returns a short success message with the masked recipient list and subject.
+如果所有收件人都在配置的白名单中，工具直接发送邮件，并返回简短成功提示，包含脱敏后的收件人列表和主题。
 
-If any recipient is not whitelisted, the tool creates a pending draft and returns a confirmation prompt. The prompt includes the recipient list, subject, and a safe body preview. The user must explicitly confirm before the message is sent.
+如果存在任何非白名单收件人，工具不直接发送，而是创建待确认草稿并返回确认提示。确认提示包含收件人列表、主题和安全的正文预览。用户必须明确确认后，邮件才会被真正发送。
 
-## Architecture
+## 架构
 
-The feature follows the existing WeChat tool pattern:
+该功能沿用现有微信工具模式：
 
-- `EmailWechatTool` exposes `email_send` to the function-calling loop.
-- `EmailService` owns validation, whitelist decisions, draft creation, and send orchestration.
-- `SmtpEmailClient` sends mail through QQ SMTP.
-- `PendingEmailDraftService` stores short-lived drafts for non-whitelist confirmation.
-- `EmailProperties` binds configuration under the `email.*` prefix.
+- `EmailWechatTool`：向 function-calling 循环暴露 `email_send` 工具。
+- `EmailService`：负责参数校验、白名单判断、草稿创建和发送编排。
+- `SmtpEmailClient`：通过 QQ SMTP 执行真实发信。
+- `PendingEmailDraftService`：保存非白名单邮件的短期待确认草稿。
+- `EmailProperties`：绑定 `email.*` 配置。
 
-The tool is registered automatically through Spring component scanning, matching the existing `WechatToolRegistry` pattern.
+工具通过 Spring 组件扫描自动注册，匹配现有 `WechatToolRegistry` 的用法。
 
-## QQ SMTP Configuration
+## QQ SMTP 配置
 
-QQ Mail uses SMTP host `smtp.qq.com`. The login password must be a QQ Mail authorization code, not the normal QQ account password.
+QQ 邮箱 SMTP 主机为 `smtp.qq.com`。登录密码必须使用 QQ 邮箱生成的授权码，不能使用普通 QQ 密码。
 
-Recommended defaults:
+推荐默认配置：
 
 ```properties
 email.enabled=${EMAIL_ENABLED:false}
@@ -50,92 +50,92 @@ email.pending-draft-ttl-minutes=${EMAIL_PENDING_DRAFT_TTL_MINUTES:10}
 email.max-body-chars=${EMAIL_MAX_BODY_CHARS:8000}
 ```
 
-`EMAIL_ALLOWED_RECIPIENTS` is a comma-separated list of email addresses. Matching is case-insensitive after trimming whitespace.
+`EMAIL_ALLOWED_RECIPIENTS` 是逗号分隔的邮箱地址列表。匹配时先去除空白，并忽略大小写。
 
-## Tool Contract
+## 工具契约
 
-Tool name: `email_send`
+工具名：`email_send`
 
-Parameters:
+参数：
 
-- `to`: required comma-separated recipient list.
-- `subject`: required email subject.
-- `body`: required plain text email body.
-- `cc`: optional comma-separated cc list.
-- `bcc`: optional comma-separated bcc list.
-- `confirm_token`: optional token returned by a previous pending draft.
+- `to`：必填，收件人列表，多个地址用逗号分隔。
+- `subject`：必填，邮件主题。
+- `body`：必填，纯文本邮件正文。
+- `cc`：可选，抄送列表，多个地址用逗号分隔。
+- `bcc`：可选，密送列表，多个地址用逗号分隔。
+- `confirm_token`：可选，之前创建待确认草稿时返回的确认令牌。
 
-The first version sends plain text email only. HTML and attachments remain out of scope to reduce spoofing, rendering, and file exfiltration risk.
+第一版只发送纯文本邮件。HTML 邮件和附件暂不支持，以降低伪装、渲染差异和文件外泄风险。
 
-## Send Policy
+## 发送策略
 
-The send policy is deliberately conservative:
+发送策略保持保守：
 
-- The tool refuses to run when `email.enabled=false`.
-- The tool refuses to send if SMTP credentials or sender address are missing.
-- The tool validates email address shape before any SMTP call.
-- The tool sends immediately only when all `to`, `cc`, and `bcc` recipients are whitelisted.
-- The tool creates a pending draft when any recipient is not whitelisted.
-- The tool sends a pending draft only when `confirm_token` matches an unexpired draft for the same WeChat session.
-- The tool does not allow the model to bypass confirmation by setting hidden flags.
+- `email.enabled=false` 时，工具拒绝运行。
+- SMTP 凭证或发件人地址缺失时，工具拒绝发送。
+- 任何 SMTP 调用前都要校验邮箱地址格式。
+- 只有当 `to`、`cc`、`bcc` 中的所有收件人都在白名单内，工具才直接发送。
+- 只要存在非白名单收件人，工具就创建待确认草稿。
+- 只有当 `confirm_token` 匹配同一微信会话下未过期的草稿时，工具才发送该草稿。
+- 模型不能通过隐藏参数或额外字段绕过确认流程。
 
-## Confirmation Flow
+## 确认流程
 
-For non-whitelisted recipients:
+针对非白名单收件人：
 
-1. `email_send` receives a complete email request.
-2. `EmailService` stores a draft with a random confirmation token, session key, recipients, subject, body, and expiry.
-3. The tool returns a confirmation prompt to the user.
-4. If the user confirms, the model calls `email_send` again with `confirm_token`.
-5. `EmailService` loads the matching draft, verifies the session and expiry, sends it, and deletes the draft.
+1. `email_send` 收到完整邮件请求。
+2. `EmailService` 保存草稿，草稿包含随机确认令牌、会话 key、收件人、主题、正文和过期时间。
+3. 工具返回确认提示给用户。
+4. 用户确认后，模型再次调用 `email_send`，并带上 `confirm_token`。
+5. `EmailService` 读取对应草稿，校验会话和过期时间，发送邮件，然后删除草稿。
 
-Drafts can initially be stored in memory. A later version may add MySQL persistence if restart-safe confirmations become necessary.
+草稿第一版可以先放在内存中。如果以后需要支持应用重启后继续确认，再增加 MySQL 持久化。
 
-## Prompt And Capability Guidance
+## Prompt 和能力边界
 
-`EmailWechatTool.capability()` should tell the model:
+`EmailWechatTool.capability()` 应该告诉模型：
 
-- Use the tool only when the user explicitly asks to send or prepare an email.
-- Ask for missing recipient, subject, or body.
-- Do not invent recipients or email addresses.
-- Do not send credentials, verification codes, private keys, or secrets unless the user explicitly provides the exact content and recipient.
-- Non-whitelisted recipients require confirmation.
-- Plain text email is supported; attachments and inbox reading are not supported.
+- 只有在用户明确要求发送或准备邮件时才调用该工具。
+- 缺少收件人、主题或正文时必须追问。
+- 不要编造收件人或邮箱地址。
+- 不要发送凭证、验证码、私钥或其他敏感信息，除非用户明确提供了确切内容和接收方。
+- 非白名单收件人必须确认后才能发送。
+- 只支持纯文本发信，不支持附件，也不支持读取收件箱。
 
-The agent system prompt can optionally add one global rule: email is an external side-effect tool, so uncertain intent should become a clarification question, not a send attempt.
+Agent 系统提示可以额外增加一条全局规则：邮件是具有外部副作用的工具，不确定用户意图时应先澄清，而不是尝试发送。
 
-## Error Handling
+## 错误处理
 
-User-facing failures should be short and actionable. The final implementation can localize these messages to Chinese following the existing WeChat reply style:
+用户可见错误需要简短、可操作：
 
-- Disabled: "Email sending is not enabled."
-- Missing config: "Email SMTP configuration is incomplete. Check the sender address and QQ authorization code."
-- Invalid address: "Invalid email address: ..."
-- Confirmation needed: return pending draft summary and ask the user to confirm.
-- Expired token: ask the user to recreate the draft.
-- SMTP auth failure: mention QQ authorization code rather than account password.
-- SMTP transient failure: ask the user to retry later.
+- 未启用：提示“邮箱功能还没有启用”。
+- 配置缺失：提示检查发件邮箱和 QQ 邮箱授权码。
+- 地址格式错误：指出具体哪个邮箱地址不合法。
+- 需要确认：返回待确认草稿摘要，并要求用户确认。
+- 令牌过期：要求用户重新创建草稿。
+- SMTP 认证失败：明确提示检查 QQ 邮箱授权码，而不是 QQ 密码。
+- SMTP 临时失败：提示稍后重试。
 
-Logs must mask recipients where practical and must never print SMTP passwords, authorization codes, body contents, or confirmation tokens in full.
+日志应尽量对收件人脱敏，并且绝不能完整打印 SMTP 密码、授权码、正文内容或确认令牌。
 
-## Testing
+## 测试
 
-Focused tests should cover:
+需要覆盖的重点测试：
 
-- `EmailProperties` default values and normalization.
-- Whitelist matching with trimming and case-insensitive addresses.
-- Missing required fields return clarification text.
-- Non-whitelist recipients create a pending draft and do not call SMTP.
-- Valid confirmation token sends the stored draft and removes it.
-- Wrong session, expired token, or unknown token is rejected.
-- Whitelisted recipients call the email client directly.
-- SMTP exceptions become safe user-facing messages.
-- Tool definition exposes the expected function-calling parameters.
+- `EmailProperties` 默认值和规范化逻辑。
+- 白名单匹配支持去空白和忽略大小写。
+- 缺少必要字段时返回追问提示。
+- 非白名单收件人会创建待确认草稿，并且不会调用 SMTP。
+- 有效确认令牌会发送已保存草稿，并删除草稿。
+- 错误会话、过期令牌或未知令牌会被拒绝。
+- 白名单收件人会直接调用邮件客户端。
+- SMTP 异常会转换成安全的用户可见提示。
+- 工具定义暴露预期的 function-calling 参数。
 
-SMTP integration can be tested with a fake `EmailClient` in unit tests. A real QQ SMTP smoke test should be manual or opt-in because it sends external email.
+单元测试里使用假的 `EmailClient`，避免真的发邮件。真实 QQ SMTP 冒烟测试应当是手动或显式开启的 opt-in 测试，因为它会产生外部邮件。
 
-## Implementation Notes
+## 实现备注
 
-Add `spring-boot-starter-mail` to `pom.xml` and use JavaMail through Spring's mail support. Keep the QQ-specific defaults in configuration, but keep the client generic enough that another SMTP provider can be configured later without changing the tool contract.
+在 `pom.xml` 中加入 `spring-boot-starter-mail`，使用 Spring Mail 的 JavaMail 支持。QQ 相关默认值放在配置里，但 `SmtpEmailClient` 保持通用，方便以后切换到其他 SMTP 服务商。
 
-The current project has some source comments displayed with encoding artifacts in terminal output. New files should remain UTF-8, and tests should assert behavior rather than depend on exact internal comments.
+当前项目部分旧源码注释在终端输出里存在编码噪声。新增文件保持 UTF-8，测试应验证行为，不依赖内部注释文本。

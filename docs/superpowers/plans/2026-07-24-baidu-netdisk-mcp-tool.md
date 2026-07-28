@@ -203,7 +203,7 @@ netdisk_save 解析保存对象
 
 ### 新增数据库迁移
 
-- Create: `src/main/resources/db/migration/V6__create_baidu_netdisk_tables.sql`
+- Create: `src/main/resources/db/migration/V10__create_baidu_netdisk_tables.sql`
   - 创建用户网盘授权表。
   - 创建授权 state 表。
   - 创建授权后待恢复任务表。
@@ -626,7 +626,7 @@ baidu.netdisk.default-upload-path=${BAIDU_NETDISK_DEFAULT_UPLOAD_PATH:/OpenClaw/
 
 **Files:**
 
-- Create: `src/main/resources/db/migration/V6__create_baidu_netdisk_tables.sql`
+- Create: `src/main/resources/db/migration/V10__create_baidu_netdisk_tables.sql`
 - Test: `src/test/java/com/example/spring/wechat/netdisk/repository/NetdiskSchemaTests.java`
 
 - [ ] 创建 `user_netdisk_authorizations`。

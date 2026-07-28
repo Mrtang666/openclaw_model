@@ -3,22 +3,18 @@ package com.example.spring.wechat.conversation.agent;
 import com.example.spring.wechat.conversation.tools.WechatToolRequest;
 import com.example.spring.wechat.model.WechatIncomingFile;
 import com.example.spring.wechat.model.WechatIncomingImage;
+import com.example.spring.wechat.model.WechatIncomingVideo;
 
 import java.util.List;
 import java.util.Map;
 
-/**
- * 完整 Function Calling Agent Loop 的单次微信请求上下文。
- *
- * <p>它把用户文本、历史上下文、文件附件以及记忆回调集中放在一起，
- * 让 Agent Loop 可以在不依赖 {@code WechatConversationService} 内部状态的情况下执行工具。</p>
- */
 public record FunctionCallingAgentRequest(
         String sessionKey,
         String userText,
         String historyText,
         List<WechatIncomingFile> files,
         List<WechatIncomingImage> images,
+        List<WechatIncomingVideo> videos,
         WechatToolRequest.PendingImagePromptRecorder pendingImagePromptRecorder,
         WechatToolRequest.GeneratedImageRecorder generatedImageRecorder,
         ToolExecutionRecorder toolExecutionRecorder) {
@@ -29,6 +25,7 @@ public record FunctionCallingAgentRequest(
         historyText = historyText == null ? "" : historyText;
         files = files == null ? List.of() : List.copyOf(files);
         images = images == null ? List.of() : List.copyOf(images);
+        videos = videos == null ? List.of() : List.copyOf(videos);
     }
 
     public FunctionCallingAgentRequest(
@@ -45,10 +42,53 @@ public record FunctionCallingAgentRequest(
                 historyText,
                 files,
                 List.of(),
+                List.of(),
                 pendingImagePromptRecorder,
                 generatedImageRecorder,
                 toolExecutionRecorder);
     }
+
+    public FunctionCallingAgentRequest(
+            String sessionKey,
+            String userText,
+            String historyText,
+            List<WechatIncomingFile> files,
+            List<WechatIncomingImage> images,
+            WechatToolRequest.PendingImagePromptRecorder pendingImagePromptRecorder,
+            WechatToolRequest.GeneratedImageRecorder generatedImageRecorder,
+            ToolExecutionRecorder toolExecutionRecorder) {
+        this(
+                sessionKey,
+                userText,
+                historyText,
+                files,
+                images,
+                List.of(),
+                pendingImagePromptRecorder,
+                generatedImageRecorder,
+                toolExecutionRecorder);
+    }
+
+    public FunctionCallingAgentRequest(
+            String sessionKey,
+            String userText,
+            String historyText,
+            List<WechatIncomingFile> files,
+            List<WechatIncomingImage> images,
+            WechatToolRequest.PendingImagePromptRecorder pendingImagePromptRecorder,
+            ToolExecutionRecorder toolExecutionRecorder) {
+        this(
+                sessionKey,
+                userText,
+                historyText,
+                files,
+                images,
+                List.of(),
+                pendingImagePromptRecorder,
+                null,
+                toolExecutionRecorder);
+    }
+
 
     @FunctionalInterface
     public interface ToolExecutionRecorder {

@@ -68,6 +68,11 @@ public class InMemoryWechatMemoryFallback implements WechatMemoryService {
     }
 
     @Override
+    public void startNewConversation(String wechatUserId, Instant now) {
+        sessions.remove(safeKey(wechatUserId));
+    }
+
+    @Override
     public void saveMemory(String wechatUserId, WechatConversationMemory memory, Instant now) {
         FallbackSession current = sessions.get(safeKey(wechatUserId));
         if (current != null && memory != null) {

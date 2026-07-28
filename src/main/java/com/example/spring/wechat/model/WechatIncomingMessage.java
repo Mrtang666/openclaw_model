@@ -13,12 +13,14 @@ public record WechatIncomingMessage(
         String text,
         List<WechatIncomingImage> images,
         List<WechatIncomingVoice> voices,
-        List<WechatIncomingFile> files) {
+        List<WechatIncomingFile> files,
+        List<WechatIncomingVideo> videos) {
 
     public WechatIncomingMessage {
         images = images == null ? List.of() : List.copyOf(images);
         voices = voices == null ? List.of() : List.copyOf(voices);
         files = files == null ? List.of() : List.copyOf(files);
+        videos = videos == null ? List.of() : List.copyOf(videos);
     }
 
     public WechatIncomingMessage(
@@ -28,15 +30,26 @@ public record WechatIncomingMessage(
             String text,
             List<WechatIncomingImage> images,
             List<WechatIncomingVoice> voices) {
-        this(messageId, fromUserId, contextToken, text, images, voices, List.of());
+        this(messageId, fromUserId, contextToken, text, images, voices, List.of(), List.of());
+    }
+
+    public WechatIncomingMessage(
+            String messageId,
+            String fromUserId,
+            String contextToken,
+            String text,
+            List<WechatIncomingImage> images,
+            List<WechatIncomingVoice> voices,
+            List<WechatIncomingFile> files) {
+        this(messageId, fromUserId, contextToken, text, images, voices, files, List.of());
     }
 
     public WechatIncomingMessage(String fromUserId, String text) {
-        this(null, fromUserId, null, text, List.of(), List.of(), List.of());
+        this(null, fromUserId, null, text, List.of(), List.of(), List.of(), List.of());
     }
 
     public WechatIncomingMessage(String fromUserId, String text, List<WechatIncomingImage> images) {
-        this(null, fromUserId, null, text, images, List.of(), List.of());
+        this(null, fromUserId, null, text, images, List.of(), List.of(), List.of());
     }
 
     public WechatIncomingMessage(
@@ -45,7 +58,7 @@ public record WechatIncomingMessage(
             String contextToken,
             String text,
             List<WechatIncomingImage> images) {
-        this(messageId, fromUserId, contextToken, text, images, List.of(), List.of());
+        this(messageId, fromUserId, contextToken, text, images, List.of(), List.of(), List.of());
     }
 
     public WechatIncomingMessage(
@@ -53,7 +66,7 @@ public record WechatIncomingMessage(
             String text,
             List<WechatIncomingImage> images,
             List<WechatIncomingVoice> voices) {
-        this(null, fromUserId, null, text, images, voices, List.of());
+        this(null, fromUserId, null, text, images, voices, List.of(), List.of());
     }
 
     public WechatIncomingMessage(
@@ -62,7 +75,17 @@ public record WechatIncomingMessage(
             List<WechatIncomingImage> images,
             List<WechatIncomingVoice> voices,
             List<WechatIncomingFile> files) {
-        this(null, fromUserId, null, text, images, voices, files);
+        this(null, fromUserId, null, text, images, voices, files, List.of());
+    }
+
+    public WechatIncomingMessage(
+            String fromUserId,
+            String text,
+            List<WechatIncomingImage> images,
+            List<WechatIncomingVoice> voices,
+            List<WechatIncomingFile> files,
+            List<WechatIncomingVideo> videos) {
+        this(null, fromUserId, null, text, images, voices, files, videos);
     }
 
     public boolean hasImages() {
@@ -75,5 +98,9 @@ public record WechatIncomingMessage(
 
     public boolean hasFiles() {
         return !files.isEmpty();
+    }
+
+    public boolean hasVideos() {
+        return !videos.isEmpty();
     }
 }

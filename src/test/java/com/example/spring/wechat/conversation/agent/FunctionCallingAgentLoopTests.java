@@ -99,6 +99,31 @@ class FunctionCallingAgentLoopTests {
     }
 
     @Test
+    void meituanTravelResultIsReturnedDirectlyWithoutAnotherModelRound() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        FakeMeituanTravelTool travel = new FakeMeituanTravelTool();
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client, new WechatToolRegistry(List.of(travel)), 5);
+        when(client.chat(anyList(), anyList())).thenReturn(Optional.of(new FunctionCallingModelResponse("",
+                List.of(new FunctionCallingToolCall("travel-1", "meituan_travel", Map.of(
+                        "query", "上海三日游",
+                        "origin_query", "帮我规划上海三日游"))))));
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "帮我规划上海三日游",
+                "",
+                List.of(),
+                (a, b) -> { },
+                (a, b) -> { },
+                (a, b, c, d) -> { })).orElseThrow();
+
+        assertThat(reply.text()).isEqualTo("## 美团官方结果\n\n[查看方案](https://hotel.meituan.com/test)");
+        assertThat(travel.callCount).isEqualTo(1);
+        verify(client, org.mockito.Mockito.times(1)).chat(anyList(), anyList());
+    }
+
+    @Test
     void taxiToolResultEndsCurrentAgentTurnWithoutAnotherModelRound() {
         DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
         FakeTaxiTool taxi = new FakeTaxiTool();
@@ -202,6 +227,59 @@ class FunctionCallingAgentLoopTests {
                     assertThat(message.content()).contains("city");
                 });
     }
+
+    @Test
+    void skipsDuplicateSuccessfulToolCallAndReturnsCachedResultToModel() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        FakeWeatherTool weatherTool = new FakeWeatherTool();
+        WechatToolRegistry registry = new WechatToolRegistry(List.of(weatherTool));
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(client, registry, 5);
+
+        when(client.chat(anyList(), anyList()))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "",
+                        List.of(new FunctionCallingToolCall(
+                                "call_weather_1",
+                                "weather",
+                                Map.of("city", "Hangzhou"))))))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "",
+                        List.of(new FunctionCallingToolCall(
+                                "call_weather_2",
+                                "weather",
+                                Map.of("city", "Hangzhou"))))))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "I reused the weather result.",
+                        List.of())));
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "Check Hangzhou weather twice",
+                "No previous context",
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                }))
+                .orElseThrow();
+
+        assertThat(reply.text()).isEqualTo("I reused the weather result.");
+        assertThat(weatherTool.callCount).isEqualTo(1);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<FunctionCallingMessage>> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(client, org.mockito.Mockito.times(3)).chat(messagesCaptor.capture(), anyList());
+        List<FunctionCallingMessage> thirdRoundMessages = messagesCaptor.getAllValues().get(2);
+        assertThat(thirdRoundMessages)
+                .anySatisfy(message -> {
+                    assertThat(message.role()).isEqualTo("tool");
+                    assertThat(message.toolCallId()).isEqualTo("call_weather_2");
+                    assertThat(message.content()).contains("weather result for Hangzhou");
+                });
+    }
+
 
     @Test
     void doesNotExposeDuplicateVoiceFilesWhenModelCallsVoiceSynthesisAgainAfterToolResult() {
@@ -386,6 +464,7 @@ class FunctionCallingAgentLoopTests {
     private static final class FakeWeatherTool implements WechatTool {
 
         private boolean called;
+        private int callCount;
 
         @Override
         public String name() {
@@ -410,6 +489,7 @@ class FunctionCallingAgentLoopTests {
         @Override
         public WechatReply execute(WechatToolRequest request) {
             called = true;
+            callCount++;
             return WechatReply.text("weather result for " + request.argument("city") + ": sunny");
         }
     }
@@ -593,5 +673,19 @@ class FunctionCallingAgentLoopTests {
         public List<String> arguments(){return List.of("operation");}
         public List<WechatToolParameter> parameters(){return List.of(WechatToolParameter.requiredString("operation","operation","open_didi_app"));}
         public WechatReply execute(WechatToolRequest request){callCount++;return WechatReply.text("滴滴链接：https://v.didi.cn/test");}
+    }
+
+    private static final class FakeMeituanTravelTool implements WechatTool {
+        private int callCount;
+        public String name(){return "meituan_travel";}
+        public String description(){return "meituan travel";}
+        public List<String> arguments(){return List.of("query", "origin_query");}
+        public List<WechatToolParameter> parameters(){return List.of(
+                WechatToolParameter.requiredString("query", "query", "上海三日游"),
+                WechatToolParameter.requiredString("origin_query", "origin query", "帮我规划上海三日游"));}
+        public WechatReply execute(WechatToolRequest request){
+            callCount++;
+            return WechatReply.text("## 美团官方结果\n\n[查看方案](https://hotel.meituan.com/test)");
+        }
     }
 }

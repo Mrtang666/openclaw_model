@@ -19,6 +19,7 @@ import javax.imageio.ImageIO;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import com.example.spring.wechat.model.ImageSourceType;
 import com.example.spring.wechat.model.VoiceSourceType;
@@ -26,6 +27,18 @@ import com.example.spring.wechat.model.WechatIncomingFile;
 import com.example.spring.wechat.model.WechatIncomingMessage;
 
 class IlinkWechatClientTests {
+
+    @Test
+    void forwardsTypingStateToIlinkClient() throws IOException {
+        ILinkClient delegate = mock(ILinkClient.class);
+        IlinkWechatClient client = new IlinkWechatClient(delegate);
+
+        client.startTyping("user-typing");
+        client.stopTyping("user-typing");
+
+        verify(delegate).startTyping("user-typing");
+        verify(delegate).stopTyping("user-typing");
+    }
 
     @Test
     void mapsTextAndImageItemsIntoOneIncomingMessage() throws IOException {

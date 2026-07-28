@@ -9,11 +9,12 @@ import com.example.spring.wechat.web.config.WebToolProperties;
 import com.example.spring.wechat.taxi.client.DidiMcpProperties;
 import com.example.spring.wechat.payment.config.WechatPayProperties;
 import com.example.spring.wechat.reminder.config.ReminderProperties;
+import com.example.spring.wechat.food.config.FoodDeliveryProperties;
+import com.example.spring.wechat.travel.config.MeituanTravelProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.scheduling.annotation.EnableScheduling;
-import com.example.spring.wechat.netdisk.config.BaiduNetdiskProperties;
 
 /**
  * Spring Boot 启动类，负责启动整个 OpenClaw 应用。
@@ -27,7 +28,9 @@ import com.example.spring.wechat.netdisk.config.BaiduNetdiskProperties;
         DidiMcpProperties.class,
         WechatPayProperties.class,
         BaiduNetdiskProperties.class,
-        ReminderProperties.class
+        ReminderProperties.class,
+        FoodDeliveryProperties.class,
+        MeituanTravelProperties.class
 })
 @EnableScheduling
 public class AgentClawApplication {

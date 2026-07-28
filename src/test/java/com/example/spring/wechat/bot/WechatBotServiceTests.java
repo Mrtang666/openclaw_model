@@ -127,6 +127,29 @@ class WechatBotServiceTests {
     }
 
     @Test
+    void showsNativeTypingStateWhileProcessingWechatMessage() throws Exception {
+        FakeWechatClient client = new FakeWechatClient(1);
+        AgentService agentService = mock(AgentService.class);
+        doAnswer(invocation -> {
+            com.example.spring.agent.ReplyEmitter emitter = invocation.getArgument(1);
+            emitter.emit("final reply");
+            return null;
+        }).when(agentService).handleStreaming(eq("hello"), any());
+        WechatBotService service = new WechatBotService(() -> client, agentService);
+
+        service.start();
+        client.loginFuture.complete(new WechatLoginInfo("bot-1"));
+        client.updates.add(List.of(new WechatIncomingMessage("user@im.wechat", "hello")));
+
+        assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
+        assertThat(client.typingStoppedLatch.await(3, TimeUnit.SECONDS)).isTrue();
+        assertThat(new ArrayList<>(client.typingEvents))
+                .containsExactly("start:user@im.wechat", "stop:user@im.wechat");
+        assertThat(new ArrayList<>(client.sentTexts)).containsExactly("final reply");
+        service.stop();
+    }
+
+    @Test
     void splitsLongWechatRepliesIntoSafeChunks() {
         String longReply = "长文本".repeat(500);
 
@@ -135,6 +158,47 @@ class WechatBotServiceTests {
         assertThat(chunks).isNotEmpty();
         assertThat(chunks).allMatch(chunk -> chunk.length() <= 800);
         assertThat(String.join("", chunks)).isEqualTo(longReply);
+    }
+
+    @Test
+    void splitsWechatRepliesAtCompleteSentenceBoundariesWhenPossible() {
+        String sentence = "这是一个完整句子。";
+        String reply = sentence.repeat(90);
+
+        List<String> chunks = WechatBotService.splitForWechat(reply);
+
+        assertThat(chunks).hasSizeGreaterThan(1);
+        assertThat(chunks).allMatch(chunk -> chunk.length() <= 800);
+        assertThat(String.join("", chunks)).isEqualTo(reply);
+        assertThat(chunks.subList(0, chunks.size() - 1))
+                .allMatch(chunk -> chunk.endsWith("。"));
+    }
+
+    @Test
+    void keepsUrlWithItsLeadInWhenSplittingWechatReplies() {
+        String leadIn = "参考链接：";
+        String url = "https://example.com/articles/openclaw-agent-loop?from=wechat";
+        String reply = "背景说明。".repeat(158) + "\n" + leadIn + url + "\n后续说明。";
+
+        List<String> chunks = WechatBotService.splitForWechat(reply);
+
+        assertThat(chunks).hasSizeGreaterThan(1);
+        assertThat(chunks).allMatch(chunk -> chunk.length() <= 800);
+        assertThat(String.join("", chunks)).isEqualTo(reply);
+        assertThat(chunks).anySatisfy(chunk -> assertThat(chunk).contains(leadIn + url));
+    }
+
+    @Test
+    void keepsFencedCodeBlockTogetherWhenSplittingWechatReplies() {
+        String codeBlock = "```java\nSystem.out.println(\"hello\");\n```";
+        String reply = "背景说明。".repeat(158) + "\n代码如下：\n" + codeBlock + "\n收尾说明。";
+
+        List<String> chunks = WechatBotService.splitForWechat(reply);
+
+        assertThat(chunks).hasSizeGreaterThan(1);
+        assertThat(chunks).allMatch(chunk -> chunk.length() <= 800);
+        assertThat(String.join("", chunks)).isEqualTo(reply);
+        assertThat(chunks).anySatisfy(chunk -> assertThat(chunk).contains("代码如下：\n" + codeBlock));
     }
 
     @Test
@@ -371,10 +435,12 @@ class WechatBotServiceTests {
         private final CompletableFuture<WechatLoginInfo> loginFuture = new CompletableFuture<>();
         private final Queue<List<WechatIncomingMessage>> updates = new ConcurrentLinkedQueue<>();
         private final CountDownLatch sentLatch;
+        private final CountDownLatch typingStoppedLatch = new CountDownLatch(1);
         private final Queue<String> sentTexts = new ConcurrentLinkedQueue<>();
         private final Queue<SentImage> sentImages = new ConcurrentLinkedQueue<>();
         private final Queue<SentVoice> sentVoices = new ConcurrentLinkedQueue<>();
         private final Queue<SentFile> sentFiles = new ConcurrentLinkedQueue<>();
+        private final Queue<String> typingEvents = new ConcurrentLinkedQueue<>();
         private final Map<String, Integer> fileFailuresBeforeSuccess = new ConcurrentHashMap<>();
         private final Map<String, Integer> fileSendAttempts = new ConcurrentHashMap<>();
         private volatile RuntimeException imageSendFailure;
@@ -450,6 +516,17 @@ class WechatBotServiceTests {
             this.sentToUserId = toUserId;
             this.sentFiles.add(new SentFile(fileBytes, fileName, caption));
             sentLatch.countDown();
+        }
+
+        @Override
+        public void startTyping(String toUserId) {
+            typingEvents.add("start:" + toUserId);
+        }
+
+        @Override
+        public void stopTyping(String toUserId) {
+            typingEvents.add("stop:" + toUserId);
+            typingStoppedLatch.countDown();
         }
 
         private void failFileSendsBeforeSuccess(String fileName, int failuresBeforeSuccess) {

@@ -47,4 +47,22 @@ class FlywayMigrationVersionTests {
                 .as("Flyway migration version must be unique")
                 .isEmpty();
     }
+
+    @Test
+    void migrationFilesUseLfLineEndings() throws IOException {
+        Path migrationDir = Path.of("src", "main", "resources", "db", "migration");
+
+        try (Stream<Path> paths = Files.list(migrationDir)) {
+            paths.filter(path -> path.getFileName().toString().matches("^V\\d+__.+\\.sql$"))
+                    .forEach(path -> {
+                        try {
+                            assertThat(Files.readString(path))
+                                    .as("Migration %s must use LF line endings", path)
+                                    .doesNotContain("\r");
+                        } catch (IOException exception) {
+                            throw new java.io.UncheckedIOException(exception);
+                        }
+                    });
+        }
+    }
 }

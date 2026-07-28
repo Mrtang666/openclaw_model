@@ -98,6 +98,7 @@ public class WechatConversationService {
     private FunctionCallingAgentLoop functionCallingAgentLoop;
     private String toolCallingMode = "prompt-json";
     private final Map<String, WechatConversationMemory> memories = new ConcurrentHashMap<>();
+    private final Map<String, List<WechatIncomingFile>> lastFiles = new ConcurrentHashMap<>();
     private final Map<String, List<WechatIncomingVideo>> pendingVideos = new ConcurrentHashMap<>();
     private final Map<String, List<WechatIncomingVideo>> lastVideos = new ConcurrentHashMap<>();
 
@@ -339,6 +340,7 @@ public class WechatConversationService {
             }
 
             if (message.hasFiles()) {
+                lastFiles.put(sessionKey, message.files());
                 rememberIncomingFiles(sessionKey, message.files());
                 String rawText = message.text() == null ? "" : message.text().strip();
                 if (rawText.isBlank()) {
@@ -362,7 +364,7 @@ public class WechatConversationService {
                     return WechatReply.text(reply);
                 }
 
-                Optional<WechatReply> structuredReply = handleIntentPlan(sessionKey, text, message.files(), request.images());
+                Optional<WechatReply> structuredReply = handleIntentPlan(sessionKey, text, effectiveFiles(sessionKey, message.files(), text), request.images());
                 if (structuredReply.isPresent()) {
                     return structuredReply.get();
                 }
@@ -413,7 +415,7 @@ public class WechatConversationService {
                 }
                 List<WechatIncomingImage> selectedWechatImages = imageArchiveService.toWechatImages(selectedImages);
                 if (!selectedWechatImages.isEmpty()) {
-                Optional<WechatReply> imageStructuredReply = handleIntentPlan(sessionKey, text, message.files(), selectedWechatImages);
+                Optional<WechatReply> imageStructuredReply = handleIntentPlan(sessionKey, text, effectiveFiles(sessionKey, message.files(), text), selectedWechatImages);
                 if (imageStructuredReply.isPresent()) {
                     imageArchiveService.markUsed(sessionKey, selectedImages);
                     return imageStructuredReply.get();
@@ -427,7 +429,7 @@ public class WechatConversationService {
                             text,
                             selectedWechatImages,
                             List.of(),
-                            message.files());
+                            effectiveFiles(sessionKey, message.files(), text));
                     ImageAnalysisRequest imageRequest = new ImageAnalysisRequest(text, selectedWechatImages);
                     StringBuilder output = new StringBuilder();
                     handleImageConversation(sessionKey, syntheticMessage, imageRequest, output::append);
@@ -441,7 +443,7 @@ public class WechatConversationService {
                 }
             }
 
-            Optional<WechatReply> structuredReply = handleIntentPlan(sessionKey, text, message.files());
+            Optional<WechatReply> structuredReply = handleIntentPlan(sessionKey, text, effectiveFiles(sessionKey, message.files(), text));
             if (structuredReply.isPresent()) {
                 return structuredReply.get();
             }
@@ -530,7 +532,7 @@ public class WechatConversationService {
     }
 
     private Optional<WechatReply> handleIntentPlan(String sessionKey, String text) {
-        return handleIntentPlan(sessionKey, text, List.of());
+        return handleIntentPlan(sessionKey, text, effectiveFiles(sessionKey, List.of(), text));
     }
 
     private Optional<WechatReply> handleIntentPlan(String sessionKey, String text, List<WechatIncomingFile> files) {
@@ -983,6 +985,42 @@ public class WechatConversationService {
                 || value.contains("人物")
                 || value.contains("里面")
                 || value.contains("video");
+    }
+
+    private List<WechatIncomingFile> effectiveFiles(String sessionKey, List<WechatIncomingFile> currentFiles, String text) {
+        if (currentFiles != null && !currentFiles.isEmpty()) {
+            return currentFiles;
+        }
+        if (!referencesFileResource(text)) {
+            return List.of();
+        }
+        List<WechatIncomingFile> files = lastFiles.get(sessionKey);
+        return files == null ? List.of() : files;
+    }
+
+    private boolean referencesFileResource(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String value = text.strip().toLowerCase(java.util.Locale.ROOT);
+        return value.contains("文件")
+                || value.contains("附件")
+                || value.contains("这个")
+                || value.contains("刚才")
+                || value.contains("刚刚")
+                || value.contains("上一个")
+                || value.contains("发送")
+                || value.contains("发到")
+                || value.contains("邮箱")
+                || value.contains("邮件")
+                || value.contains("pdf")
+                || value.contains("doc")
+                || value.contains("docx")
+                || value.contains("xlsx")
+                || value.contains("zip")
+                || value.contains("file")
+                || value.contains("attachment")
+                || value.contains("email");
     }
 
     private boolean containsPendingImage(List<ArchivedWechatImage> images) {
@@ -1656,6 +1694,7 @@ public class WechatConversationService {
             wechatMemoryService.startNewConversation(sessionKey, java.time.Instant.now());
         }
         memories.remove(sessionKey);
+        lastFiles.remove(sessionKey);
         pendingVideos.remove(sessionKey);
         lastVideos.remove(sessionKey);
     }

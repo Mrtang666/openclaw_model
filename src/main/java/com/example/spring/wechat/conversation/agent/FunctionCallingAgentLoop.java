@@ -39,7 +39,7 @@ public class FunctionCallingAgentLoop {
             你是 OpenClaw 微信端 Agent。
             你可以根据用户需求调用工具，工具执行结果会以 tool message 形式返回给你。
             工作规则：
-            1. 需要天气、地图、图片、语音、音色、文件解析、文档生成、知识库、网页阅读、网页搜索等能力时，必须调用对应工具。
+            1. 需要天气、地图、图片、语音、音色、文件解析、文档生成、邮件发送、邮件查询、知识库、网页阅读、网页搜索等能力时，必须调用对应工具。
             2. 工具返回结果后，你要结合工具结果和上下文继续思考，必要时继续调用下一个工具。
             3. 当用户需求已经全部完成，不再调用工具，直接输出最终回复。
             4. 如果用户需求缺少关键信息，直接追问一个最关键的问题。
@@ -466,10 +466,12 @@ public class FunctionCallingAgentLoop {
                 %s
 
                 当前可用图片资源：%d 张。若用户是在询问、分析、总结、提取或修改这些图片，请调用图片相关工具；不要假装已经看过图片。
+                当前可用文件资源：%d 个。若用户说“这个文件、这份文件、刚才的文件、附件”等，请调用文件/邮件相关工具，并优先使用当前可用文件；不要猜测或编造 file_path。
                 """.formatted(
                 request.historyText().isBlank() ? "无" : request.historyText(),
                 request.userText(),
-                request.images().size());
+                request.images().size(),
+                request.files().size());
     }
 
     private String toolNames(List<FunctionCallingToolCall> toolCalls) {

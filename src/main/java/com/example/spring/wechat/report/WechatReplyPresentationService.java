@@ -38,19 +38,18 @@ public class WechatReplyPresentationService {
         if (!reportService.shouldSendSummaryOnly(userText, text)) {
             return WechatReply.ordered(List.of(
                     WechatReply.Part.text(text),
-                    WechatReply.Part.text(reportLinkText("📄 查看美化版报告", report))));
+                    WechatReply.Part.text(reportTitleText("📄 查看美化版报告", report)),
+                    WechatReply.Part.text(report.url())));
         }
         return WechatReply.ordered(List.of(
                 WechatReply.Part.text("""
                 📌 摘要
                 %s""".formatted(summary).strip()),
-                WechatReply.Part.text(reportLinkText("📄 查看完整报告", report))));
+                WechatReply.Part.text(reportTitleText("📄 查看完整报告", report)),
+                WechatReply.Part.text(report.url())));
     }
 
-    private String reportLinkText(String label, WechatReport report) {
-        return """
-                %s：%s
-                %s
-                """.formatted(label, report.title(), report.url()).strip();
+    private String reportTitleText(String label, WechatReport report) {
+        return "%s：%s".formatted(label, report.title()).strip();
     }
 }

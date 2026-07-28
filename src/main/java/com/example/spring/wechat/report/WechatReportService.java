@@ -146,6 +146,8 @@ public class WechatReportService {
                     .content { white-space:pre-wrap; word-break:break-word; }
                     .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
                     .item { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:12px; }
+                    .item-title { font-weight:700; margin-bottom:6px; }
+                    .item-desc { color:var(--muted); }
                     .badge { display:inline-block; padding:2px 8px; border-radius:999px; background:var(--accent-soft); color:var(--accent); font-size:13px; margin-right:6px; }
                     footer { color:var(--muted); font-size:14px; text-align:center; margin-top:24px; }
                     .top { position:fixed; right:14px; bottom:14px; width:44px; height:44px; border-radius:50%%; border:1px solid var(--line); background:var(--card); color:var(--text); text-decoration:none; display:flex; align-items:center; justify-content:center; box-shadow:0 4px 16px rgba(0,0,0,.12); }
@@ -186,7 +188,7 @@ public class WechatReportService {
                       <div class="grid">
                     """);
             for (String item : items) {
-                grid.append("<div class=\"item\">").append(escape(item)).append("</div>");
+                grid.append(renderItemCard(item));
             }
             grid.append("</div></section>");
             return grid.toString();
@@ -261,13 +263,165 @@ public class WechatReportService {
             return List.of();
         }
         List<String> items = new ArrayList<>();
+        String pendingHeading = "";
+        int lastItemIndex = -1;
         for (String line : text.split("\\R")) {
             String value = line.strip();
-            if (value.matches("^([\\-•*]|\\d+[.、]|[一二三四五六七八九十]+[、.]).+")) {
-                items.add(value.replaceFirst("^([\\-•*]|\\d+[.、]|[一二三四五六七八九十]+[、.])\\s*", ""));
+            if (value.isBlank()) {
+                continue;
+            }
+            String heading = sectionHeading(value);
+            if (!heading.isBlank()) {
+                pendingHeading = heading;
+                lastItemIndex = -1;
+                continue;
+            }
+            if (value.matches("^([-•*]\\s+|\\d+[.、]\\s*|[一二三四五六七八九十]+[、.]\\s*).+")) {
+                String item = value.replaceFirst("^([-•*]\\s+|\\d+[.、]\\s*|[一二三四五六七八九十]+[、.]\\s*)", "");
+                item = cleanMarkdownListItem(item);
+                if (!item.isBlank() && !isSectionHeading(item) && !isAdviceHeading(item)) {
+                    if (!pendingHeading.isBlank() && shouldAttachHeading(pendingHeading, item)) {
+                        item = pendingHeading + "：" + item;
+                    }
+                    items.add(item);
+                    lastItemIndex = items.size() - 1;
+                } else {
+                    lastItemIndex = -1;
+                }
+                continue;
+            }
+            String continuation = cleanMarkdownListItem(value);
+            if (lastItemIndex >= 0 && shouldAppendContinuation(continuation)) {
+                items.set(lastItemIndex, appendDetail(items.get(lastItemIndex), continuation));
             }
         }
         return items;
+    }
+
+    private String cleanMarkdownListItem(String value) {
+        String item = value == null ? "" : value.strip();
+        item = item.replaceAll("\\*\\*(.*?)\\*\\*", "$1")
+                .replaceAll("__(.*?)__", "$1")
+                .replaceAll("^#+\\s*", "")
+                .replaceAll("^[-•*]+\\s*", "")
+                .replaceAll("^[\\p{So}\\p{Cn}\\s]+", "")
+                .replaceAll("\\*+", "")
+                .replaceAll("\\s+", " ")
+                .strip();
+        return item;
+    }
+
+    private boolean isSectionHeading(String value) {
+        String item = value == null ? "" : value.strip();
+        if (!item.endsWith("：") && !item.endsWith(":")) {
+            return false;
+        }
+        String title = item.substring(0, item.length() - 1).strip();
+        return !title.contains("，")
+                && !title.contains(",")
+                && !title.contains("。")
+                && !title.contains("；")
+                && !title.contains(";")
+                && title.length() <= 16;
+    }
+
+    private String sectionHeading(String value) {
+        String item = cleanMarkdownListItem(value);
+        if (item.isBlank()) {
+            return "";
+        }
+        if (item.startsWith("推荐") || item.contains("建议") || item.contains("贴士") || item.contains("小贴士")) {
+            return "";
+        }
+        if (item.endsWith("：") || item.endsWith(":")) {
+            item = item.substring(0, item.length() - 1).strip();
+        }
+        if (item.length() > 18) {
+            return "";
+        }
+        return item.matches(".*(大菜|热炒|点心|小吃|主食|汤羹|甜品|水产|特色|推荐|名菜|菜品).*")
+                ? item
+                : "";
+    }
+
+    private boolean shouldAttachHeading(String heading, String item) {
+        if (heading == null || heading.isBlank() || item == null || item.isBlank()) {
+            return false;
+        }
+        return !item.startsWith(heading + "：") && !item.startsWith(heading + ":");
+    }
+
+    private boolean shouldAppendContinuation(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        return !isSectionHeading(value)
+                && sectionHeading(value).isBlank()
+                && !isAdviceHeading(value)
+                && !value.matches("^[-•*+]+$");
+    }
+
+    private String appendDetail(String item, String detail) {
+        String value = item == null ? "" : item.strip();
+        String extra = detail == null ? "" : detail.strip();
+        if (extra.isBlank() || value.contains(extra)) {
+            return value;
+        }
+        if (value.endsWith("。") || value.endsWith("！") || value.endsWith("？")
+                || value.endsWith(".") || value.endsWith("!") || value.endsWith("?")) {
+            return value + extra;
+        }
+        return value + "。" + extra;
+    }
+
+    private String renderItemCard(String item) {
+        ItemText itemText = splitItemText(item);
+        if (itemText.description().isBlank()) {
+            return "<div class=\"item\"><div class=\"item-title\">%s</div></div>"
+                    .formatted(escape(itemText.title()));
+        }
+        return "<div class=\"item\"><div class=\"item-title\">%s</div><div class=\"item-desc\">%s</div></div>"
+                .formatted(escape(itemText.title()), escape(itemText.description()));
+    }
+
+    private ItemText splitItemText(String item) {
+        String value = item == null ? "" : item.strip();
+        int firstColon = firstColonIndex(value, 0);
+        if (firstColon < 0) {
+            return new ItemText(value, "");
+        }
+        int secondColon = firstColonIndex(value, firstColon + 1);
+        int splitIndex = secondColon >= 0 ? secondColon : firstColon;
+        String title = value.substring(0, splitIndex).strip();
+        String description = value.substring(splitIndex + 1).strip();
+        return new ItemText(title, description);
+    }
+
+    private int firstColonIndex(String value, int fromIndex) {
+        int cn = value.indexOf('：', fromIndex);
+        int en = value.indexOf(':', fromIndex);
+        if (cn < 0) {
+            return en;
+        }
+        if (en < 0) {
+            return cn;
+        }
+        return Math.min(cn, en);
+    }
+
+    private record ItemText(String title, String description) {
+    }
+
+    private boolean isAdviceHeading(String value) {
+        String item = cleanMarkdownListItem(value);
+        if (item.endsWith("：") || item.endsWith(":")) {
+            item = item.substring(0, item.length() - 1).strip();
+        }
+        return item.length() <= 18
+                && (item.contains("建议")
+                || item.contains("贴士")
+                || item.contains("小贴士")
+                || item.contains("寻味"));
     }
 
     private boolean containsSensitiveHint(String text) {

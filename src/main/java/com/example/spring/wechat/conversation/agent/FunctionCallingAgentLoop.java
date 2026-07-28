@@ -18,11 +18,10 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * 完整标准 Function Calling Agent 循环。
@@ -88,24 +87,16 @@ public class FunctionCallingAgentLoop {
             return Optional.empty();
         }
 
-        List<FunctionCallingMessage> messages = new ArrayList<>();
-        messages.add(FunctionCallingMessage.system(SYSTEM_PROMPT));
-        messages.add(FunctionCallingMessage.user(userPrompt(request)));
-
-        List<WechatReply.Part> visibleParts = new ArrayList<>();
-        String previousToolResult = "";
-        String lastToolFailure = "";
-        String rollingHistory = request.historyText();
-        Set<String> executedVoiceSynthesisSignatures = new HashSet<>();
-        Set<String> failedToolSignatures = new HashSet<>();
+        AgentLoopState state = AgentLoopState.start(SYSTEM_PROMPT, userPrompt(request), request.historyText());
         log.info("Function Calling Agent Loop 开始，userId={}, text={}",
                 request.sessionKey(), preview(request.userText()));
 
         for (int round = 1; round <= maxLoopRounds; round++) {
             log.debug("Function Calling Agent Loop 第{}轮请求模型，userId={}", round, request.sessionKey());
-            Optional<FunctionCallingModelResponse> response = client.chat(messages, toolDefinitions);
+            Optional<FunctionCallingModelResponse> response = client.chat(state.messages(), toolDefinitions);
             if (response.isEmpty()) {
                 log.warn("Function Calling Agent Loop 第{}轮模型无响应，userId={}", round, request.sessionKey());
+                state.stop(AgentLoopStopReason.MODEL_EMPTY);
                 return Optional.empty();
             }
 
@@ -113,74 +104,89 @@ public class FunctionCallingAgentLoop {
             if (!modelResponse.hasToolCalls()) {
                 log.info("Function Calling Agent Loop 第{}轮得到最终回复，userId={}, reply={}",
                         round, request.sessionKey(), preview(modelResponse.content()));
-                return Optional.of(finalReply(modelResponse.content(), visibleParts));
+                state.stop(AgentLoopStopReason.FINAL_ANSWER);
+                return Optional.of(finalReply(modelResponse.content(), state.visibleParts()));
             }
 
             log.info("Function Calling Agent Loop 第{}轮返回工具调用，userId={}, tools={}",
                     round, request.sessionKey(), toolNames(modelResponse.toolCalls()));
-            messages.add(FunctionCallingMessage.assistantToolCalls(modelResponse.toolCalls()));
+            state.messages().add(FunctionCallingMessage.assistantToolCalls(modelResponse.toolCalls()));
             for (FunctionCallingToolCall toolCall : modelResponse.toolCalls()) {
                 ToolCallValidationResult validation = toolCallValidator.validate(toolCall, toolDefinitions);
                 if (!validation.valid()) {
                     AgentToolExecutionResult validationFailure = invalidToolCallResult(request, toolCall, validation);
-                    messages.add(FunctionCallingMessage.tool(toolCall.id(), validationFailure.modelText()));
-                    previousToolResult = validationFailure.modelText();
-                    lastToolFailure = validationFailure.modelText();
-                    rollingHistory = appendRollingHistory(rollingHistory, toolCall.name(), validationFailure.modelText());
+                    state.messages().add(FunctionCallingMessage.tool(toolCall.id(), validationFailure.modelText()));
+                    state.recordToolFailure(toolCall.name(), validationFailure.modelText());
                     continue;
                 }
 
-                Map<String, String> arguments = argumentsWithPreviousResult(toolCall, previousToolResult);
+                Map<String, String> arguments = argumentsWithPreviousResult(toolCall, state.previousToolResult());
+                String toolSignature = toolCallSignature(toolCall.name(), arguments);
+                Optional<String> cachedToolResult = state.successfulToolResult(toolSignature);
+                if (cachedToolResult.isPresent()) {
+                    String skippedResult = cachedToolResult.get();
+                    log.info("Function Calling Agent Loop 跳过重复工具调用，userId={}, tool={}, signature={}",
+                            request.sessionKey(), toolCall.name(), toolSignature);
+                    state.messages().add(FunctionCallingMessage.tool(toolCall.id(), skippedResult));
+                    recordToolExecution(request, toolCall, skippedResult, "SKIPPED_DUPLICATE");
+                    state.recordSkippedToolCall(toolCall.name(), skippedResult);
+                    continue;
+                }
+
                 String voiceSynthesisSignature = voiceSynthesisSignature(toolCall.name(), arguments);
                 if (!voiceSynthesisSignature.isBlank()
-                        && !executedVoiceSynthesisSignatures.add(voiceSynthesisSignature)) {
+                        && !state.addVoiceSynthesisSignature(voiceSynthesisSignature)) {
                     String skippedResult = "语音已经生成，本次重复语音工具调用已跳过，避免重复发送相同音频。";
                     log.info("Function Calling Agent Loop 跳过重复语音合成，userId={}, tool={}, signature={}",
                             request.sessionKey(), toolCall.name(), voiceSynthesisSignature);
-                    messages.add(FunctionCallingMessage.tool(toolCall.id(), skippedResult));
+                    state.messages().add(FunctionCallingMessage.tool(toolCall.id(), skippedResult));
                     recordToolExecution(request, toolCall, skippedResult, "SKIPPED_DUPLICATE");
-                    previousToolResult = skippedResult;
-                    rollingHistory = appendRollingHistory(rollingHistory, toolCall.name(), skippedResult);
+                    state.recordSkippedToolCall(toolCall.name(), skippedResult);
                     continue;
                 }
 
-                AgentToolExecutionResult toolResult = executeTool(request, toolCall, rollingHistory, previousToolResult);
-                messages.add(FunctionCallingMessage.tool(toolCall.id(), toolResult.modelText()));
+                AgentToolExecutionResult toolResult = executeTool(
+                        request, toolCall, state.rollingHistory(), state.previousToolResult());
+                state.messages().add(FunctionCallingMessage.tool(toolCall.id(), toolResult.modelText()));
                 if ("taxi_service".equals(toolCall.name())
                         || "food_delivery".equals(toolCall.name())
                         || "meituan_travel".equals(toolCall.name())) {
                     // These tools own their user-facing response. Continuing the model loop would
                     // duplicate a staged action or rewrite an official provider result.
+                    state.stop(AgentLoopStopReason.SPECIAL_TOOL_DONE);
                     return Optional.of(WechatReply.text(toolResult.modelText()));
                 }
                 if ("FAILED".equals(toolResult.status())) {
-                    lastToolFailure = toolResult.modelText();
+                    state.recordToolFailure(toolCall.name(), toolResult.modelText());
                     if ("map_search".equals(toolCall.name()) && requiresUserClarification(toolResult.modelText())) {
+                        state.stop(AgentLoopStopReason.NEEDS_CLARIFICATION);
                         return Optional.of(WechatReply.text(toolResult.modelText()));
                     }
                 }
-                replaceExistingMediaOfSameType(visibleParts, toolResult.visibleParts());
-                visibleParts.addAll(toolResult.visibleParts());
-                previousToolResult = toolResult.modelText();
+                state.replaceExistingMediaOfSameType(toolResult.visibleParts());
+                state.addVisibleParts(toolResult.visibleParts());
                 if ("FAILED".equalsIgnoreCase(toolResult.status())) {
-                    lastToolFailure = toolResult.modelText();
                     String failedSignature = toolFailureSignature(toolCall.name(), arguments, toolResult.errorMessage());
-                    if (!failedToolSignatures.add(failedSignature) && visibleParts.isEmpty()) {
-                        return Optional.of(WechatReply.text(lastToolFailure));
+                    if (!state.addFailedToolSignature(failedSignature) && !state.hasVisibleParts()) {
+                        state.stop(AgentLoopStopReason.TOOL_FAILURE);
+                        return Optional.of(WechatReply.text(state.lastToolFailure()));
                     }
                 } else if (!toolResult.modelText().isBlank()) {
-                    lastToolFailure = "";
+                    state.rememberSuccessfulToolResult(toolSignature, toolResult.modelText());
+                    state.recordToolResult(toolCall.name(), toolResult.modelText());
                 }
-                rollingHistory = appendRollingHistory(rollingHistory, toolCall.name(), toolResult.modelText());
             }
         }
 
-        if (!visibleParts.isEmpty()) {
-            return Optional.of(WechatReply.ordered(visibleParts));
+        if (state.hasVisibleParts()) {
+            state.stop(AgentLoopStopReason.MEDIA_RESULT);
+            return Optional.of(WechatReply.ordered(state.visibleParts()));
         }
-        if (!lastToolFailure.isBlank()) {
-            return Optional.of(WechatReply.text(lastToolFailure));
+        if (!state.lastToolFailure().isBlank()) {
+            state.stop(AgentLoopStopReason.TOOL_FAILURE);
+            return Optional.of(WechatReply.text(state.lastToolFailure()));
         }
+        state.stop(AgentLoopStopReason.MAX_ROUNDS);
         return Optional.of(WechatReply.text("这次需求处理步骤比较多，我已经停止继续调用工具。你可以把需求拆短一点再发我。"));
     }
 
@@ -202,6 +208,10 @@ public class FunctionCallingAgentLoop {
 
     private String toolFailureSignature(String toolName, Map<String, String> arguments, String errorMessage) {
         return firstNonBlank(toolName) + "|" + normalizeForSignature(String.valueOf(arguments)) + "|" + normalizeForSignature(errorMessage);
+    }
+
+    private String toolCallSignature(String toolName, Map<String, String> arguments) {
+        return firstNonBlank(toolName) + "|" + normalizeForSignature(new TreeMap<>(arguments == null ? Map.of() : arguments).toString());
     }
 
     private String normalizeForSignature(String value) {
@@ -234,23 +244,6 @@ public class FunctionCallingAgentLoop {
 
     private boolean containsVisibleMediaPart(List<WechatReply.Part> parts) {
         return containsImagePart(parts) || containsVoicePart(parts) || containsFilePart(parts);
-    }
-
-    private void replaceExistingMediaOfSameType(
-            List<WechatReply.Part> currentParts,
-            List<WechatReply.Part> incomingParts) {
-        if (currentParts == null || currentParts.isEmpty() || incomingParts == null || incomingParts.isEmpty()) {
-            return;
-        }
-        if (containsImagePart(incomingParts)) {
-            currentParts.removeIf(part -> part != null && part.hasImage());
-        }
-        if (containsVoicePart(incomingParts)) {
-            currentParts.removeIf(part -> part != null && part.hasVoice());
-        }
-        if (containsFilePart(incomingParts)) {
-            currentParts.removeIf(part -> part != null && part.hasFile());
-        }
     }
 
     private AgentToolExecutionResult invalidToolCallResult(
@@ -438,15 +431,6 @@ public class FunctionCallingAgentLoop {
             text.append(System.lineSeparator());
         }
         text.append(value);
-    }
-
-    private String appendRollingHistory(String history, String toolName, String result) {
-        StringBuilder updated = new StringBuilder(history == null ? "" : history.strip());
-        if (!updated.isEmpty()) {
-            updated.append(System.lineSeparator());
-        }
-        updated.append("工具 ").append(toolName).append(" 结果：").append(result == null ? "" : result.strip());
-        return updated.toString();
     }
 
     private void recordToolExecution(

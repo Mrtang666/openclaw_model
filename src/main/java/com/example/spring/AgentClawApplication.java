@@ -8,6 +8,7 @@ import com.example.spring.wechat.memory.config.WechatMemoryProperties;
 import com.example.spring.wechat.web.config.WebToolProperties;
 import com.example.spring.wechat.taxi.client.DidiMcpProperties;
 import com.example.spring.wechat.payment.config.WechatPayProperties;
+import com.example.spring.wechat.reminder.config.ReminderProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -25,7 +26,8 @@ import com.example.spring.wechat.netdisk.config.BaiduNetdiskProperties;
         WebToolProperties.class,
         DidiMcpProperties.class,
         WechatPayProperties.class,
-        BaiduNetdiskProperties.class
+        BaiduNetdiskProperties.class,
+        ReminderProperties.class
 })
 @EnableScheduling
 public class AgentClawApplication {

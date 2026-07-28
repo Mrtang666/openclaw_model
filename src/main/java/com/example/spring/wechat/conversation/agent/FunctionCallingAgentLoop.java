@@ -16,6 +16,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -34,6 +38,14 @@ import java.util.Set;
 public class FunctionCallingAgentLoop {
 
     private static final Logger log = LoggerFactory.getLogger(FunctionCallingAgentLoop.class);
+    private static final Set<String> TERMINAL_ACTION_TOOLS = Set.of(
+            "taxi_service",
+            "reminder_create",
+            "reminder_create_after",
+            "reminder_update",
+            "reminder_cancel",
+            "reminder_complete",
+            "reminder_snooze");
 
     private static final String SYSTEM_PROMPT = """
             你是 OpenClaw 微信端 Agent。
@@ -57,24 +69,39 @@ public class FunctionCallingAgentLoop {
     private final WechatToolRegistry toolRegistry;
     private final ToolCallValidator toolCallValidator;
     private final int maxLoopRounds;
+    private final Clock clock;
+    private final ZoneId defaultZoneId;
 
     @Autowired
     public FunctionCallingAgentLoop(
             DashScopeFunctionCallingClient client,
             WechatToolRegistry toolRegistry,
             ToolCallValidator toolCallValidator,
-            @Value("${agent.tool-calling.max-loop-rounds:5}") int maxLoopRounds) {
+            @Value("${agent.tool-calling.max-loop-rounds:5}") int maxLoopRounds,
+            Clock clock,
+            @Value("${reminder.default-timezone:Asia/Shanghai}") String defaultTimezone) {
         this.client = client;
         this.toolRegistry = toolRegistry;
         this.toolCallValidator = toolCallValidator;
         this.maxLoopRounds = Math.max(1, maxLoopRounds);
+        this.clock = clock;
+        this.defaultZoneId = ZoneId.of(defaultTimezone);
     }
 
     FunctionCallingAgentLoop(
             DashScopeFunctionCallingClient client,
             WechatToolRegistry toolRegistry,
             int maxLoopRounds) {
-        this(client, toolRegistry, new ToolCallValidator(), maxLoopRounds);
+        this(client, toolRegistry, new ToolCallValidator(), maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
+    }
+
+    FunctionCallingAgentLoop(
+            DashScopeFunctionCallingClient client,
+            WechatToolRegistry toolRegistry,
+            int maxLoopRounds,
+            Clock clock,
+            String defaultTimezone) {
+        this(client, toolRegistry, new ToolCallValidator(), maxLoopRounds, clock, defaultTimezone);
     }
 
     public Optional<WechatReply> run(FunctionCallingAgentRequest request) {
@@ -88,7 +115,7 @@ public class FunctionCallingAgentLoop {
         }
 
         List<FunctionCallingMessage> messages = new ArrayList<>();
-        messages.add(FunctionCallingMessage.system(SYSTEM_PROMPT));
+        messages.add(FunctionCallingMessage.system(runtimeSystemPrompt(clock.instant())));
         messages.add(FunctionCallingMessage.user(userPrompt(request)));
 
         List<WechatReply.Part> visibleParts = new ArrayList<>();
@@ -145,10 +172,9 @@ public class FunctionCallingAgentLoop {
 
                 AgentToolExecutionResult toolResult = executeTool(request, toolCall, rollingHistory, previousToolResult);
                 messages.add(FunctionCallingMessage.tool(toolCall.id(), toolResult.modelText()));
-                if ("taxi_service".equals(toolCall.name())) {
-                    // Taxi operations are explicit conversation stages. Their result either asks
-                    // for user confirmation or reports one completed action, so continuing the
-                    // model loop would repeat POI lookup, quoting, or order creation.
+                if (endsAgentTurnAfterExecution(toolCall.name())) {
+                    // Side-effecting tools return their authoritative result directly. Continuing
+                    // the model loop could repeat an order or reminder, or misstate the saved time.
                     return Optional.of(WechatReply.text(toolResult.modelText()));
                 }
                 if ("FAILED".equals(toolResult.status())) {
@@ -308,9 +334,34 @@ public class FunctionCallingAgentLoop {
     }
 
     private boolean isToolFailureReply(String toolName, String modelText) {
-        return "map_search".equals(toolName)
-                && modelText != null
-                && modelText.startsWith("地图查询失败：");
+        if (modelText == null) {
+            return false;
+        }
+        if ("map_search".equals(toolName) && modelText.startsWith("地图查询失败：")) {
+            return true;
+        }
+        return toolName != null
+                && toolName.startsWith("reminder_")
+                && modelText.startsWith("提醒操作未完成：");
+    }
+
+    private boolean endsAgentTurnAfterExecution(String toolName) {
+        return TERMINAL_ACTION_TOOLS.contains(toolName);
+    }
+
+    private String runtimeSystemPrompt(Instant now) {
+        String currentTime = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(now.atZone(defaultZoneId));
+        return SYSTEM_PROMPT + """
+
+                时间与提醒规则：
+                - 服务器当前时间：%s
+                - 默认时区：%s
+                - 用户说“几分钟后”“几小时后”或“几天后”时，必须调用 reminder_create_after，
+                  原样提取 delay_value 和 delay_unit，禁止换算分钟或 execute_at。
+                - 只有用户明确指定日期和钟点时才调用 reminder_create。
+                - 用户说“再提醒我”且没有指定原提醒编号或标题时，调用 reminder_snooze，
+                  不传 reminder_id 和 title，由程序选择当前会话最近发送的提醒。
+                """.formatted(currentTime, defaultZoneId.getId());
     }
 
     private boolean requiresUserClarification(String modelText) {

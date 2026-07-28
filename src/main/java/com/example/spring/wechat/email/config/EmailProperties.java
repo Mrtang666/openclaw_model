@@ -7,23 +7,28 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 
+//作用：统一读取邮箱配置。
 @Component
 @ConfigurationProperties(prefix = "email")
 public class EmailProperties {
 
     private boolean enabled = true;
+
     private String host = "smtp.qq.com";
     private int port = 465;
     private boolean ssl = true;
     private String username = "";
     private String password = "";
     private String from = "";
+
     private long maxAttachmentSizeMb = 25;
     private Path workDir = Path.of("data", "email", "attachments");
     private boolean receiveEnabled = true;
+
     private String imapHost = "imap.qq.com";
     private int imapPort = 993;
     private boolean imapSsl = true;
+
     private int queryLimit = 10;
     private int queryScanLimit = 100;
     private Path attachmentDownloadDir = Path.of("data", "downloads", "email", "attachments");

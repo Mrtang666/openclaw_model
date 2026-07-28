@@ -10,6 +10,7 @@ import com.example.spring.wechat.conversation.WechatConversationService;
 import com.example.spring.wechat.login.WechatLoginPageSession;
 import com.example.spring.wechat.login.WechatLoginPageSessionService;
 import com.example.spring.wechat.login.WechatLoginPageUrlService;
+import com.example.spring.wechat.report.WechatReplyPresentationService;
 import com.example.spring.wechat.bot.concurrency.ConversationKey;
 import com.example.spring.wechat.bot.concurrency.WechatConcurrencyProperties;
 import com.example.spring.wechat.bot.concurrency.WechatMessageDispatcher;
@@ -62,6 +63,7 @@ public class WechatBotService {
     private final WechatLoginPageUrlService loginPageUrlService;
     private final ClawBotConnectionProperties connectionProperties;
     private final WechatConcurrencyProperties concurrencyProperties;
+    private final WechatReplyPresentationService replyPresentationService;
     private final ExecutorService receiverExecutor = Executors.newCachedThreadPool(task -> {
         Thread thread = new Thread(task, "wechat-receiver-" + UUID.randomUUID());
         thread.setDaemon(true);
@@ -80,7 +82,8 @@ public class WechatBotService {
                 null,
                 null,
                 new ClawBotConnectionProperties(),
-                new WechatConcurrencyProperties());
+                new WechatConcurrencyProperties(),
+                null);
     }
 
     public WechatBotService(
@@ -94,7 +97,8 @@ public class WechatBotService {
                 loginPageSessionService,
                 loginPageUrlService,
                 new ClawBotConnectionProperties(),
-                new WechatConcurrencyProperties());
+                new WechatConcurrencyProperties(),
+                null);
     }
 
     @Autowired
@@ -104,14 +108,33 @@ public class WechatBotService {
             WechatLoginPageSessionService loginPageSessionService,
             WechatLoginPageUrlService loginPageUrlService,
             ClawBotConnectionProperties connectionProperties,
-            WechatConcurrencyProperties concurrencyProperties) {
+            WechatConcurrencyProperties concurrencyProperties,
+            ObjectProvider<WechatReplyPresentationService> replyPresentationServiceProvider) {
         this(
                 clientFactory,
                 (sessionKey, message) -> conversationServiceProvider.getObject().handleWechat(sessionKey, message),
                 loginPageSessionService,
                 loginPageUrlService,
                 connectionProperties,
-                concurrencyProperties);
+                concurrencyProperties,
+                replyPresentationServiceProvider == null ? null : replyPresentationServiceProvider.getIfAvailable());
+    }
+
+    public WechatBotService(
+            WechatClientFactory clientFactory,
+            ObjectProvider<WechatConversationService> conversationServiceProvider,
+            WechatLoginPageSessionService loginPageSessionService,
+            WechatLoginPageUrlService loginPageUrlService,
+            ClawBotConnectionProperties connectionProperties,
+            WechatConcurrencyProperties concurrencyProperties) {
+        this(
+                clientFactory,
+                conversationServiceProvider,
+                loginPageSessionService,
+                loginPageUrlService,
+                connectionProperties,
+                concurrencyProperties,
+                null);
     }
 
     WechatBotService(WechatClientFactory clientFactory, AgentService agentService) {
@@ -119,7 +142,7 @@ public class WechatBotService {
             StringBuilder reply = new StringBuilder();
             agentService.handleStreaming(message.text() == null ? "" : message.text(), reply::append);
             return WechatReply.text(reply.toString().strip());
-        }, null, null, new ClawBotConnectionProperties(), new WechatConcurrencyProperties());
+        }, null, null, new ClawBotConnectionProperties(), new WechatConcurrencyProperties(), null);
     }
 
     private WechatBotService(
@@ -128,13 +151,15 @@ public class WechatBotService {
             WechatLoginPageSessionService loginPageSessionService,
             WechatLoginPageUrlService loginPageUrlService,
             ClawBotConnectionProperties connectionProperties,
-            WechatConcurrencyProperties concurrencyProperties) {
+            WechatConcurrencyProperties concurrencyProperties,
+            WechatReplyPresentationService replyPresentationService) {
         this.clientFactory = clientFactory;
         this.messageHandler = messageHandler;
         this.loginPageSessionService = loginPageSessionService;
         this.loginPageUrlService = loginPageUrlService;
         this.connectionProperties = connectionProperties;
         this.concurrencyProperties = concurrencyProperties;
+        this.replyPresentationService = replyPresentationService;
         this.messageDispatcher = new WechatMessageDispatcher(concurrencyProperties);
         this.modelSlots = new Semaphore(concurrencyProperties.getModelMaxConcurrency(), true);
     }
@@ -339,6 +364,9 @@ public class WechatBotService {
                     preview(message.text()),
                     message.images() == null ? 0 : message.images().size());
             WechatReply reply = messageHandler.handle(key.sessionKey(), message);
+            if (replyPresentationService != null) {
+                reply = replyPresentationService.enhance(reply, message.text());
+            }
             String text = reply == null || reply.text() == null ? "" : reply.text().strip();
             if (reply != null && reply.parts() != null && !reply.parts().isEmpty()) {
                 sendReplyParts(runtime.client, message.fromUserId(), reply.parts());

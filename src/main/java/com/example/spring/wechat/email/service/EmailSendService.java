@@ -28,6 +28,7 @@ import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+//执行邮件发送
 @Service
 public class EmailSendService {
 

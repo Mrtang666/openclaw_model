@@ -486,6 +486,94 @@ class FunctionCallingAgentLoopTests {
         verify(client, org.mockito.Mockito.times(2)).chat(anyList(), anyList());
     }
 
+    @Test
+    void skipsWebSearchWhenRagContextAlreadyProvidesEvidence() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        FakeSuccessfulWebSearchTool webSearch = new FakeSuccessfulWebSearchTool();
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client,
+                new WechatToolRegistry(List.of(webSearch)),
+                5);
+        when(client.chat(anyList(), anyList()))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "",
+                        List.of(new FunctionCallingToolCall(
+                                "call_search_1",
+                                "web_search",
+                                Map.of("query", "OpenClaw RAG 流程"))))))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "我直接根据知识库资料回答。",
+                        List.of())));
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "OpenClaw RAG 流程是什么",
+                "No previous context",
+                "[知识1]\n标题：OpenClaw RAG 工作流\n内容：RAG 的核心流程是检索、增强、生成。",
+                List.of(),
+                List.of(),
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                }))
+                .orElseThrow();
+
+        assertThat(reply.text()).isEqualTo("我直接根据知识库资料回答。");
+        assertThat(webSearch.callCount).isZero();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<FunctionCallingMessage>> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(client, org.mockito.Mockito.times(2)).chat(messagesCaptor.capture(), anyList());
+        assertThat(messagesCaptor.getAllValues().get(1))
+                .anySatisfy(message -> {
+                    assertThat(message.role()).isEqualTo("tool");
+                    assertThat(message.toolCallId()).isEqualTo("call_search_1");
+                    assertThat(message.content()).contains("知识库", "web_search");
+                });
+    }
+
+    @Test
+    void allowsWebSearchWhenUserExplicitlyRequestsFreshInformation() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        FakeSuccessfulWebSearchTool webSearch = new FakeSuccessfulWebSearchTool();
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client,
+                new WechatToolRegistry(List.of(webSearch)),
+                5);
+        when(client.chat(anyList(), anyList()))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "",
+                        List.of(new FunctionCallingToolCall(
+                                "call_search_1",
+                                "web_search",
+                                Map.of("query", "OpenClaw 最新版本"))))))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "我结合最新网页结果回答。",
+                        List.of())));
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "查一下 OpenClaw 最新资料",
+                "No previous context",
+                "[知识1]\n标题：OpenClaw 项目定位\n内容：本地知识库已有基础资料。",
+                List.of(),
+                List.of(),
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                }))
+                .orElseThrow();
+
+        assertThat(reply.text()).isEqualTo("我结合最新网页结果回答。");
+        assertThat(webSearch.callCount).isEqualTo(1);
+        verify(client, org.mockito.Mockito.times(2)).chat(anyList(), anyList());
+    }
+
     private static final class FakeWeatherTool implements WechatTool {
 
         private boolean called;
@@ -630,6 +718,37 @@ class FunctionCallingAgentLoopTests {
         @Override
         public WechatReply execute(WechatToolRequest request) {
             throw new RuntimeException("百炼 WebSearch 未返回可用搜索结果");
+        }
+    }
+
+    private static final class FakeSuccessfulWebSearchTool implements WechatTool {
+
+        private int callCount;
+
+        @Override
+        public String name() {
+            return "web_search";
+        }
+
+        @Override
+        public String description() {
+            return "search web";
+        }
+
+        @Override
+        public List<String> arguments() {
+            return List.of("query");
+        }
+
+        @Override
+        public List<WechatToolParameter> parameters() {
+            return List.of(WechatToolParameter.requiredString("query", "search query", "OpenClaw"));
+        }
+
+        @Override
+        public WechatReply execute(WechatToolRequest request) {
+            callCount++;
+            return WechatReply.text("web result for " + request.argument("query"));
         }
     }
 

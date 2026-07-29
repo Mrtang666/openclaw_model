@@ -176,6 +176,16 @@ public class FunctionCallingAgentLoop {
                     continue;
                 }
 
+                if (shouldSkipWebSearchBecauseRagHasEvidence(request, toolCall, arguments)) {
+                    String skippedResult = "\u5df2\u8df3\u8fc7 web_search\uff1a\u77e5\u8bc6\u5e93 RAG \u5df2\u63d0\u4f9b\u76f8\u5173\u8bc1\u636e\uff0c\u8bf7\u4f18\u5148\u57fa\u4e8e\u77e5\u8bc6\u5e93\u8d44\u6599\u56de\u7b54\uff1b\u53ea\u6709\u7528\u6237\u660e\u786e\u8981\u6c42\u6700\u65b0\u3001\u5b9e\u65f6\u3001\u8054\u7f51\u6216\u516c\u5f00\u7f51\u9875\u8d44\u6599\u65f6\u624d\u9700\u8981\u7f51\u7edc\u641c\u7d22\u3002";
+                    log.info("Function Calling Agent Loop skip web_search because RAG has evidence, userId={}, query={}",
+                            request.sessionKey(), preview(String.valueOf(arguments)));
+                    state.messages().add(FunctionCallingMessage.tool(toolCall.id(), skippedResult));
+                    recordToolExecution(request, toolCall, skippedResult, "SKIPPED_RAG");
+                    state.recordSkippedToolCall(toolCall.name(), skippedResult);
+                    continue;
+                }
+
                 AgentToolExecutionResult toolResult = executeTool(
                         request, toolCall, state.rollingHistory(), state.previousToolResult());
                 state.messages().add(FunctionCallingMessage.tool(toolCall.id(), toolResult.modelText()));
@@ -220,6 +230,48 @@ public class FunctionCallingAgentLoop {
         }
         state.stop(AgentLoopStopReason.MAX_ROUNDS);
         return Optional.of(WechatReply.text("这次需求处理步骤比较多，我已经停止继续调用工具。你可以把需求拆短一点再发我。"));
+    }
+
+    private boolean shouldSkipWebSearchBecauseRagHasEvidence(
+            FunctionCallingAgentRequest request,
+            FunctionCallingToolCall toolCall,
+            Map<String, String> arguments) {
+        if (request == null || toolCall == null || !"web_search".equals(toolCall.name())) {
+            return false;
+        }
+        if (request.ragContext().isBlank()) {
+            return false;
+        }
+        return !requiresFreshWebSearch(request.userText(), arguments);
+    }
+
+    private boolean requiresFreshWebSearch(String userText, Map<String, String> arguments) {
+        StringBuilder text = new StringBuilder(firstNonBlank(userText).toLowerCase(java.util.Locale.ROOT));
+        if (arguments != null && !arguments.isEmpty()) {
+            for (String value : arguments.values()) {
+                if (value != null && !value.isBlank()) {
+                    text.append(' ').append(value.toLowerCase(java.util.Locale.ROOT));
+                }
+            }
+        }
+        return containsAny(text.toString(),
+                "\u6700\u65b0", "\u6700\u8fd1", "\u4eca\u5929", "\u73b0\u5728", "\u5f53\u524d", "\u5b9e\u65f6",
+                "\u8054\u7f51", "\u4e92\u8054\u7f51", "\u7f51\u9875", "\u5b98\u7f51", "\u65b0\u95fb",
+                "\u4ef7\u683c", "\u641c\u7d22", "\u516c\u5f00\u8d44\u6599",
+                "latest", "current", "today", "recent", "web", "internet",
+                "official", "news", "price");
+    }
+
+    private boolean containsAny(String text, String... markers) {
+        if (text == null || text.isBlank() || markers == null) {
+            return false;
+        }
+        for (String marker : markers) {
+            if (marker != null && !marker.isBlank() && text.contains(marker)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String voiceSynthesisSignature(String toolName, Map<String, String> arguments) {

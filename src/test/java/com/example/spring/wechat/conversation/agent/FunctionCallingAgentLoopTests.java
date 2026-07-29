@@ -156,6 +156,59 @@ class FunctionCallingAgentLoopTests {
     }
 
     @Test
+    void skipsDuplicateSuccessfulToolCallAndReturnsCachedResultToModel() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        FakeWeatherTool weatherTool = new FakeWeatherTool();
+        WechatToolRegistry registry = new WechatToolRegistry(List.of(weatherTool));
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(client, registry, 5);
+
+        when(client.chat(anyList(), anyList()))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "",
+                        List.of(new FunctionCallingToolCall(
+                                "call_weather_1",
+                                "weather",
+                                Map.of("city", "Hangzhou"))))))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "",
+                        List.of(new FunctionCallingToolCall(
+                                "call_weather_2",
+                                "weather",
+                                Map.of("city", "Hangzhou"))))))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "I reused the weather result.",
+                        List.of())));
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "Check Hangzhou weather twice",
+                "No previous context",
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                }))
+                .orElseThrow();
+
+        assertThat(reply.text()).isEqualTo("I reused the weather result.");
+        assertThat(weatherTool.callCount).isEqualTo(1);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<FunctionCallingMessage>> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(client, org.mockito.Mockito.times(3)).chat(messagesCaptor.capture(), anyList());
+        List<FunctionCallingMessage> thirdRoundMessages = messagesCaptor.getAllValues().get(2);
+        assertThat(thirdRoundMessages)
+                .anySatisfy(message -> {
+                    assertThat(message.role()).isEqualTo("tool");
+                    assertThat(message.toolCallId()).isEqualTo("call_weather_2");
+                    assertThat(message.content()).contains("weather result for Hangzhou");
+                });
+    }
+
+
+    @Test
     void doesNotExposeDuplicateVoiceFilesWhenModelCallsVoiceSynthesisAgainAfterToolResult() {
         DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
         FakeVoiceTool voiceTool = new FakeVoiceTool();
@@ -338,6 +391,7 @@ class FunctionCallingAgentLoopTests {
     private static final class FakeWeatherTool implements WechatTool {
 
         private boolean called;
+        private int callCount;
 
         @Override
         public String name() {
@@ -362,6 +416,7 @@ class FunctionCallingAgentLoopTests {
         @Override
         public WechatReply execute(WechatToolRequest request) {
             called = true;
+            callCount++;
             return WechatReply.text("weather result for " + request.argument("city") + ": sunny");
         }
     }

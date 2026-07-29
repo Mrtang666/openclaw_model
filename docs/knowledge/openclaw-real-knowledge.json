@@ -1,0 +1,86 @@
+[
+  {
+    "title": "OpenClaw 项目定位",
+    "content": "OpenClaw 是一个面向微信个人助手场景的智能代理项目，核心目标是让用户可以通过微信自然语言完成问答、工具调用、图片处理、语音回复、网页阅读、知识库检索等任务。项目强调消息处理链路的稳定性：普通聊天、Function Calling、RAG 检索、外部工具调用都应该能在同一套会话服务里协同工作。对于长期可复用的资料，系统会写入个人知识库，后续回答时优先检索这些资料，再生成更贴近用户上下文的回复。",
+    "sourceType": "note",
+    "sourceUrl": "docs/knowledge/openclaw-real-knowledge.json#openclaw-project-positioning",
+    "tags": "openclaw,project,overview,real"
+  },
+  {
+    "title": "微信消息处理主流程",
+    "content": "微信消息进入系统后，先由适配层解析消息来源、文本、图片、语音、文件等内容，再交给会话服务处理。会话服务会判断消息类型和用户意图：天气、地图、图片生成、语音合成、网页阅读、知识库管理等任务会进入对应工具链；普通问答会调用大模型生成回复。知识类问题在进入大模型前，应先构造 RAG 上下文：根据用户问题检索知识库，筛选和重排相关片段，把证据打包后注入 prompt，再让 LLM 基于资料回答。",
+    "sourceType": "note",
+    "sourceUrl": "docs/knowledge/openclaw-real-knowledge.json#wechat-message-flow",
+    "tags": "wechat,conversation,rag,workflow,real"
+  },
+  {
+    "title": "RAG 检索增强生成流程",
+    "content": "RAG 的工作流分为检索、增强、生成。检索阶段先对用户问题做 query planning，把原始问题改写成 2 到 3 个更适合向量检索的查询；随后调用知识库检索服务从 Qdrant 召回候选片段。增强阶段会过滤低分结果，并通过重排服务结合向量分数、标题命中、正文命中综合排序，再把相邻片段合并成证据包。生成阶段会把证据上下文注入模型，让模型优先依据知识库内容作答。如果检索失败，RAG 必须 fail-open，不影响正常聊天。",
+    "sourceType": "note",
+    "sourceUrl": "docs/knowledge/openclaw-real-knowledge.json#rag-workflow",
+    "tags": "rag,retrieval,generation,workflow,real"
+  },
+  {
+    "title": "知识库入库标准",
+    "content": "真实资料入库必须走 KnowledgeIngestionService.add 方法，不能绕过标准链路直接写数据库或向量库。标准链路会完成正文清洗、内容哈希去重、chunk 切分、embedding 向量化、MySQL 文档元信息保存、Qdrant 向量片段写入和操作日志记录。入库字段建议包含 title、content、sourceType、sourceUrl、tags。title 要能准确描述资料主题；content 要保留足够上下文；sourceUrl 要能追踪资料来源；tags 用于后续筛选和管理。",
+    "sourceType": "note",
+    "sourceUrl": "docs/knowledge/openclaw-real-knowledge.json#knowledge-ingestion-standard",
+    "tags": "knowledge,ingestion,metadata,real"
+  },
+  {
+    "title": "真实资料导入命令",
+    "content": "真实知识导入使用 /knowledge_import <session_key> <file_or_directory_path> [tags] 命令。该命令支持单个 .txt、.md 文件，也支持递归导入目录中的 .txt、.md、.json、.jsonl 文件。文本文件会使用文件名作为 title，文件正文作为 content，sourceType 设置为 file，sourceUrl 记录本地绝对路径。JSON 和 JSONL 支持结构化字段 title、content、sourceType、sourceUrl、tags。无论哪种来源，最终都会调用 KnowledgeIngestionService.add 进入正式知识库。",
+    "sourceType": "note",
+    "sourceUrl": "docs/knowledge/openclaw-real-knowledge.json#knowledge-import-command",
+    "tags": "knowledge,import,cli,real"
+  },
+  {
+    "title": "Qdrant 向量检索调优",
+    "content": "Qdrant 检索效果主要受 embedding 质量、chunk 大小、chunk overlap、topK、minScore、标签过滤和重排策略影响。chunk 太大会导致召回内容粗糙，chunk 太小会丢失上下文；topK 太小会漏掉相关资料，太大则会增加无关内容；minScore 太高会查不到资料，太低会引入噪声。建议先使用固定问题集评估召回结果，再逐步调整 topK、minScore 和 query planning 规则。",
+    "sourceType": "note",
+    "sourceUrl": "docs/knowledge/openclaw-real-knowledge.json#qdrant-tuning",
+    "tags": "qdrant,vector,retrieval,tuning,real"
+  },
+  {
+    "title": "RAG 重排策略",
+    "content": "RAG 重排的目标是把最适合回答当前问题的证据排在前面。当前策略可以综合使用向量相似度、标题关键词命中、正文关键词命中和原始召回顺序。标题命中说明文档主题更匹配，正文命中说明片段内容可用，向量分数说明语义接近。重排之后只保留 topK 个片段，再交给证据包构建器去重和合并。后续可以增加更强的 cross-encoder 或 LLM rerank，但要控制延迟和成本。",
+    "sourceType": "note",
+    "sourceUrl": "docs/knowledge/openclaw-real-knowledge.json#rag-rerank",
+    "tags": "rag,rerank,evidence,real"
+  },
+  {
+    "title": "RAG 证据包构建规则",
+    "content": "证据包构建器负责把检索结果整理成适合注入模型的上下文。它应该先按 documentId 和 chunkIndex 去重，再合并同一文档中相邻的 chunk，避免模型看到重复、割裂的片段。证据包内容要控制在 maxContextChars 以内，并在 includeSources 开启时保留标题、来源类型、来源地址和分数。证据包不是最终回答，它只是生成阶段的参考材料。",
+    "sourceType": "note",
+    "sourceUrl": "docs/knowledge/openclaw-real-knowledge.json#rag-evidence-pack",
+    "tags": "rag,evidence,context,real"
+  },
+  {
+    "title": "RAG 排查清单",
+    "content": "如果知识库数据导入后 RAG 没有命中，先检查 session_key 是否和当前对话一致，再确认导入命令是否成功、是否有失败项、content 是否为空、tags 是否过度过滤。然后检查 embedding 服务是否可用，Qdrant collection 是否存在，向量维度是否一致。若能召回但答案质量差，重点检查 query planning 是否生成了有效查询、minScore 是否过高、topK 是否过小、证据包是否被截断，以及 prompt 是否要求模型优先依据知识库回答。",
+    "sourceType": "note",
+    "sourceUrl": "docs/knowledge/openclaw-real-knowledge.json#rag-troubleshooting",
+    "tags": "rag,debug,checklist,real"
+  },
+  {
+    "title": "知识库数据维护建议",
+    "content": "真实知识库需要定期维护。过期资料要删除或更新标题和标签，重复资料要依赖内容哈希避免重复入库，来源不清的资料要补 sourceUrl。对于项目文档，建议按主题拆成多个文件，例如部署、接口、故障排查、业务流程、RAG 调优，而不是把所有内容塞进一个超长文档。资料更新后，如果正文发生变化，应该重新导入，让新的 chunk 和向量进入知识库。",
+    "sourceType": "note",
+    "sourceUrl": "docs/knowledge/openclaw-real-knowledge.json#knowledge-maintenance",
+    "tags": "knowledge,maintenance,real"
+  },
+  {
+    "title": "生产环境导入注意事项",
+    "content": "生产环境导入真实资料前，应该先确认资料没有敏感密钥、个人隐私、临时 token 或不可公开的第三方内容。导入路径建议使用只读资料目录，避免把日志、缓存、构建产物误导入知识库。批量导入后要查看成功、重复和失败数量，失败项需要单独修复。对于重要资料，导入完成后应该用固定问题验证召回，例如项目流程是什么、知识库怎么入库、Qdrant 怎么调优。",
+    "sourceType": "note",
+    "sourceUrl": "docs/knowledge/openclaw-real-knowledge.json#production-import-notes",
+    "tags": "production,import,safety,real"
+  },
+  {
+    "title": "推荐的 RAG 验证问题",
+    "content": "导入资料后，可以用一组固定问题验证 RAG 是否正常。推荐问题包括：OpenClaw 的项目定位是什么；微信消息处理流程是什么；RAG 的检索增强生成怎么走；真实资料导入命令怎么用；知识库入库为什么必须走 KnowledgeIngestionService.add；Qdrant 检索应该怎么调 topK 和 minScore；如果 RAG 没有命中应该怎么排查。这些问题能覆盖检索、增强、生成、入库、向量库和运维排查。",
+    "sourceType": "note",
+    "sourceUrl": "docs/knowledge/openclaw-real-knowledge.json#rag-validation-questions",
+    "tags": "rag,evaluation,questions,real"
+  }
+]

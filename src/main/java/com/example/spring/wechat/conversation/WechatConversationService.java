@@ -15,6 +15,7 @@ import com.example.spring.wechat.bot.WechatReply;
 import com.example.spring.wechat.conversation.agent.FunctionCallingAgentLoop;
 import com.example.spring.wechat.conversation.agent.FunctionCallingAgentRequest;
 import com.example.spring.wechat.conversation.memory.WechatAgentMemoryContextBuilder;
+import com.example.spring.wechat.conversation.rag.WechatRagContextService;
 import com.example.spring.wechat.document.model.ParsedDocument;
 import com.example.spring.wechat.document.service.DocumentArchiveService;
 import com.example.spring.wechat.document.service.DocumentParseService;
@@ -95,6 +96,7 @@ public class WechatConversationService {
     private final ImageReferenceSemanticResolver imageReferenceSemanticResolver;
     private final WechatAgentMemoryContextBuilder memoryContextBuilder = new WechatAgentMemoryContextBuilder();
     private WebResourceContextService webResourceContextService = new WebResourceContextService();
+    private WechatRagContextService ragContextService;
     private FunctionCallingAgentLoop functionCallingAgentLoop;
     private String toolCallingMode = "prompt-json";
     private final Map<String, WechatConversationMemory> memories = new ConcurrentHashMap<>();
@@ -154,6 +156,15 @@ public class WechatConversationService {
         if (service != null) {
             this.webResourceContextService = service;
         }
+    }
+
+    @Autowired
+    void configureRagContextService(ObjectProvider<WechatRagContextService> provider) {
+        configureRagContextService(provider.getIfAvailable());
+    }
+
+    void configureRagContextService(WechatRagContextService ragContextService) {
+        this.ragContextService = ragContextService;
     }
 
     private boolean isFunctionCallingMode() {
@@ -551,8 +562,10 @@ public class WechatConversationService {
                     sessionKey,
                     text,
                     conversationContext(sessionKey),
+                    ragContext(sessionKey, text),
                     files,
                     images,
+                    List.of(),
                     (userText, prompt) -> memoryFor(sessionKey).recordPendingImagePrompt(userText, prompt),
                     (userText, prompt) -> memoryFor(sessionKey).recordImage(userText, prompt),
                     (toolName, arguments, resultSummary, status) -> {
@@ -823,6 +836,18 @@ public class WechatConversationService {
                     .append("助手：").append(turn.assistantText()).append('\n');
         }
         return history.toString().strip();
+    }
+
+    private String ragContext(String sessionKey, String text) {
+        if (ragContextService == null) {
+            return "";
+        }
+        try {
+            return ragContextService.build(sessionKey, text);
+        } catch (RuntimeException exception) {
+            log.warn("RAG 上下文构造失败，userId={}, error={}", sessionKey, rootMessage(exception));
+            return "";
+        }
     }
 
     private String appendRollingHistory(String currentHistory, String toolName, String toolReplyText) {

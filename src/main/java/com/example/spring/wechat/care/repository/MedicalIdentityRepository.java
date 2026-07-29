@@ -67,6 +67,32 @@ public class MedicalIdentityRepository {
             return findUserById(user.id()).orElseThrow();
         }
 
+        Optional<MedicalUser> sameWechatUser = jdbc.query(
+                """
+                        SELECT u.* FROM medical_users u
+                        JOIN medical_user_wechat_bindings b ON b.user_id = u.id
+                        WHERE b.from_user_id = ? AND u.status = 'ACTIVE' AND b.status = 'ACTIVE'
+                        ORDER BY b.last_seen_at DESC, b.id DESC
+                        LIMIT 1
+                        """, USER_MAPPER, fromUserId).stream().findFirst();
+        if (sameWechatUser.isPresent()) {
+            MedicalUser user = sameWechatUser.get();
+            jdbc.update("""
+                    UPDATE medical_users SET display_name=?, last_active_at=?, updated_at=?, version=version+1
+                    WHERE id=?
+                    """, displayName, timestamp(now), timestamp(now), user.id());
+            jdbc.update("""
+                    INSERT INTO medical_user_wechat_bindings
+                    (user_id,connection_id,from_user_id,latest_session_key,status,first_seen_at,last_seen_at,created_at,updated_at)
+                    VALUES (?,?,?,?,'ACTIVE',?,?,?,?)
+                    ON DUPLICATE KEY UPDATE user_id=VALUES(user_id), latest_session_key=VALUES(latest_session_key),
+                        status='ACTIVE', last_seen_at=VALUES(last_seen_at), updated_at=VALUES(updated_at)
+                    """, user.id(), connectionId, fromUserId, sessionKey,
+                    timestamp(now), timestamp(now), timestamp(now), timestamp(now));
+            ensureRole(user.id(), role, now);
+            return findUserById(user.id()).orElseThrow();
+        }
+
         String userCode = role.name().substring(0, Math.min(role.name().length(), 3))
                 + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(Locale.ROOT);
         KeyHolder keyHolder = new GeneratedKeyHolder();
@@ -102,6 +128,35 @@ public class MedicalIdentityRepository {
     public Optional<MedicalUser> findUserByCode(String userCode) {
         return jdbc.query("SELECT * FROM medical_users WHERE user_code=?", USER_MAPPER, userCode)
                 .stream().findFirst();
+    }
+
+    public Optional<MedicalUser> findUserBySessionKey(String sessionKey) {
+        return jdbc.query("""
+                SELECT u.* FROM medical_users u
+                JOIN medical_user_wechat_bindings b ON b.user_id = u.id
+                WHERE b.latest_session_key = ? AND b.status = 'ACTIVE' AND u.status = 'ACTIVE'
+                ORDER BY b.last_seen_at DESC, b.id DESC
+                """, USER_MAPPER, clean(sessionKey)).stream().findFirst();
+    }
+
+    public Optional<MedicalRole> findCurrentRoleBySessionKey(String sessionKey) {
+        return jdbc.query("""
+                SELECT s.requested_role
+                FROM medical_login_sessions s
+                JOIN medical_user_wechat_bindings b ON b.connection_id = s.connection_id
+                WHERE b.latest_session_key = ? AND s.status = 'BOUND'
+                ORDER BY s.bound_at DESC, s.id DESC
+                LIMIT 1
+                """, (rs, rowNum) -> MedicalRole.valueOf(rs.getString("requested_role")), clean(sessionKey))
+                .stream().findFirst();
+    }
+
+    public List<MedicalRole> listActiveRoles(long userId) {
+        return jdbc.query("""
+                SELECT role_code FROM medical_user_roles
+                WHERE user_id=? AND status='ACTIVE'
+                ORDER BY id
+                """, (rs, rowNum) -> MedicalRole.valueOf(rs.getString("role_code")), userId);
     }
 
     public boolean hasActiveRole(long userId, MedicalRole role) {
@@ -217,6 +272,26 @@ public class MedicalIdentityRepository {
                 """, (rs, rowNum) -> new NotificationTarget(
                         rs.getLong("viewer_user_id"), rs.getString("connection_id"), rs.getString("from_user_id")),
                 patientUserId, permission, timestamp(now));
+    }
+
+    public List<NotificationTarget> listNotificationTargetsByRole(
+            long patientUserId,
+            MedicalRole role,
+            String permission,
+            Instant now) {
+        return jdbc.query("""
+                SELECT r.viewer_user_id,b.connection_id,b.from_user_id
+                FROM medical_patient_relations r
+                JOIN medical_relation_permissions p ON p.relation_id=r.id
+                JOIN medical_user_roles ur ON ur.user_id=r.viewer_user_id
+                    AND ur.role_code=? AND ur.status='ACTIVE'
+                JOIN medical_user_wechat_bindings b ON b.user_id=r.viewer_user_id AND b.status='ACTIVE'
+                WHERE r.patient_user_id=? AND r.status='ACTIVE' AND p.permission_code=?
+                  AND (p.expires_at IS NULL OR p.expires_at>?)
+                ORDER BY b.last_seen_at DESC,b.id DESC
+                """, (rs, rowNum) -> new NotificationTarget(
+                        rs.getLong("viewer_user_id"), rs.getString("connection_id"), rs.getString("from_user_id")),
+                role.name(), patientUserId, permission, timestamp(now));
     }
 
     public List<NotificationTarget> listUserNotificationTargets(long userId) {

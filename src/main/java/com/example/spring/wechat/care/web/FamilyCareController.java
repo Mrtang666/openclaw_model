@@ -1,6 +1,8 @@
 package com.example.spring.wechat.care.web;
 
 import com.example.spring.wechat.care.model.CareActor;
+import com.example.spring.wechat.care.service.CareAuthorizationService;
+import com.example.spring.wechat.care.service.CareDoctorContactService;
 import com.example.spring.wechat.care.service.CareMemoryService;
 import com.example.spring.wechat.care.service.CarePlanService;
 import com.example.spring.wechat.care.service.CareReportService;
@@ -18,12 +20,16 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
+import java.time.Instant;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/care/v1/family")
 public class FamilyCareController {
 
     private final CareApiSupport apiSupport;
+    private final CareAuthorizationService authorizationService;
+    private final CareDoctorContactService doctorContactService;
     private final CareReportService reportService;
     private final CareMemoryService memoryService;
     private final DailyCheckInService checkInService;
@@ -33,6 +39,8 @@ public class FamilyCareController {
 
     public FamilyCareController(
             CareApiSupport apiSupport,
+            CareAuthorizationService authorizationService,
+            CareDoctorContactService doctorContactService,
             CareReportService reportService,
             CareMemoryService memoryService,
             DailyCheckInService checkInService,
@@ -40,12 +48,36 @@ public class FamilyCareController {
             CarePlanService planService,
             CareTaskService taskService) {
         this.apiSupport = apiSupport;
+        this.authorizationService = authorizationService;
+        this.doctorContactService = doctorContactService;
         this.reportService = reportService;
         this.memoryService = memoryService;
         this.checkInService = checkInService;
         this.alertService = alertService;
         this.planService = planService;
         this.taskService = taskService;
+    }
+
+    @PostMapping("/patients/{patientId}/doctor-messages")
+    public CareApiResponse<?> contactDoctor(@RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable long patientId,
+            @RequestBody DoctorMessageRequest request) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(
+                doctorContactService.contactDoctor(context.actor(), patientId, request.message()),
+                context.traceId());
+    }
+
+    @PostMapping("/bindings")
+    public CareApiResponse<?> bindPatient(@RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @RequestBody PatientBindRequest request) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(authorizationService.bindPatientForViewer(context.actor(),
+                new CareAuthorizationService.ViewerBindCommand(
+                        request.patientUserCode(), request.relationLabel(), request.permissions(),
+                        request.expiresAt(), context.traceId())), context.traceId());
     }
 
     @GetMapping("/patients")
@@ -223,5 +255,15 @@ public class FamilyCareController {
     }
 
     public record TaskPostponeRequest(long version, int minutes, String note) {
+    }
+
+    public record PatientBindRequest(
+            String patientUserCode,
+            String relationLabel,
+            Set<String> permissions,
+            Instant expiresAt) {
+    }
+
+    public record DoctorMessageRequest(String message) {
     }
 }

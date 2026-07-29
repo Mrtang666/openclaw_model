@@ -57,7 +57,7 @@ public class WechatLoginPageController {
         }
         return switch (requestedRole) {
             case "PATIENT" -> "患者身份登录";
-            case "CAREGIVER", "FAMILY", "PARENT" -> "家属身份登录";
+            case "CAREGIVER", "FAMILY", "PARENT", "PARENTS" -> "家属身份登录";
             case "DOCTOR" -> "医生身份登录";
             default -> requestedRole;
         };

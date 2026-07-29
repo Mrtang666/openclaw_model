@@ -94,6 +94,7 @@ const planDraft = {
 };
 
 let selectedPatientId = "P001";
+let livePatients = [];
 
 const routes = {
     "/bind/caregiver": renderCaregiverBind,
@@ -109,17 +110,134 @@ function root() {
 }
 
 function currentRoute() {
-    return location.hash.replace(/^#/, "") || "/bind/caregiver";
+    const hash = location.hash.replace(/^#/, "") || "/bind/caregiver";
+    const [path, query = ""] = hash.split("?");
+    const params = new URLSearchParams(query);
+    const token = params.get("token");
+    const role = params.get("role");
+    if (token) localStorage.setItem("care_access_token", token);
+    if (role) localStorage.setItem("care_active_role", role);
+    return path || "/bind/caregiver";
 }
 
 function selectedPatient() {
-    return patients.find((patient) => patient.id === selectedPatientId) || patients[0];
+    const source = livePatients.length ? livePatients : patients;
+    return source.find((patient) => patient.id === selectedPatientId) || source[0] || patients[0];
 }
 
-function render() {
+async function render() {
     const route = currentRoute();
     updateNav(route);
-    (routes[route] || renderCaregiverBind)();
+    await (routes[route] || renderCaregiverBind)();
+}
+
+function token() {
+    return localStorage.getItem("care_access_token") || "";
+}
+
+function role() {
+    return localStorage.getItem("care_active_role") || "";
+}
+
+async function careApi(path, options = {}) {
+    if (!token()) throw new Error("缺少登录 token，请从微信机器人发送的链接进入。");
+    const response = await fetch(path, {
+        ...options,
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token()}`,
+            ...(options.headers || {})
+        }
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok || !body || body.code !== "OK") {
+        throw new Error(body?.message || `请求失败：${response.status}`);
+    }
+    return body.data;
+}
+
+function apiPrefix(kind) {
+    if (kind === "family") return "/api/care/v1/family";
+    if (kind === "clinical") return "/api/care/v1/clinical";
+    const active = role().toUpperCase();
+    return active === "DOCTOR" ? "/api/care/v1/clinical" : "/api/care/v1/family";
+}
+
+async function loadPatients(kind) {
+    const users = await careApi(`${apiPrefix(kind)}/patients`);
+    livePatients = (users || []).map((user) => ({
+        id: String(user.id),
+        code: user.userCode,
+        name: user.displayName,
+        age: "-",
+        gender: "-",
+        doctor: "已绑定医生",
+        family: "已绑定家属",
+        risk: "NORMAL",
+        riskLabel: "状态待同步",
+        lastUpdate: "刚刚",
+        taskDone: 0,
+        taskTotal: 0,
+        water: "查看任务详情",
+        safety: "查看状态详情",
+        summary: "后端已返回患者绑定关系，点击患者可查看最新状态、任务和告警。",
+        tasks: [],
+        alerts: [],
+        checkins: [],
+        plan: "请打开计划详情查看。"
+    }));
+    if (livePatients.length && !livePatients.some((patient) => patient.id === selectedPatientId)) {
+        selectedPatientId = livePatients[0].id;
+    }
+    return livePatients;
+}
+
+async function hydratePatientStatus(patient, kind) {
+    if (!patient || !token()) return patient;
+    const status = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/status`);
+    patient.name = status.patientDisplayName || patient.name;
+    patient.code = status.patientUserCode || patient.code;
+    patient.risk = status.urgentAlertCount > 0 ? "URGENT" : status.openAlertCount > 0 ? "ATTENTION" : "NORMAL";
+    patient.riskLabel = status.urgentAlertCount > 0 ? "异常告警" : status.openAlertCount > 0 ? "需要关注" : "状态平稳";
+    patient.lastUpdate = status.generatedAt ? new Date(status.generatedAt).toLocaleString() : "刚刚";
+    patient.summary = `近 7 天打卡 ${status.checkInCount} 次，未处理告警 ${status.openAlertCount} 个，紧急告警 ${status.urgentAlertCount} 个，待确认记忆 ${status.pendingMemoryCount} 条。`;
+    const tasks = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/tasks`).catch(() => []);
+    const alerts = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/alerts`).catch(() => []);
+    const checkins = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/checkins`).catch(() => []);
+    patient.tasks = (tasks || []).map((task) => ({
+        id: task.id,
+        title: task.title || `任务 #${task.id}`,
+        status: task.status || "待处理",
+        detail: task.instructions || task.dueAt || "查看任务详情"
+    }));
+    patient.alerts = (alerts || []).map((alert) => ({
+        id: alert.id,
+        title: alert.alertType || "患者告警",
+        level: alert.severity === "URGENT" || alert.severity === "CRITICAL" ? "urgent" : "attention",
+        time: alert.createdAt ? new Date(alert.createdAt).toLocaleString() : "刚刚",
+        detail: alert.description || alert.status || "请查看告警详情"
+    }));
+    patient.checkins = (checkins || []).map((item) => ({
+        time: item.submittedAt ? new Date(item.submittedAt).toLocaleString() : item.checkinDate,
+        title: item.incidentType || "每日打卡",
+        detail: item.originalText || `睡眠：${item.sleepStatus || "-"}，饮水：${item.hydrationStatus || "-"}`
+    }));
+    patient.taskDone = patient.tasks.filter((task) => task.status === "COMPLETED").length;
+    patient.taskTotal = patient.tasks.length;
+    return patient;
+}
+
+function backendUnavailableMessage(error) {
+    return `<div class="message info">当前显示演示数据。真实接口暂不可用：${escapeHtml(error.message)}</div>`;
+}
+
+function escapeHtml(value) {
+    return String(value || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
 }
 
 function updateNav(route) {
@@ -188,7 +306,7 @@ function renderBindPage(config) {
                 <h2 class="card-title">绑定信息</h2>
                 <div class="field">
                     <label for="patientCode">患者编号</label>
-                    <input id="patientCode" value="P001" autocomplete="off">
+                    <input id="patientCode" placeholder="例如 PAT-12345678" autocomplete="off">
                 </div>
                 <div class="field">
                     <label for="relation">${config.relationLabel}</label>
@@ -208,18 +326,49 @@ function renderBindPage(config) {
     `;
     document.querySelector("[data-bind-form]").addEventListener("submit", (event) => {
         event.preventDefault();
-        const code = document.querySelector("#patientCode").value.trim();
-        const relation = document.querySelector("#relation").value;
-        const result = document.querySelector("[data-bind-result]");
-        result.className = "message success";
-        result.textContent = `${config.role}绑定申请已提交：患者 ${code}，关系为 ${relation}。`;
+        submitBinding(config);
     });
 }
 
-function renderCaregiverStatus() {
-    const patient = patients[0];
+async function submitBinding(config) {
+        const code = document.querySelector("#patientCode").value.trim();
+        const relation = document.querySelector("#relation").value;
+        const result = document.querySelector("[data-bind-result]");
+        if (!code) {
+            result.className = "message info";
+            result.textContent = "请先填写患者编号。";
+            return;
+        }
+        try {
+            const kind = config.role === "医生" ? "clinical" : "family";
+            await careApi(`${apiPrefix(kind)}/bindings`, {
+                method: "POST",
+                body: JSON.stringify({
+                    patientUserCode: code,
+                    relationLabel: relation
+                })
+            });
+            result.className = "message success";
+            result.textContent = `${config.role}绑定成功：患者 ${code}，关系为 ${relation}。`;
+        } catch (error) {
+            result.className = "message info";
+            result.textContent = error.message;
+        }
+}
+
+async function renderCaregiverStatus() {
+    let patient = selectedPatient();
+    let notice = "";
+    try {
+        await loadPatients("family");
+        patient = await hydratePatientStatus(selectedPatient(), "family");
+    } catch (error) {
+        notice = backendUnavailableMessage(error);
+        patient = patients[0];
+    }
     root().innerHTML = `
         ${header("家属查看", `${patient.name}的今日状态`, "家属端优先展示当天状态、任务完成情况和异常提醒。", `<button class="button primary">联系医生</button>`)}
+        ${notice}
         ${summaryGrid(patient)}
         <section class="grid two">
             <div class="card">
@@ -233,12 +382,24 @@ function renderCaregiverStatus() {
             </div>
         </section>
     `;
+    const contactButton = document.querySelector(".page-header .button.primary");
+    if (contactButton) {
+        contactButton.addEventListener("click", () => contactDoctor(patient));
+    }
 }
 
-function renderDoctorSwitcher() {
+async function renderDoctorSwitcher() {
+    let notice = "";
+    try {
+        await loadPatients("clinical");
+        await hydratePatientStatus(selectedPatient(), "clinical");
+    } catch (error) {
+        notice = backendUnavailableMessage(error);
+    }
     const patient = selectedPatient();
     root().innerHTML = `
         ${header("医生工作台", "患者切换", "医生可以在多个患者之间快速切换，先看状态，再进入详情或处理告警。", `<a class="button primary" href="#/doctor/detail">查看详情</a>`)}
+        ${notice}
         ${patientTabs()}
         ${summaryGrid(patient)}
         <section class="grid two">
@@ -255,10 +416,18 @@ function renderDoctorSwitcher() {
     bindPatientTabs(renderDoctorSwitcher);
 }
 
-function renderDoctorDetail() {
+async function renderDoctorDetail() {
+    let notice = "";
+    try {
+        await loadPatients("clinical");
+        await hydratePatientStatus(selectedPatient(), "clinical");
+    } catch (error) {
+        notice = backendUnavailableMessage(error);
+    }
     const patient = selectedPatient();
     root().innerHTML = `
         ${header("患者详情", `${patient.name} · ${patient.id}`, "集中查看患者基本信息、近期打卡、照护计划和风险提示。", `<a class="button" href="#/doctor/patients">返回患者列表</a><a class="button primary" href="#/doctor/alerts-review">处理告警</a>`)}
+        ${notice}
         ${patientTabs()}
         <section class="detail-layout">
             <div class="grid">
@@ -288,7 +457,8 @@ function renderDoctorDetail() {
 }
 
 function renderAlertsAndReview() {
-    const urgentPatients = patients.filter((patient) => patient.alerts.length > 0);
+    const source = livePatients.length ? livePatients : patients;
+    const urgentPatients = source.filter((patient) => patient.alerts.length > 0);
     root().innerHTML = `
         ${header("告警与审核", "告警中心和方案审核", "医生在这里处理异常提醒，并确认机器人优化后的照护计划。", `<button class="button">批量忽略低风险</button><button class="button primary">确认当前方案</button>`)}
         <section class="grid two">
@@ -339,16 +509,31 @@ function renderAlertsAndReview() {
 }
 
 function patientTabs() {
+    const source = livePatients.length ? livePatients : patients;
     return `
         <div class="patient-switcher">
-            ${patients.map((patient) => `
+            ${source.map((patient) => `
                 <button class="patient-tab ${patient.id === selectedPatientId ? "active" : ""}" data-patient-id="${patient.id}">
                     <div class="item-title">${patient.name}</div>
-                    <div class="item-meta">${patient.id} · ${patient.riskLabel}</div>
+                    <div class="item-meta">${patient.code || patient.id} · ${patient.riskLabel}</div>
                 </button>
             `).join("")}
         </div>
     `;
+}
+
+async function contactDoctor(patient) {
+    const message = window.prompt("请输入要发送给医生的内容：", `${patient.name}当前状态需要医生关注。`);
+    if (!message || !message.trim()) return;
+    try {
+        const result = await careApi(`/api/care/v1/family/patients/${patient.id}/doctor-messages`, {
+            method: "POST",
+            body: JSON.stringify({ message })
+        });
+        window.alert(`已提交给医生。即时送达 ${result.deliveredCount || 0} 位，排队 ${result.queuedCount || 0} 位。`);
+    } catch (error) {
+        window.alert(error.message);
+    }
 }
 
 function bindPatientTabs(callback) {

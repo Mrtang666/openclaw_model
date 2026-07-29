@@ -28,7 +28,7 @@ import java.util.HexFormat;
 import java.util.List;
 
 @Component
-@ConditionalOnProperty(name = "care.task.enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "care.task.enabled", havingValue = "true")
 public class CareTaskScheduler {
 
     private final CarePlanRepository planRepository;

@@ -14,7 +14,7 @@ import java.time.Clock;
 import java.time.Instant;
 
 @Component
-@ConditionalOnProperty(name = "care.notification.enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "care.notification.enabled", havingValue = "true")
 public class CareNotificationScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(CareNotificationScheduler.class);

@@ -398,6 +398,11 @@ public class WechatConversationService {
                 return WechatReply.text("");
             }
 
+            Optional<WechatReply> directCareReply = handleDirectCareAgent(sessionKey, text);
+            if (directCareReply.isPresent()) {
+                return directCareReply.get();
+            }
+
             List<ArchivedWechatImage> availableImages = imageArchiveService.availableImages(sessionKey);
             if (!availableImages.isEmpty()) {
                 ImageReferenceResolution imageResolution = imageReferenceResolver.resolve(text, availableImages);
@@ -484,6 +489,86 @@ public class WechatConversationService {
                 persistWechatMemory(sessionKey);
             }
         }
+    }
+
+    private Optional<WechatReply> handleDirectCareAgent(String sessionKey, String text) {
+        if (wechatToolRegistry == null || !wechatToolRegistry.contains("care_agent") || !looksLikeCareRequest(text)) {
+            return Optional.empty();
+        }
+        Map<String, String> arguments = new HashMap<>();
+        String action = directCareAction(text);
+        if (!action.isBlank()) {
+            arguments.put("action", action);
+        }
+        WechatToolRequest request = new WechatToolRequest(
+                sessionKey,
+                text,
+                arguments,
+                memoryContextBuilder.build(memoryFor(sessionKey)),
+                List.of(),
+                effectiveFiles(sessionKey, List.of(), text),
+                List.of(),
+                null,
+                null);
+        WechatReply reply = wechatToolRegistry.execute("care_agent", request);
+        if (hasReplyContent(reply)) {
+            String replyText = reply.text() == null ? "" : reply.text().strip();
+            if (!replyText.isBlank()) {
+                memoryFor(sessionKey).record(text, replyText);
+                rememberAssistantReply(sessionKey, replyText);
+            }
+            return Optional.of(reply);
+        }
+        return Optional.empty();
+    }
+
+    private boolean looksLikeCareRequest(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String value = text.strip();
+        return containsAny(value,
+                "患者编号", "我的编号", "用户编号", "医疗身份", "当前身份",
+                "绑定患者", "新增患者", "添加患者",
+                "患者状态", "查看患者", "患者情况", "照护状态", "打卡", "安全确认",
+                "联系医生", "通知医生", "告诉医生",
+                "医生工作台", "切换患者",
+                "制定方案", "照护方案", "确认发送给患者", "发送给患者");
+    }
+
+    private String directCareAction(String text) {
+        String value = text == null ? "" : text.strip();
+        if (containsAny(value, "患者编号", "我的编号", "用户编号", "医疗身份", "当前身份")) {
+            return "whoami";
+        }
+        if (containsAny(value, "绑定患者", "新增患者", "添加患者")) {
+            return "bind";
+        }
+        if (containsAny(value, "联系医生", "通知医生", "告诉医生")) {
+            return "contact_doctor";
+        }
+        if (containsAny(value, "确认发送给患者", "发送给患者", "发给患者", "确认并发送")) {
+            return "plan_confirm";
+        }
+        if (containsAny(value, "制定方案", "照护方案", "发布方案")) {
+            return "plan_draft";
+        }
+        if (containsAny(value, "医生工作台", "切换患者")) {
+            return "doctor_workspace";
+        }
+        return "status";
+    }
+
+    private boolean containsAny(String text, String... needles) {
+        if (text == null || text.isBlank() || needles == null) {
+            return false;
+        }
+        for (String needle : needles) {
+            if (needle != null && !needle.isBlank() && text.contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public void handleStreaming(String input, ReplyEmitter emitter) {
@@ -601,30 +686,35 @@ public class WechatConversationService {
         }
 
         if (isFunctionCallingMode() && functionCallingAgentLoop != null) {
-            Optional<WechatReply> loopReply = functionCallingAgentLoop.run(new FunctionCallingAgentRequest(
-                    sessionKey,
-                    text,
-                    conversationContext(sessionKey),
-                    files,
-                    images,
-                    List.of(),
-                    (userText, prompt) -> memoryFor(sessionKey).recordPendingImagePrompt(userText, prompt),
-                    (userText, prompt) -> memoryFor(sessionKey).recordImage(userText, prompt),
-                    (toolName, arguments, resultSummary, status) -> {
-                        if (!DEFAULT_SESSION_KEY.equals(sessionKey)) {
-                            wechatMemoryService.recordToolExecution(
-                                    sessionKey,
-                                    toolName,
-                                    arguments,
-                                    resultSummary,
+            try {
+                Optional<WechatReply> loopReply = functionCallingAgentLoop.run(new FunctionCallingAgentRequest(
+                        sessionKey,
+                        text,
+                        conversationContext(sessionKey),
+                        files,
+                        images,
+                        List.of(),
+                        (userText, prompt) -> memoryFor(sessionKey).recordPendingImagePrompt(userText, prompt),
+                        (userText, prompt) -> memoryFor(sessionKey).recordImage(userText, prompt),
+                        (toolName, arguments, resultSummary, status) -> {
+                            if (!DEFAULT_SESSION_KEY.equals(sessionKey)) {
+                                wechatMemoryService.recordToolExecution(
+                                        sessionKey,
+                                        toolName,
+                                        arguments,
+                                        resultSummary,
                                     status,
                                     java.time.Instant.now());
-                        }
-                    },
-                    conversationMode));
-            if (loopReply.isPresent() && hasReplyContent(loopReply.get())) {
-                rememberPlannedReply(sessionKey, text, loopReply.get());
-                return loopReply;
+                            }
+                        },
+                        conversationMode));
+                if (loopReply.isPresent() && hasReplyContent(loopReply.get())) {
+                    rememberPlannedReply(sessionKey, text, loopReply.get());
+                    return loopReply;
+                }
+            } catch (ChatServiceException exception) {
+                log.warn("Function Calling 不可用，降级到后续对话流程，userId={}, error={}",
+                        sessionKey, rootMessage(exception));
             }
         }
 

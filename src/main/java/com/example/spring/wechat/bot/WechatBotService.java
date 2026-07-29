@@ -387,6 +387,7 @@ public class WechatBotService {
 
         String text = hasText ? message.text().strip() : "";
         refreshReminderRecipientBinding(runtime, message);
+        bindMedicalIdentity(runtime, message);
         log.info(
                 "微信收到消息，fromUserId={}, text={}, imageCount={}, voiceCount={}, fileCount={}",
                 message.fromUserId(),
@@ -411,6 +412,22 @@ public class WechatBotService {
             log.warn("微信消息接收处理失败，connectionId={}, fromUserId={}, error={}",
                     runtime.connectionId, message.fromUserId(), runtime.lastError);
         }
+    }
+
+    private void bindMedicalIdentity(ClientRuntime runtime, WechatIncomingMessage message) {
+        if (medicalLoginSessionService == null
+                || runtime.loginSessionId == null
+                || runtime.loginSessionId.isBlank()
+                || message.fromUserId() == null
+                || message.fromUserId().isBlank()) {
+            return;
+        }
+        medicalLoginSessionService.bindWechatUser(
+                runtime.loginSessionId,
+                runtime.connectionId,
+                message.fromUserId(),
+                runtime.displayName,
+                Instant.now());
     }
 
     private void refreshReminderRecipientBinding(ClientRuntime runtime, WechatIncomingMessage message) {

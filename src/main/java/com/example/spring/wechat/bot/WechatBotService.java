@@ -233,6 +233,30 @@ public class WechatBotService {
                 connections);
     }
 
+    public boolean sendProactiveText(String connectionId, String userId, String text) {
+        if (connectionId == null || connectionId.isBlank()
+                || userId == null || userId.isBlank()
+                || text == null || text.isBlank()) {
+            return false;
+        }
+        ClientRuntime runtime = runtimes.get(connectionId.strip());
+        if (runtime == null || runtime.state != WechatBotState.RUNNING || runtime.stopRequested) {
+            return false;
+        }
+        try {
+            for (String chunk : splitForWechat(text)) {
+                runtime.client.sendText(userId.strip(), chunk);
+            }
+            runtime.lastActivityAt = Instant.now();
+            return true;
+        } catch (IOException | RuntimeException exception) {
+            runtime.lastError = "主动消息发送失败：" + rootMessage(exception);
+            log.warn("微信主动消息发送失败，connectionId={}, userId={}, error={}",
+                    connectionId, userId, rootMessage(exception));
+            return false;
+        }
+    }
+
     @PreDestroy
     public void shutdown() {
         stop();

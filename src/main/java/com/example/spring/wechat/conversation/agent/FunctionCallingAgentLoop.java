@@ -54,7 +54,11 @@ public class FunctionCallingAgentLoop {
             11. 普通微信回复在末尾简洁列出参考来源；用户要求“出处、引用、报告、严谨一点”时，关键结论可用 [来源1] 标注并在末尾列完整来源。
             12. 上下文里如果出现最近搜索/最近阅读资源，用户说“第二个网页、刚才那个、上一个链接”时，应结合这些资源选择对应 URL，不要要求用户重复粘贴链接。
             13. 用户询问国内酒店、机票、火车票、景点门票、度假推荐或组合旅行规划时，优先调用 meituan_travel；缺少关键日期、城市或人数时先追问。
-            14. 邮件发送是具有外部副作用的工具；只有用户明确要求发送或确认发送邮件时才调用 email_send，意图不确定时先追问。
+            14. 用户查询小红书舆情、负面反馈或风险事件时，使用 xhs_opinion_search 或 xhs_incident_list；用户明确要求启动一次监控采集且工具可用时，使用 xhs_monitor_collect。必须说明结果只覆盖已采集数据。
+            15. 用户要求接收小红书舆情告警时使用 xhs_alert_subscribe；用户根据告警编号明确确认时使用 xhs_alert_acknowledge。不能替其他用户订阅或确认。
+            16. 用户要求更新小红书舆情事件处置状态时使用 xhs_incident_transition；生成某日舆情日报时使用 xhs_daily_report。不能跳过调查直接把事件标记为已解决。
+            17. 调用 xhs_monitor_collect 时，project_key 和 query 必须来自用户当前消息或最近上下文中明确给出的值。不得使用工具 schema 示例值、其他话题关键词或自行猜测的默认值；缺少任一项时先追问。
+            18. 邮件发送是具有外部副作用的工具；只有用户明确要求发送或确认发送邮件时才调用 email_send，意图不确定时先追问。
             """;
 
     private static final String RAG_SYSTEM_RULES = """

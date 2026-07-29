@@ -34,6 +34,8 @@ public class DashScopeFunctionCallingClient {
             请根据用户当前消息、最近上下文和可用工具 schema 判断是否需要调用工具。
             能用专用工具解决的问题必须返回 tool_calls，不要把专用工具需求当成普通聊天。
             如果用户需求信息不足，直接用自然中文追问一个最关键的问题，不要调用工具。
+            工具参数只能使用用户当前消息或最近上下文中明确提供的值，不得把 schema 示例值当作真实参数，也不得从无关历史中猜测参数。
+            调用 xhs_monitor_collect 前必须确认 project_key 和 query 均已明确；缺少任一项时先追问。
             多个需求要按用户表达顺序产生多个 tool_calls。
             """;
 

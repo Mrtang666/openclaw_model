@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: openclaw-xhs-sidecar
+Version: 0.1.0
+Summary: Isolated Spider_XHS HTTP adapter for OpenClaw
+Requires-Python: >=3.10

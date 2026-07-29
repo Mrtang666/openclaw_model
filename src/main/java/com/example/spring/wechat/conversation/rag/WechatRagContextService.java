@@ -2,6 +2,7 @@ package com.example.spring.wechat.conversation.rag;
 
 import com.example.spring.wechat.knowledge.model.KnowledgeSearchResult;
 import com.example.spring.wechat.knowledge.service.KnowledgeSearchService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -16,14 +17,37 @@ public class WechatRagContextService {
     private final KnowledgeSearchService searchService;
     private final RagContextFormatter formatter;
     private final RagProperties properties;
+    private final RagQueryPlanner queryPlanner;
+    private final RagRerankService rerankService;
+    private final RagEvidencePackBuilder evidencePackBuilder;
+
+    @Autowired
+    public WechatRagContextService(
+            KnowledgeSearchService searchService,
+            RagContextFormatter formatter,
+            RagProperties properties,
+            RagQueryPlanner queryPlanner,
+            RagRerankService rerankService,
+            RagEvidencePackBuilder evidencePackBuilder) {
+        this.searchService = searchService;
+        this.formatter = formatter;
+        this.properties = properties;
+        this.queryPlanner = queryPlanner;
+        this.rerankService = rerankService;
+        this.evidencePackBuilder = evidencePackBuilder;
+    }
 
     public WechatRagContextService(
             KnowledgeSearchService searchService,
             RagContextFormatter formatter,
             RagProperties properties) {
-        this.searchService = searchService;
-        this.formatter = formatter;
-        this.properties = properties;
+        this(
+                searchService,
+                formatter,
+                properties,
+                new RagQueryPlanner(null),
+                new RagRerankService(),
+                new RagEvidencePackBuilder(formatter));
     }
 
     public String build(String sessionKey, String userText) {
@@ -35,21 +59,35 @@ public class WechatRagContextService {
 
         long started = System.nanoTime();
         try {
-            List<KnowledgeSearchResult> results = searchService.search(
+            List<String> plannedQueries = queryPlanner == null ? List.of(query) : queryPlanner.plan(query);
+            if (plannedQueries.isEmpty()) {
+                plannedQueries = List.of(query);
+            }
+            int candidateLimit = Math.max(properties.topK(), properties.topK() * 2);
+            List<KnowledgeSearchResult> results = searchService.searchByQueries(
                     sessionKey,
-                    query,
-                    properties.topK(),
+                    plannedQueries,
+                    candidateLimit,
                     "");
             List<KnowledgeSearchResult> filtered = results.stream()
                     .filter(result -> result != null && result.score() >= properties.minScore())
                     .toList();
-            String context = formatter.format(filtered, properties.maxContextChars(), properties.includeSources());
+            List<KnowledgeSearchResult> ranked = rerankService == null
+                    ? filtered
+                    : rerankService.rank(query, filtered);
+            List<KnowledgeSearchResult> selected = ranked.stream()
+                    .limit(properties.topK())
+                    .toList();
+            String context = evidencePackBuilder == null
+                    ? formatter.format(selected, properties.maxContextChars(), properties.includeSources())
+                    : evidencePackBuilder.build(selected, properties.maxContextChars(), properties.includeSources());
             long elapsedMs = (System.nanoTime() - started) / 1_000_000;
-            log.info("RAG 自动检索完成，userId={}, hitCount={}, selectedCount={}, topScore={}, elapsedMs={}",
+            log.info("RAG 自动检索完成，userId={}, queryCount={}, hitCount={}, selectedCount={}, topScore={}, elapsedMs={}",
                     sessionKey,
+                    plannedQueries.size(),
                     results.size(),
-                    filtered.size(),
-                    topScore(filtered),
+                    selected.size(),
+                    topScore(selected),
                     elapsedMs);
             return context;
         } catch (RuntimeException exception) {

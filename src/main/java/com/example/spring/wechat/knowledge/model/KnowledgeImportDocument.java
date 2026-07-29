@@ -1,6 +1,6 @@
 package com.example.spring.wechat.knowledge.model;
 
-public record KnowledgeSeedDocument(
+public record KnowledgeImportDocument(
         String title,
         String content,
         String sourceType,

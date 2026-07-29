@@ -20,13 +20,15 @@
 
 ## 后续接口建议
 
-- `GET /api/medical/patients`
-- `GET /api/medical/patients/{patientId}/status`
-- `GET /api/medical/patients/{patientId}/tasks`
-- `GET /api/medical/patients/{patientId}/alerts`
-- `GET /api/medical/patients/{patientId}/checkins`
-- `POST /api/medical/bindings/{token}/confirm`
-- `POST /api/medical/alerts/{alertId}/ack`
-- `POST /api/medical/care-plans/{planId}/confirm`
+- 家属端：`GET /api/care/v1/family/patients`
+- 家属端：`GET /api/care/v1/family/patients/{patientId}/status`
+- 家属端：`GET /api/care/v1/family/patients/{patientId}/tasks`
+- 家属端：`GET /api/care/v1/family/patients/{patientId}/alerts`
+- 家属端：`GET /api/care/v1/family/patients/{patientId}/checkins`
+- 医生端：`GET /api/care/v1/clinical/patients`
+- 医生端：`GET /api/care/v1/clinical/patients/{patientId}/status`
+- 医生端：`POST /api/care/v1/clinical/plans/{planId}/review`
+- 医生端：`POST /api/care/v1/clinical/plans/{planId}/activate`
+- 患者端：`POST /api/care/v1/patient/access-grants`
 
 前端只负责展示和交互，患者关系、身份权限、敏感数据访问必须由后端校验。

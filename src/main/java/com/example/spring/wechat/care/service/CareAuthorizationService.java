@@ -97,6 +97,37 @@ public class CareAuthorizationService {
         return relation;
     }
 
+    @Transactional
+    public PatientRelation bindPatientForViewer(CareActor viewer, ViewerBindCommand command) {
+        if (viewer == null || viewer.role() == MedicalRole.PATIENT || viewer.role() == MedicalRole.ADMIN) {
+            throw new CareException(CareErrorCode.FORBIDDEN, "当前账号不能作为照护方绑定患者");
+        }
+        if (command == null) {
+            throw new CareException(CareErrorCode.INVALID_ARGUMENT, "缺少患者绑定参数");
+        }
+        MedicalUser patient = identityRepository.findUserByCode(clean(command.patientUserCode()))
+                .orElseThrow(() -> new CareException(CareErrorCode.NOT_FOUND, "没有找到患者账号"));
+        if (!identityRepository.hasActiveRole(patient.id(), MedicalRole.PATIENT)) {
+            throw new CareException(CareErrorCode.INVALID_ARGUMENT, "目标账号不是有效患者身份");
+        }
+        Set<String> permissions = new LinkedHashSet<>(command.permissions() == null
+                ? defaultPermissions(viewer.role())
+                : command.permissions());
+        if (permissions.isEmpty() || !CarePermissions.ALL.containsAll(permissions)) {
+            throw new CareException(CareErrorCode.INVALID_ARGUMENT, "包含不支持的照护权限");
+        }
+        Instant now = clock.instant();
+        if (command.expiresAt() != null && !command.expiresAt().isAfter(now)) {
+            throw new CareException(CareErrorCode.INVALID_ARGUMENT, "授权过期时间必须晚于当前时间");
+        }
+        PatientRelation relation = identityRepository.grantRelation(
+                patient.id(), viewer.userId(), viewer.role(), clean(command.relationLabel()),
+                Set.copyOf(permissions), command.expiresAt(), now);
+        auditRepository.record(viewer, patient.id(), "BIND_PATIENT", null, "PATIENT_RELATION",
+                Long.toString(relation.id()), "ALLOWED", "照护方主动绑定患者", requestId(command.requestId()), now);
+        return relation;
+    }
+
     private Set<String> defaultPermissions(MedicalRole role) {
         if (role.isClinical()) return CarePermissions.ALL;
         if (role.isFamily()) return Set.of(
@@ -126,6 +157,14 @@ public class CareAuthorizationService {
     public record GrantCommand(
             String viewerUserCode,
             String relationRole,
+            String relationLabel,
+            Set<String> permissions,
+            Instant expiresAt,
+            String requestId) {
+    }
+
+    public record ViewerBindCommand(
+            String patientUserCode,
             String relationLabel,
             Set<String> permissions,
             Instant expiresAt,

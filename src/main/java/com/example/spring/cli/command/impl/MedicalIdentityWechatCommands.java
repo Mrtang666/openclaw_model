@@ -20,6 +20,11 @@ public class MedicalIdentityWechatCommands {
     }
 
     @Bean
+    public Command parentsWechatLoginCommand(WechatCommand wechatCommand) {
+        return new IdentityWechatLoginCommand("parents", "微信接入：家属身份登录", "CAREGIVER", wechatCommand);
+    }
+
+    @Bean
     public Command doctorWechatLoginCommand(WechatCommand wechatCommand) {
         return new IdentityWechatLoginCommand("doctor", "微信接入：医生身份登录", "DOCTOR", wechatCommand);
     }

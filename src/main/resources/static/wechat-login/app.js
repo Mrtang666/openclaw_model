@@ -43,7 +43,7 @@ const roleVisuals = {
       "小步骤，也会带来大改变"
     ]
   },
-  PARENT: {
+  CAREGIVER: {
     bodyClass: "role-caregiver",
     title: "家属身份扫码登录",
     eyebrow: "CAREGIVER ACCESS",
@@ -138,6 +138,7 @@ function drawQr(matrix, matrixSize, targetCanvas = qrCanvas) {
 
 function normalizeRole(role) {
   const value = String(role || "").trim().toUpperCase();
+  if (value === "PARENT" || value === "PARENTS" || value === "FAMILY") return "CAREGIVER";
   return roleVisuals[value] ? value : "DEFAULT";
 }
 

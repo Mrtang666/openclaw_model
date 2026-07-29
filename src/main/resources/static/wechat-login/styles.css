@@ -12,6 +12,9 @@ body { min-width: 320px; }
 .login-scene { position: relative; width: 100%; height: 100%; isolation: isolate; background: #000; }
 #particle-canvas { position: absolute; z-index: 0; inset: 0; display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
 #particle-canvas:active { cursor: grabbing; }
+body.role-patient #particle-canvas,
+body.role-caregiver #particle-canvas,
+body.role-doctor #particle-canvas { display: none; cursor: default; pointer-events: none; }
 
 .scene-vignette {
   position: absolute;
@@ -41,6 +44,58 @@ body { min-width: 320px; }
 .eyebrow { margin: 0 0 8px; color: #78b7ff; font-size: 11px; letter-spacing: .28em; }
 h1 { margin: 0; font-size: clamp(26px, 5vw, 40px); font-weight: 650; letter-spacing: 0; }
 .status-message { margin: 12px 0 0; color: #d9e9ff; font-size: 15px; }
+.role-caption {
+  display: none;
+  margin: 8px auto 0;
+  width: min(92vw, 430px);
+  color: rgba(221,235,255,.78);
+  font-size: 13px;
+  line-height: 1.55;
+}
+body.role-patient .role-caption,
+body.role-caregiver .role-caption,
+body.role-doctor .role-caption { display: block; }
+
+.floating-message-layer {
+  position: fixed;
+  z-index: 3;
+  inset: 0;
+  display: none;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+body.role-patient .floating-message-layer,
+body.role-caregiver .floating-message-layer,
+body.role-doctor .floating-message-layer { display: block; }
+
+.floating-message {
+  position: absolute;
+  max-width: min(360px, 42vw);
+  padding: 10px 14px;
+  border: 1px solid rgba(255,255,255,.24);
+  border-radius: 8px;
+  color: rgba(255,255,255,.92);
+  background: rgba(255,255,255,.12);
+  box-shadow: 0 18px 48px rgba(0,0,0,.22);
+  backdrop-filter: blur(14px) saturate(125%);
+  font-size: clamp(14px, 1.35vw, 20px);
+  font-weight: 650;
+  line-height: 1.45;
+  opacity: 0;
+  transform: translateY(16px) scale(.96);
+  animation: float-message 5.8s ease forwards;
+}
+
+.floating-message.small { font-size: clamp(13px, 1.1vw, 16px); opacity: .82; }
+.floating-message.large { font-size: clamp(18px, 1.8vw, 26px); }
+
+@keyframes float-message {
+  0% { opacity: 0; transform: translateY(18px) scale(.94); }
+  14% { opacity: .96; transform: translateY(0) scale(1); }
+  74% { opacity: .9; transform: translateY(-6px) scale(1); }
+  100% { opacity: 0; transform: translateY(-20px) scale(.98); }
+}
 
 .add-user-button {
   position: relative;
@@ -95,6 +150,53 @@ h1 { margin: 0; font-size: clamp(26px, 5vw, 40px); font-weight: 650; letter-spac
   text-shadow: 0 2px 16px #000;
   pointer-events: none;
 }
+
+body.role-patient .eyebrow,
+body.role-patient .panel-kicker { color: #8ce8c4; }
+body.role-patient .login-scene {
+  background:
+    linear-gradient(115deg, rgba(7, 29, 24, .9), rgba(8, 30, 49, .76)),
+    radial-gradient(circle at 22% 22%, rgba(96, 232, 179, .5), transparent 27%),
+    radial-gradient(circle at 82% 28%, rgba(93, 150, 255, .42), transparent 30%),
+    radial-gradient(circle at 62% 78%, rgba(67, 207, 173, .34), transparent 32%),
+    repeating-linear-gradient(135deg, rgba(255,255,255,.055) 0 1px, transparent 1px 34px),
+    linear-gradient(135deg, #08271f 0%, #0e2239 52%, #071018 100%);
+  background-attachment: fixed;
+}
+body.role-patient .brand-mark span { background: #50e6b0; box-shadow: 0 0 18px #50e6b0; }
+body.role-patient .brand-mark span:nth-child(2) { background: #79a7ff; box-shadow: 0 0 18px #79a7ff; }
+body.role-patient .add-user-button { border-color: rgba(112,231,184,.48); background: rgba(5,45,37,.58); }
+
+body.role-caregiver .eyebrow,
+body.role-caregiver .panel-kicker { color: #ffd58b; }
+body.role-caregiver .login-scene {
+  background:
+    linear-gradient(115deg, rgba(42, 24, 7, .88), rgba(44, 16, 36, .74)),
+    radial-gradient(circle at 18% 24%, rgba(255, 209, 132, .48), transparent 30%),
+    radial-gradient(circle at 78% 24%, rgba(255, 131, 160, .44), transparent 30%),
+    radial-gradient(circle at 58% 78%, rgba(255, 183, 104, .3), transparent 34%),
+    repeating-linear-gradient(45deg, rgba(255,255,255,.05) 0 1px, transparent 1px 32px),
+    linear-gradient(135deg, #2b1908 0%, #2d1830 52%, #0c0712 100%);
+  background-attachment: fixed;
+}
+body.role-caregiver .brand-mark span { background: #ffca75; box-shadow: 0 0 18px #ffca75; }
+body.role-caregiver .brand-mark span:nth-child(2) { background: #ff8fa3; box-shadow: 0 0 18px #ff8fa3; }
+body.role-caregiver .add-user-button { border-color: rgba(255,202,117,.5); background: rgba(54,34,8,.62); }
+
+body.role-doctor .eyebrow,
+body.role-doctor .panel-kicker { color: #92c7ff; }
+body.role-doctor .login-scene {
+  background:
+    linear-gradient(115deg, rgba(5, 19, 40, .9), rgba(8, 35, 47, .76)),
+    radial-gradient(circle at 20% 22%, rgba(77, 162, 255, .5), transparent 29%),
+    radial-gradient(circle at 80% 26%, rgba(96, 232, 255, .42), transparent 30%),
+    radial-gradient(circle at 56% 80%, rgba(65, 110, 255, .26), transparent 35%),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.045) 0 1px, transparent 1px 36px),
+    linear-gradient(135deg, #071833 0%, #092637 52%, #050812 100%);
+  background-attachment: fixed;
+}
+body.role-doctor .brand-mark span { background: #4aa3ff; box-shadow: 0 0 18px #4aa3ff; }
+body.role-doctor .brand-mark span:nth-child(2) { background: #6ee7ff; box-shadow: 0 0 18px #6ee7ff; }
 
 .connection-panel {
   position: fixed;

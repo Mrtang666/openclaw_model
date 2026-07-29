@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>照护协作管理台</title>
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<div class="app-shell">
+    <aside class="sidebar" aria-label="主导航">
+        <div class="brand">
+            <div class="brand-mark">护</div>
+            <div>
+                <div class="brand-title">照护协作</div>
+                <div class="brand-subtitle">家属 / 医生管理台</div>
+            </div>
+        </div>
+        <nav class="nav-list">
+            <a href="#/bind/caregiver">家属绑定患者</a>
+            <a href="#/bind/doctor">医生绑定患者</a>
+            <a href="#/caregiver/status">家属患者状态</a>
+            <a href="#/doctor/patients">医生患者切换</a>
+            <a href="#/doctor/detail">医生患者详情</a>
+            <a href="#/doctor/alerts-review">告警与方案审核</a>
+        </nav>
+    </aside>
+
+    <main class="main-panel">
+        <div id="app" class="view-root" aria-live="polite"></div>
+    </main>
+</div>
+
+<script src="./app.js"></script>
+</body>
+</html>

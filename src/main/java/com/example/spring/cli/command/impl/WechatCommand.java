@@ -53,7 +53,13 @@ public class WechatCommand implements Command {
     }
 
     private String start() {
-        WechatStartResult result = wechatBotService.start();
+        return start(null);
+    }
+
+    String start(String requestedRole) {
+        WechatStartResult result = requestedRole == null || requestedRole.isBlank()
+                ? wechatBotService.start()
+                : wechatBotService.start(requestedRole);
         StringBuilder output = new StringBuilder(result.message());
         if (result.loginPageUrl() != null && !result.loginPageUrl().isBlank()) {
             output.append(System.lineSeparator())

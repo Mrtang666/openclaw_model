@@ -8,6 +8,7 @@ import java.util.function.Supplier;
 
 public record WechatLoginPageSession(
         String id,
+        String requestedRole,
         List<String> matrix,
         int matrixSize,
         Instant createdAt,

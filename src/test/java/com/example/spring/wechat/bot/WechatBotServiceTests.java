@@ -127,6 +127,34 @@ class WechatBotServiceTests {
     }
 
     @Test
+    void forwardsRequestedMedicalRoleToConversationService() throws Exception {
+        FakeWechatClient client = new FakeWechatClient(1);
+        WechatConversationService conversationService = mock(WechatConversationService.class);
+        when(conversationService.handleWechat(anyString(), any(), eq("PATIENT")))
+                .thenReturn(WechatReply.text("患者模式回复"));
+        @SuppressWarnings("unchecked")
+        ObjectProvider<WechatConversationService> provider = mock(ObjectProvider.class);
+        when(provider.getObject()).thenReturn(conversationService);
+        WechatBotService service = new WechatBotService(
+                () -> client,
+                provider,
+                null,
+                null,
+                new ClawBotConnectionProperties(),
+                new WechatConcurrencyProperties(),
+                null);
+
+        service.start("PATIENT");
+        client.loginFuture.complete(new WechatLoginInfo("bot-patient"));
+        client.updates.add(List.of(new WechatIncomingMessage("patient@im.wechat", "我今天有点累")));
+
+        assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
+        assertThat(new ArrayList<>(client.sentTexts)).containsExactly("患者模式回复");
+        verify(conversationService).handleWechat(anyString(), any(), eq("PATIENT"));
+        service.stop();
+    }
+
+    @Test
     void showsNativeTypingStateWhileProcessingWechatMessage() throws Exception {
         FakeWechatClient client = new FakeWechatClient(1);
         AgentService agentService = mock(AgentService.class);

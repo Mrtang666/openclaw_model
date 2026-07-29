@@ -32,4 +32,19 @@ class WechatLoginPageControllerTests {
 
         assertThat(controller.getSession("missing").getStatusCode().value()).isEqualTo(404);
     }
+
+    @Test
+    void labelsCaregiverLoginWithTheCaregiverRoleCode() {
+        WechatLoginPageSessionService service = new WechatLoginPageSessionService(new WechatLoginPageProperties());
+        WechatLoginPageSession session = service.create(
+                "https://liteapp.weixin.qq.com/q/example?qrcode=0123456789abcdef0123456789abcdef&bot_type=3",
+                "CAREGIVER",
+                () -> WechatLoginState.WAITING);
+        WechatLoginPageController controller = new WechatLoginPageController(service);
+
+        WechatLoginPageController.LoginPageResponse body = controller.getSession(session.id()).getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.roleLabel()).isEqualTo("家属身份登录");
+    }
 }

@@ -7,6 +7,7 @@ import com.example.spring.tool.protocol.function.FunctionCallingToolCall;
 import com.example.spring.tool.protocol.validation.ToolCallValidationResult;
 import com.example.spring.tool.protocol.validation.ToolCallValidator;
 import com.example.spring.wechat.bot.WechatReply;
+import com.example.spring.wechat.conversation.WechatConversationMode;
 import com.example.spring.wechat.conversation.tools.WechatToolDefinition;
 import com.example.spring.wechat.conversation.tools.WechatToolRegistry;
 import com.example.spring.wechat.conversation.tools.WechatToolRequest;
@@ -121,7 +122,7 @@ public class FunctionCallingAgentLoop {
         }
 
         AgentLoopState state = AgentLoopState.start(
-                runtimeSystemPrompt(clock.instant()),
+                runtimeSystemPrompt(clock.instant(), request.conversationMode()),
                 userPrompt(request),
                 request.historyText());
         log.info("Function Calling Agent Loop 开始，userId={}, text={}",
@@ -353,9 +354,13 @@ public class FunctionCallingAgentLoop {
         return TERMINAL_ACTION_TOOLS.contains(toolName);
     }
 
-    private String runtimeSystemPrompt(Instant now) {
+    private String runtimeSystemPrompt(Instant now, WechatConversationMode conversationMode) {
         String currentTime = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(now.atZone(defaultZoneId));
-        return SYSTEM_PROMPT + """
+        WechatConversationMode mode = conversationMode == null
+                ? WechatConversationMode.GENERAL
+                : conversationMode;
+        String modePrompt = mode.prompt().isBlank() ? "" : "\n\n" + mode.prompt().strip();
+        return SYSTEM_PROMPT + modePrompt + """
 
                 时间与提醒规则：
                 - 服务器当前时间：%s

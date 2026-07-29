@@ -85,7 +85,7 @@ public class WechatBotService {
             WechatClientFactory clientFactory,
             ObjectProvider<WechatConversationService> conversationServiceProvider) {
         this(clientFactory,
-                (sessionKey, message) -> conversationServiceProvider.getObject().handleWechat(message),
+                (sessionKey, message, requestedRole) -> conversationServiceProvider.getObject().handleWechat(message),
                 null,
                 null,
                 new ClawBotConnectionProperties(),
@@ -102,7 +102,7 @@ public class WechatBotService {
             WechatLoginPageUrlService loginPageUrlService) {
         this(
                 clientFactory,
-                (sessionKey, message) -> conversationServiceProvider.getObject().handleWechat(message),
+                (sessionKey, message, requestedRole) -> conversationServiceProvider.getObject().handleWechat(message),
                 loginPageSessionService,
                 loginPageUrlService,
                 new ClawBotConnectionProperties(),
@@ -125,7 +125,9 @@ public class WechatBotService {
             ObjectProvider<MedicalLoginSessionService> medicalLoginSessionServiceProvider) {
         this(
                 clientFactory,
-                (sessionKey, message) -> conversationServiceProvider.getObject().handleWechat(sessionKey, message),
+                (sessionKey, message, requestedRole) -> requestedRole == null || requestedRole.isBlank()
+                        ? conversationServiceProvider.getObject().handleWechat(sessionKey, message)
+                        : conversationServiceProvider.getObject().handleWechat(sessionKey, message, requestedRole),
                 loginPageSessionService,
                 loginPageUrlService,
                 connectionProperties,
@@ -145,7 +147,9 @@ public class WechatBotService {
             ReminderRecipientBindingService reminderRecipientBindingService) {
         this(
                 clientFactory,
-                (sessionKey, message) -> conversationServiceProvider.getObject().handleWechat(sessionKey, message),
+                (sessionKey, message, requestedRole) -> requestedRole == null || requestedRole.isBlank()
+                        ? conversationServiceProvider.getObject().handleWechat(sessionKey, message)
+                        : conversationServiceProvider.getObject().handleWechat(sessionKey, message, requestedRole),
                 loginPageSessionService,
                 loginPageUrlService,
                 connectionProperties,
@@ -175,7 +179,7 @@ public class WechatBotService {
     }
 
     WechatBotService(WechatClientFactory clientFactory, AgentService agentService) {
-        this(clientFactory, (sessionKey, message) -> {
+        this(clientFactory, (sessionKey, message, requestedRole) -> {
             StringBuilder reply = new StringBuilder();
             agentService.handleStreaming(message.text() == null ? "" : message.text(), reply::append);
             return WechatReply.text(reply.toString().strip());
@@ -304,7 +308,7 @@ public class WechatBotService {
         stopRuntime(runtime);
         cleanupExpiredPendingConnections();
         ensureDispatcher();
-        return createConnectionInternal().snapshot();
+        return createConnectionInternal(runtime.requestedRole).snapshot();
     }
 
     public ClawBotManagerSnapshot managerSnapshot() {
@@ -455,7 +459,7 @@ public class WechatBotService {
                     message.fromUserId(),
                     preview(message.text()),
                     message.images() == null ? 0 : message.images().size());
-            WechatReply reply = messageHandler.handle(key.sessionKey(), message);
+            WechatReply reply = messageHandler.handle(key.sessionKey(), message, runtime.requestedRole);
             if (replyPresentationService != null) {
                 reply = replyPresentationService.enhance(reply, message.text());
             }
@@ -1015,7 +1019,8 @@ public class WechatBotService {
                     connectionId,
                     "用户 " + (runtimes.size() + 1),
                     newClient,
-                    session == null ? null : session.id());
+                    session == null ? null : session.id(),
+                    session == null ? requestedRole : session.requestedRole());
             runtimes.put(connectionId, runtime);
             if (medicalLoginSessionService != null && session != null && session.requestedRole() != null) {
                 medicalLoginSessionService.recordWaiting(
@@ -1116,7 +1121,7 @@ public class WechatBotService {
     @FunctionalInterface
     private interface WechatMessageHandler {
 
-        WechatReply handle(String sessionKey, WechatIncomingMessage message);
+        WechatReply handle(String sessionKey, WechatIncomingMessage message, String requestedRole);
     }
 
     private static final class ClientRuntime {
@@ -1124,6 +1129,7 @@ public class WechatBotService {
         private final String displayName;
         private final WechatClient client;
         private final String loginSessionId;
+        private final String requestedRole;
         private final Instant createdAt = Instant.now();
         private final AtomicInteger queuedMessages = new AtomicInteger();
         private final AtomicInteger activeMessages = new AtomicInteger();
@@ -1135,11 +1141,17 @@ public class WechatBotService {
         private volatile boolean stopRequested;
         private volatile Future<?> worker;
 
-        private ClientRuntime(String connectionId, String displayName, WechatClient client, String loginSessionId) {
+        private ClientRuntime(
+                String connectionId,
+                String displayName,
+                WechatClient client,
+                String loginSessionId,
+                String requestedRole) {
             this.connectionId = connectionId;
             this.displayName = displayName;
             this.client = client;
             this.loginSessionId = loginSessionId;
+            this.requestedRole = requestedRole == null ? "" : requestedRole.strip();
         }
 
         private ClawBotConnectionSnapshot snapshot() {

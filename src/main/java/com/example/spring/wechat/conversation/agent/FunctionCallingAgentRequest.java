@@ -1,5 +1,6 @@
 package com.example.spring.wechat.conversation.agent;
 
+import com.example.spring.wechat.conversation.WechatConversationMode;
 import com.example.spring.wechat.conversation.tools.WechatToolRequest;
 import com.example.spring.wechat.model.WechatIncomingFile;
 import com.example.spring.wechat.model.WechatIncomingImage;
@@ -17,7 +18,8 @@ public record FunctionCallingAgentRequest(
         List<WechatIncomingVideo> videos,
         WechatToolRequest.PendingImagePromptRecorder pendingImagePromptRecorder,
         WechatToolRequest.GeneratedImageRecorder generatedImageRecorder,
-        ToolExecutionRecorder toolExecutionRecorder) {
+        ToolExecutionRecorder toolExecutionRecorder,
+        WechatConversationMode conversationMode) {
 
     public FunctionCallingAgentRequest {
         sessionKey = sessionKey == null ? "" : sessionKey.strip();
@@ -26,6 +28,30 @@ public record FunctionCallingAgentRequest(
         files = files == null ? List.of() : List.copyOf(files);
         images = images == null ? List.of() : List.copyOf(images);
         videos = videos == null ? List.of() : List.copyOf(videos);
+        conversationMode = conversationMode == null ? WechatConversationMode.GENERAL : conversationMode;
+    }
+
+    public FunctionCallingAgentRequest(
+            String sessionKey,
+            String userText,
+            String historyText,
+            List<WechatIncomingFile> files,
+            List<WechatIncomingImage> images,
+            List<WechatIncomingVideo> videos,
+            WechatToolRequest.PendingImagePromptRecorder pendingImagePromptRecorder,
+            WechatToolRequest.GeneratedImageRecorder generatedImageRecorder,
+            ToolExecutionRecorder toolExecutionRecorder) {
+        this(
+                sessionKey,
+                userText,
+                historyText,
+                files,
+                images,
+                videos,
+                pendingImagePromptRecorder,
+                generatedImageRecorder,
+                toolExecutionRecorder,
+                WechatConversationMode.GENERAL);
     }
 
     public FunctionCallingAgentRequest(
@@ -45,7 +71,8 @@ public record FunctionCallingAgentRequest(
                 List.of(),
                 pendingImagePromptRecorder,
                 generatedImageRecorder,
-                toolExecutionRecorder);
+                toolExecutionRecorder,
+                WechatConversationMode.GENERAL);
     }
 
     public FunctionCallingAgentRequest(
@@ -66,7 +93,8 @@ public record FunctionCallingAgentRequest(
                 List.of(),
                 pendingImagePromptRecorder,
                 generatedImageRecorder,
-                toolExecutionRecorder);
+                toolExecutionRecorder,
+                WechatConversationMode.GENERAL);
     }
 
     public FunctionCallingAgentRequest(
@@ -86,7 +114,8 @@ public record FunctionCallingAgentRequest(
                 List.of(),
                 pendingImagePromptRecorder,
                 null,
-                toolExecutionRecorder);
+                toolExecutionRecorder,
+                WechatConversationMode.GENERAL);
     }
 
 

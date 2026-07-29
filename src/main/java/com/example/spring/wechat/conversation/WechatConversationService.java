@@ -278,17 +278,29 @@ public class WechatConversationService {
     }
 
     public WechatReply handleWechat(WechatIncomingMessage message) {
-        return handleWechat(null, message, true);
+        return handleWechat(null, message, true, WechatConversationMode.GENERAL);
     }
 
     public WechatReply handleWechat(String conversationSessionKey, WechatIncomingMessage message) {
-        return handleWechat(conversationSessionKey, message, true);
+        return handleWechat(conversationSessionKey, message, true, WechatConversationMode.GENERAL);
+    }
+
+    public WechatReply handleWechat(
+            String conversationSessionKey,
+            WechatIncomingMessage message,
+            String requestedRole) {
+        return handleWechat(
+                conversationSessionKey,
+                message,
+                true,
+                WechatConversationMode.fromRequestedRole(requestedRole));
     }
 
     private WechatReply handleWechat(
             String conversationSessionKey,
             WechatIncomingMessage message,
-            boolean persistIncomingMessage) {
+            boolean persistIncomingMessage,
+            WechatConversationMode conversationMode) {
         if (message == null) {
             return WechatReply.text("");
         }
@@ -307,7 +319,7 @@ public class WechatConversationService {
         }
         try {
             if (message.hasVoices()) {
-                return handleVoiceMessage(sessionKey, message);
+                return handleVoiceMessage(sessionKey, message, conversationMode);
             }
 
             if (message.hasVideos()) {
@@ -320,7 +332,7 @@ public class WechatConversationService {
                     rememberAssistantReply(sessionKey, reply);
                     return WechatReply.text(reply);
                 }
-                return handleVideoUnderstand(sessionKey, rawText, message.videos());
+                return handleVideoUnderstand(sessionKey, rawText, message.videos(), conversationMode);
             }
 
             String pendingVideoText = message.text() == null ? "" : message.text().strip();
@@ -328,14 +340,14 @@ public class WechatConversationService {
                 List<WechatIncomingVideo> videos = pendingVideos.remove(sessionKey);
                 if (videos != null && !videos.isEmpty()) {
                     lastVideos.put(sessionKey, videos);
-                    return handleVideoUnderstand(sessionKey, pendingVideoText, videos);
+                    return handleVideoUnderstand(sessionKey, pendingVideoText, videos, conversationMode);
                 }
             }
 
             if (!pendingVideoText.isBlank() && referencesVideoResource(pendingVideoText) && lastVideos.containsKey(sessionKey)) {
                 List<WechatIncomingVideo> videos = lastVideos.get(sessionKey);
                 if (videos != null && !videos.isEmpty()) {
-                    return handleVideoUnderstand(sessionKey, pendingVideoText, videos);
+                    return handleVideoUnderstand(sessionKey, pendingVideoText, videos, conversationMode);
                 }
             }
 
@@ -364,12 +376,17 @@ public class WechatConversationService {
                     return WechatReply.text(reply);
                 }
 
-                Optional<WechatReply> structuredReply = handleIntentPlan(sessionKey, text, effectiveFiles(sessionKey, message.files(), text), request.images());
+                Optional<WechatReply> structuredReply = handleIntentPlan(
+                        sessionKey,
+                        text,
+                        effectiveFiles(sessionKey, message.files(), text),
+                        request.images(),
+                        conversationMode);
                 if (structuredReply.isPresent()) {
                     return structuredReply.get();
                 }
                 StringBuilder output = new StringBuilder();
-                handleImageConversation(sessionKey, message, request, output::append);
+                handleImageConversation(sessionKey, message, request, conversationMode, output::append);
                 Optional<ImageToolTask> imageToolTask = resolveImageToolTask(sessionKey, text);
                 if (imageToolTask.isPresent() && imageGenerationService != null) {
                     return handleImageGenerationTask(sessionKey, text, imageToolTask.get());
@@ -415,7 +432,12 @@ public class WechatConversationService {
                 }
                 List<WechatIncomingImage> selectedWechatImages = imageArchiveService.toWechatImages(selectedImages);
                 if (!selectedWechatImages.isEmpty()) {
-                Optional<WechatReply> imageStructuredReply = handleIntentPlan(sessionKey, text, effectiveFiles(sessionKey, message.files(), text), selectedWechatImages);
+                Optional<WechatReply> imageStructuredReply = handleIntentPlan(
+                        sessionKey,
+                        text,
+                        effectiveFiles(sessionKey, message.files(), text),
+                        selectedWechatImages,
+                        conversationMode);
                 if (imageStructuredReply.isPresent()) {
                     imageArchiveService.markUsed(sessionKey, selectedImages);
                     return imageStructuredReply.get();
@@ -432,7 +454,12 @@ public class WechatConversationService {
                             effectiveFiles(sessionKey, message.files(), text));
                     ImageAnalysisRequest imageRequest = new ImageAnalysisRequest(text, selectedWechatImages);
                     StringBuilder output = new StringBuilder();
-                    handleImageConversation(sessionKey, syntheticMessage, imageRequest, output::append);
+                    handleImageConversation(
+                            sessionKey,
+                            syntheticMessage,
+                            imageRequest,
+                            conversationMode,
+                            output::append);
                     imageArchiveService.markUsed(sessionKey, selectedImages);
                     Optional<ImageToolTask> imageToolTask = resolveImageToolTask(sessionKey, text);
                     if (imageToolTask.isPresent() && imageGenerationService != null) {
@@ -443,11 +470,15 @@ public class WechatConversationService {
                 }
             }
 
-            Optional<WechatReply> structuredReply = handleIntentPlan(sessionKey, text, effectiveFiles(sessionKey, message.files(), text));
+            Optional<WechatReply> structuredReply = handleIntentPlan(
+                    sessionKey,
+                    text,
+                    effectiveFiles(sessionKey, message.files(), text),
+                    conversationMode);
             if (structuredReply.isPresent()) {
                 return structuredReply.get();
             }
-            return handleSingleTextTask(sessionKey, text);
+            return handleSingleTextTask(sessionKey, text, conversationMode);
         } finally {
             if (persistIncomingMessage) {
                 persistWechatMemory(sessionKey);
@@ -526,24 +557,45 @@ public class WechatConversationService {
     }
 
     private void handleNormalConversation(String sessionKey, String originalText, ReplyEmitter emitter) {
-        String prompt = buildConversationPrompt(sessionKey, originalText);
+        handleNormalConversation(sessionKey, originalText, WechatConversationMode.GENERAL, emitter);
+    }
+
+    private void handleNormalConversation(
+            String sessionKey,
+            String originalText,
+            WechatConversationMode conversationMode,
+            ReplyEmitter emitter) {
+        String prompt = buildConversationPrompt(sessionKey, originalText, conversationMode);
         log.debug("微信普通对话上下文轮数={}, userId={}", memoryFor(sessionKey).snapshot().size(), sessionKey);
         streamReplyAndRemember(sessionKey, originalText, prompt, emitter);
     }
 
     private Optional<WechatReply> handleIntentPlan(String sessionKey, String text) {
-        return handleIntentPlan(sessionKey, text, effectiveFiles(sessionKey, List.of(), text));
+        return handleIntentPlan(
+                sessionKey,
+                text,
+                effectiveFiles(sessionKey, List.of(), text),
+                WechatConversationMode.GENERAL);
     }
 
     private Optional<WechatReply> handleIntentPlan(String sessionKey, String text, List<WechatIncomingFile> files) {
-        return handleIntentPlan(sessionKey, text, files, List.of());
+        return handleIntentPlan(sessionKey, text, files, WechatConversationMode.GENERAL);
     }
 
     private Optional<WechatReply> handleIntentPlan(
             String sessionKey,
             String text,
             List<WechatIncomingFile> files,
-            List<WechatIncomingImage> images) {
+            WechatConversationMode conversationMode) {
+        return handleIntentPlan(sessionKey, text, files, List.of(), conversationMode);
+    }
+
+    private Optional<WechatReply> handleIntentPlan(
+            String sessionKey,
+            String text,
+            List<WechatIncomingFile> files,
+            List<WechatIncomingImage> images,
+            WechatConversationMode conversationMode) {
         if (wechatToolRegistry == null) {
             return Optional.empty();
         }
@@ -555,6 +607,7 @@ public class WechatConversationService {
                     conversationContext(sessionKey),
                     files,
                     images,
+                    List.of(),
                     (userText, prompt) -> memoryFor(sessionKey).recordPendingImagePrompt(userText, prompt),
                     (userText, prompt) -> memoryFor(sessionKey).recordImage(userText, prompt),
                     (toolName, arguments, resultSummary, status) -> {
@@ -567,7 +620,8 @@ public class WechatConversationService {
                                     status,
                                     java.time.Instant.now());
                         }
-                    }));
+                    },
+                    conversationMode));
             if (loopReply.isPresent() && hasReplyContent(loopReply.get())) {
                 rememberPlannedReply(sessionKey, text, loopReply.get());
                 return loopReply;
@@ -579,7 +633,10 @@ public class WechatConversationService {
         }
 
         Optional<ConversationIntentDecision> decision =
-                toolCallPlanner.planDecision(text, wechatToolRegistry.definitions(), conversationContext(sessionKey));
+                toolCallPlanner.planDecision(
+                        text,
+                        wechatToolRegistry.definitions(),
+                        conversationContext(sessionKey, conversationMode));
         if (decision.isEmpty()) {
             return Optional.empty();
         }
@@ -601,7 +658,7 @@ public class WechatConversationService {
 
         List<ToolCall> tasks = intentDecision.tasks();
         List<WechatReply.Part> parts = new ArrayList<>();
-        String rollingHistory = historyText(sessionKey);
+        String rollingHistory = conversationModeContext(conversationMode, historyText(sessionKey));
         String previousToolReplyText = "";
         for (int index = 0; index < tasks.size(); index++) {
             ToolCall toolCall = tasks.get(index);
@@ -686,7 +743,10 @@ public class WechatConversationService {
         return false;
     }
 
-    private WechatReply handleSingleTextTask(String sessionKey, String text) {
+    private WechatReply handleSingleTextTask(
+            String sessionKey,
+            String text,
+            WechatConversationMode conversationMode) {
         Optional<ImageToolTask> imageToolTask = resolveImageToolTask(sessionKey, text);
         if (imageToolTask.isPresent() && imageGenerationService != null) {
             WechatReply reply = handleImageGenerationTask(sessionKey, text, imageToolTask.get());
@@ -694,7 +754,7 @@ public class WechatConversationService {
             return reply;
         }
 
-        Optional<WechatReply> weatherReply = handleWeatherIntent(sessionKey, text);
+        Optional<WechatReply> weatherReply = handleWeatherIntent(sessionKey, text, conversationMode);
         if (weatherReply.isPresent()) {
             memoryFor(sessionKey).clearPendingClarification();
             return weatherReply.get();
@@ -706,7 +766,7 @@ public class WechatConversationService {
         }
 
         StringBuilder output = new StringBuilder();
-        handleNormalConversation(sessionKey, text, output::append);
+        handleNormalConversation(sessionKey, text, conversationMode, output::append);
         memoryFor(sessionKey).clearPendingClarification();
         return WechatReply.text(output.toString().strip());
     }
@@ -857,6 +917,52 @@ public class WechatConversationService {
             context.append("最近对话：").append('\n').append(history).append('\n');
         }
         return context.toString().strip();
+    }
+
+    private String conversationContext(String sessionKey, WechatConversationMode conversationMode) {
+        return conversationModeContext(conversationMode, conversationContext(sessionKey));
+    }
+
+    private String conversationModeContext(WechatConversationMode conversationMode, String context) {
+        WechatConversationMode mode = conversationMode == null
+                ? WechatConversationMode.GENERAL
+                : conversationMode;
+        if (mode.prompt().isBlank()) {
+            return context == null ? "" : context.strip();
+        }
+        if (context == null || context.isBlank()) {
+            return mode.prompt().strip();
+        }
+        return mode.prompt().strip() + "\n" + context.strip();
+    }
+
+    private void appendConversationMode(StringBuilder prompt, WechatConversationMode conversationMode) {
+        WechatConversationMode mode = conversationMode == null
+                ? WechatConversationMode.GENERAL
+                : conversationMode;
+        if (!mode.prompt().isBlank()) {
+            prompt.append(mode.prompt().strip()).append('\n');
+        }
+    }
+
+    private WechatIncomingMessage modeAwareMessage(
+            WechatIncomingMessage message,
+            WechatConversationMode conversationMode) {
+        WechatConversationMode mode = conversationMode == null
+                ? WechatConversationMode.GENERAL
+                : conversationMode;
+        if (message == null || !mode.isMedical() || message.text() == null || message.text().isBlank()) {
+            return message;
+        }
+        return new WechatIncomingMessage(
+                message.messageId(),
+                message.fromUserId(),
+                message.contextToken(),
+                conversationModeContext(mode, message.text()),
+                message.images(),
+                message.voices(),
+                message.files(),
+                message.videos());
     }
 
     private String combinedResourceContext(String sessionKey) {
@@ -1114,6 +1220,14 @@ public class WechatConversationService {
     }
 
     private WechatReply handleVideoUnderstand(String sessionKey, String text, List<WechatIncomingVideo> videos) {
+        return handleVideoUnderstand(sessionKey, text, videos, WechatConversationMode.GENERAL);
+    }
+
+    private WechatReply handleVideoUnderstand(
+            String sessionKey,
+            String text,
+            List<WechatIncomingVideo> videos,
+            WechatConversationMode conversationMode) {
         if (wechatToolRegistry == null || !wechatToolRegistry.contains("video_understand")) {
             return WechatReply.text("视频分析服务暂未启用。");
         }
@@ -1121,7 +1235,7 @@ public class WechatConversationService {
         WechatToolRequest request = new WechatToolRequest(
                 sessionKey,
                 text,
-                Map.of("custom_prompt", text),
+                Map.of("custom_prompt", conversationModeContext(conversationMode, text)),
                 historyText(sessionKey),
                 List.of(),
                 List.of(),
@@ -1135,6 +1249,13 @@ public class WechatConversationService {
     }
 
     private WechatReply handleVoiceMessage(String sessionKey, WechatIncomingMessage message) {
+        return handleVoiceMessage(sessionKey, message, WechatConversationMode.GENERAL);
+    }
+
+    private WechatReply handleVoiceMessage(
+            String sessionKey,
+            WechatIncomingMessage message,
+            WechatConversationMode conversationMode) {
         if (voiceRecognitionService == null) {
             return WechatReply.text("语音识别服务暂未配置");
         }
@@ -1153,7 +1274,7 @@ public class WechatConversationService {
                     mergedText,
                     message.images(),
                     List.of());
-            WechatReply reply = handleWechat(sessionKey, syntheticMessage, false);
+            WechatReply reply = handleWechat(sessionKey, syntheticMessage, false, conversationMode);
             if (reply != null && reply.parts() != null && reply.parts().stream().anyMatch(WechatReply.Part::hasVoice)) {
                 return reply;
             }
@@ -1218,6 +1339,20 @@ public class WechatConversationService {
             WechatIncomingMessage originalMessage,
             ImageAnalysisRequest request,
             ReplyEmitter emitter) {
+        handleImageConversation(
+                sessionKey,
+                originalMessage,
+                request,
+                WechatConversationMode.GENERAL,
+                emitter);
+    }
+
+    private void handleImageConversation(
+            String sessionKey,
+            WechatIncomingMessage originalMessage,
+            ImageAnalysisRequest request,
+            WechatConversationMode conversationMode,
+            ReplyEmitter emitter) {
         if (imageUnderstandingService == null) {
             emit(emitter, "图片识别服务暂未配置");
             return;
@@ -1225,7 +1360,8 @@ public class WechatConversationService {
 
         try {
             StringBuilder reply = new StringBuilder();
-            imageUnderstandingService.streamReply(originalMessage, chunk -> {
+            WechatIncomingMessage promptMessage = modeAwareMessage(originalMessage, conversationMode);
+            imageUnderstandingService.streamReply(promptMessage, chunk -> {
                 if (chunk != null) {
                     reply.append(chunk);
                     emitter.emit(chunk);
@@ -1253,10 +1389,19 @@ public class WechatConversationService {
     }
 
     private void handleWeatherQuestion(String sessionKey, String originalText, String city, ReplyEmitter emitter) {
+        handleWeatherQuestion(sessionKey, originalText, city, WechatConversationMode.GENERAL, emitter);
+    }
+
+    private void handleWeatherQuestion(
+            String sessionKey,
+            String originalText,
+            String city,
+            WechatConversationMode conversationMode,
+            ReplyEmitter emitter) {
         try {
             WeatherResult weather = weatherService.query(city);
             memoryFor(sessionKey).recordWeatherCity(city);
-            String prompt = buildWeatherPrompt(sessionKey, originalText, weather);
+            String prompt = buildWeatherPrompt(sessionKey, originalText, weather, conversationMode);
             log.debug(
                     "微信天气对话上下文轮数={}, userId={}, city={}",
                     memoryFor(sessionKey).snapshot().size(),
@@ -1264,7 +1409,12 @@ public class WechatConversationService {
                     city);
             streamReplyAndRemember(sessionKey, originalText, prompt, emitter);
         } catch (WeatherServiceException exception) {
-            String prompt = buildWeatherFailurePrompt(sessionKey, originalText, city, exception);
+            String prompt = buildWeatherFailurePrompt(
+                    sessionKey,
+                    originalText,
+                    city,
+                    exception,
+                    conversationMode);
             log.warn(
                     "微信天气查询失败，userId={}, city={}, error={}",
                     sessionKey,
@@ -1275,11 +1425,18 @@ public class WechatConversationService {
     }
 
     private Optional<WechatReply> handleWeatherIntent(String sessionKey, String text) {
+        return handleWeatherIntent(sessionKey, text, WechatConversationMode.GENERAL);
+    }
+
+    private Optional<WechatReply> handleWeatherIntent(
+            String sessionKey,
+            String text,
+            WechatConversationMode conversationMode) {
         Optional<String> weatherCity = resolveWeatherCity(sessionKey, text);
         if (weatherCity.isPresent()) {
             log.info("微信会话识别到天气意图，userId={}, city={}", sessionKey, weatherCity.get());
             StringBuilder output = new StringBuilder();
-            handleWeatherQuestion(sessionKey, text, weatherCity.get(), output::append);
+            handleWeatherQuestion(sessionKey, text, weatherCity.get(), conversationMode, output::append);
             return Optional.of(WechatReply.text(output.toString().strip()));
         }
 
@@ -1551,7 +1708,10 @@ public class WechatConversationService {
         }
     }
 
-    private String buildConversationPrompt(String sessionKey, String originalText) {
+    private String buildConversationPrompt(
+            String sessionKey,
+            String originalText,
+            WechatConversationMode conversationMode) {
         StringBuilder prompt = new StringBuilder();
         prompt.append("你是微信聊天助手，请结合最近对话上下文自然回复，不要忽略前文。").append('\n')
                 .append("你的回复要像真人微信聊天，语气自然、简洁、具体。").append('\n')
@@ -1559,13 +1719,18 @@ public class WechatConversationService {
                 .append("如果用户明显在延续上一句，就顺着上下文回答，不要重新开场。").append('\n')
                 .append("如果上下文不够，就礼貌追问，不要胡编。").append('\n')
                 .append("如果用户在提需求、补充偏好、继续修改上一轮内容，要把它当作新输入的一部分理解。").append('\n');
+        appendConversationMode(prompt, conversationMode);
         appendHistory(prompt, memoryFor(sessionKey));
         prompt.append("当前用户：").append(originalText).append('\n')
                 .append("请直接回复用户。");
         return prompt.toString();
     }
 
-    private String buildWeatherPrompt(String sessionKey, String originalText, WeatherResult weather) {
+    private String buildWeatherPrompt(
+            String sessionKey,
+            String originalText,
+            WeatherResult weather,
+            WechatConversationMode conversationMode) {
         StringBuilder prompt = new StringBuilder();
         prompt.append("你是微信聊天助手，请结合最近对话上下文回答天气问题，并给出出门建议。").append('\n')
                 .append("要求：").append('\n')
@@ -1574,6 +1739,7 @@ public class WechatConversationService {
                 .append("3. 如果有未来天气，优先总结今天和明天的变化，再给出行动建议。").append('\n')
                 .append("4. 如果用户问的是“适不适合出门”“怎么穿”“要不要带伞”这类问题，也要直接结合天气数据作答。").append('\n')
                 .append("5. 语气自然，适合微信聊天，别写成天气播报稿。").append('\n');
+        appendConversationMode(prompt, conversationMode);
         appendHistory(prompt, memoryFor(sessionKey));
         prompt.append("当前用户：").append(originalText).append('\n')
                 .append("天气数据：").append('\n')
@@ -1621,12 +1787,14 @@ public class WechatConversationService {
             String sessionKey,
             String originalText,
             String city,
-            Exception exception) {
+            Exception exception,
+            WechatConversationMode conversationMode) {
         StringBuilder prompt = new StringBuilder();
         prompt.append("用户在问天气，但天气服务暂时失败了。").append('\n')
                 .append("请用自然、简洁的中文说明情况，并建议稍后重试。").append('\n')
                 .append("不要编造天气，不要假装已经查到了结果。").append('\n')
                 .append("如果合适，可以顺手提醒用户稍后重新发一次城市名更明确的天气请求。").append('\n');
+        appendConversationMode(prompt, conversationMode);
         appendHistory(prompt, memoryFor(sessionKey));
         prompt.append("用户原话：").append(originalText).append('\n')
                 .append("尝试查询的城市：").append(city).append('\n')

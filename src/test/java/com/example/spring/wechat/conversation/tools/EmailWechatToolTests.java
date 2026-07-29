@@ -23,7 +23,7 @@ class EmailWechatToolTests {
     void exposesFunctionCallingDefinition() {
         EmailWechatTool tool = new EmailWechatTool(mock(EmailService.class));
 
-        assertThat(tool.name()).isEqualTo("email_send");
+        assertThat(tool.name()).isEqualTo("email_text_send");
         assertThat(tool.arguments()).containsExactly("to", "subject", "body", "cc", "bcc", "confirm_token");
         assertThat(tool.parameters())
                 .filteredOn(parameter -> parameter.name().equals("to"))

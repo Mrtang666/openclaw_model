@@ -152,7 +152,8 @@ public class FunctionCallingAgentLoop {
                 if ("taxi_service".equals(toolCall.name())
                         || "food_delivery".equals(toolCall.name())
                         || "meituan_travel".equals(toolCall.name())
-                        || "email_send".equals(toolCall.name())) {
+                        || "email_send".equals(toolCall.name())
+                        || "email_text_send".equals(toolCall.name())) {
                     // These tools own their user-facing response. Continuing the model loop would
                     // duplicate a staged action or rewrite an official provider result.
                     state.stop(AgentLoopStopReason.SPECIAL_TOOL_DONE);

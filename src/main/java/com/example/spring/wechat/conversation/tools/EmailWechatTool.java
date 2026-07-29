@@ -20,7 +20,7 @@ public class EmailWechatTool implements WechatTool {
 
     @Override
     public String name() {
-        return "email_send";
+        return "email_text_send";
     }
 
     @Override

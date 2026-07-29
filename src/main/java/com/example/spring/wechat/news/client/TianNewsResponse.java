@@ -1,8 +1,6 @@
 package com.example.spring.wechat.news.client;
 
 import com.example.spring.wechat.news.model.NewsArticle;
-import lombok.Builder;
-import lombok.Data;
 
 import java.util.List;
 
@@ -12,8 +10,6 @@ import java.util.List;
 
 //封装第三方API（天行数据）的返回结果，统一成功/失败格式。
 
-@Data
-@Builder
 public class TianNewsResponse {
 
     /** 是否成功 */
@@ -31,19 +27,44 @@ public class TianNewsResponse {
     /** 分类ID */
     private int categoryId;
 
+    private TianNewsResponse(
+            boolean success,
+            String errorMessage,
+            List<NewsArticle> articles,
+            int total,
+            int categoryId) {
+        this.success = success;
+        this.errorMessage = errorMessage;
+        this.articles = articles;
+        this.total = total;
+        this.categoryId = categoryId;
+    }
+
     public static TianNewsResponse success(List<NewsArticle> articles, int total) {
-        return TianNewsResponse.builder()
-                .success(true)
-                .articles(articles)
-                .total(total)
-                .build();
+        return new TianNewsResponse(true, null, articles == null ? List.of() : articles, total, 0);
     }
 
     public static TianNewsResponse error(String message) {
-        return TianNewsResponse.builder()
-                .success(false)
-                .errorMessage(message)
-                .articles(List.of())
-                .build();
+        return new TianNewsResponse(false, message, List.of(), 0, 0);
+    }
+
+    public boolean isSuccess() {
+        return success;
+    }
+
+    public String getErrorMessage() {
+        return errorMessage;
+    }
+
+    public List<NewsArticle> getArticles() {
+        return articles;
+    }
+
+    public int getTotal() {
+        return total;
+    }
+
+    public int getCategoryId() {
+        return categoryId;
     }
 }

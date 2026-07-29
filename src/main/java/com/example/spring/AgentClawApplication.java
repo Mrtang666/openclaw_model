@@ -11,6 +11,8 @@ import com.example.spring.wechat.payment.config.WechatPayProperties;
 import com.example.spring.wechat.reminder.config.ReminderProperties;
 import com.example.spring.wechat.food.config.FoodDeliveryProperties;
 import com.example.spring.wechat.travel.config.MeituanTravelProperties;
+import com.example.spring.wechat.care.config.CareProperties;
+import com.example.spring.wechat.care.config.CareTaskProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -30,7 +32,9 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         BaiduNetdiskProperties.class,
         ReminderProperties.class,
         FoodDeliveryProperties.class,
-        MeituanTravelProperties.class
+        MeituanTravelProperties.class,
+        CareProperties.class,
+        CareTaskProperties.class
 })
 @EnableScheduling
 public class AgentClawApplication {

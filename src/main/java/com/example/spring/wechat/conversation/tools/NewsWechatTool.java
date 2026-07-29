@@ -4,7 +4,8 @@ import com.example.spring.wechat.news.model.NewsQuery;
 import com.example.spring.wechat.news.service.NewsResult;
 import com.example.spring.wechat.news.service.NewsService;
 import com.example.spring.wechat.bot.WechatReply;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -15,9 +16,10 @@ import java.util.regex.Pattern;
 /**
  * 新闻查询微信工具
  */
-@Slf4j
 @Component
 public class NewsWechatTool implements WechatTool {
+
+    private static final Logger log = LoggerFactory.getLogger(NewsWechatTool.class);
 
     @Autowired
     private NewsService newsService;
@@ -92,12 +94,7 @@ public class NewsWechatTool implements WechatTool {
             log.info("解析结果: keyword={}, action={}", parsed.keyword, parsed.action);
 
             // 构建查询
-            NewsQuery query = NewsQuery.builder()
-                    .userId(userId)
-                    .sessionId(sessionKey)
-                    .keyword(parsed.keyword)
-                    .action(parsed.action)
-                    .build();
+            NewsQuery query = new NewsQuery(userId, sessionKey, parsed.keyword, parsed.action);
 
             NewsResult result = newsService.searchNews(query);
             return formatResult(result);

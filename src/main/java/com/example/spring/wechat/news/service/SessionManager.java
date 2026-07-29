@@ -2,9 +2,8 @@ package com.example.spring.wechat.news.service;
 
 
 import com.example.spring.wechat.news.model.NewsArticle;
-import lombok.Builder;
-import lombok.Data;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -17,29 +16,44 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 
 //管理用户搜索会话，支持分页功能。
-@Slf4j
 @Service
 public class SessionManager {
 
+    private static final Logger log = LoggerFactory.getLogger(SessionManager.class);
+
     private final Map<String, NewsSession> sessionMap = new ConcurrentHashMap<>();
 
-    @Data
-    @Builder
     public static class NewsSession {
-        private String sessionId;
-        private List<NewsArticle> articles;
+        private final String sessionId;
+        private final List<NewsArticle> articles;
         private int currentIndex;
-        private int batchSize;
-        private String queryType;
-        private String keyword;
-        private LocalDateTime createdAt;
-        private LocalDateTime expiresAt;
+        private final int batchSize;
+        private final String keyword;
+        private final LocalDateTime createdAt;
+        private final LocalDateTime expiresAt;
 
-        public boolean hasMore() {
+        public NewsSession(
+                String sessionId,
+                List<NewsArticle> articles,
+                int currentIndex,
+                int batchSize,
+                String keyword,
+                LocalDateTime createdAt,
+                LocalDateTime expiresAt) {
+            this.sessionId = sessionId;
+            this.articles = articles;
+            this.currentIndex = currentIndex;
+            this.batchSize = batchSize;
+            this.keyword = keyword;
+            this.createdAt = createdAt;
+            this.expiresAt = expiresAt;
+        }
+
+        public synchronized boolean hasMore() {
             return currentIndex < articles.size();
         }
 
-        public List<NewsArticle> getNextBatch() {
+        public synchronized List<NewsArticle> getNextBatch() {
             if (!hasMore()) {
                 return List.of();
             }
@@ -49,16 +63,48 @@ public class SessionManager {
             return batch;
         }
 
-        public int getDisplayedCount() {
+        public synchronized int getDisplayedCount() {
             return currentIndex;
         }
 
-        public int getRemainingCount() {
+        public synchronized int getRemainingCount() {
             return articles.size() - currentIndex;
         }
 
         public boolean isExpired() {
             return LocalDateTime.now().isAfter(expiresAt);
+        }
+
+        public String getSessionId() {
+            return sessionId;
+        }
+
+        public List<NewsArticle> getArticles() {
+            return articles;
+        }
+
+        public synchronized int getCurrentIndex() {
+            return currentIndex;
+        }
+
+        public synchronized void setCurrentIndex(int currentIndex) {
+            this.currentIndex = Math.max(0, Math.min(currentIndex, articles.size()));
+        }
+
+        public int getBatchSize() {
+            return batchSize;
+        }
+
+        public String getKeyword() {
+            return keyword;
+        }
+
+        public LocalDateTime getCreatedAt() {
+            return createdAt;
+        }
+
+        public LocalDateTime getExpiresAt() {
+            return expiresAt;
         }
     }
 
@@ -67,15 +113,9 @@ public class SessionManager {
      */
     public NewsSession createSession(String sessionId, List<NewsArticle> articles,
                                      String keyword) {
-        NewsSession session = NewsSession.builder()
-                .sessionId(sessionId)
-                .articles(articles)
-                .currentIndex(0)
-                .batchSize(2)
-                .keyword(keyword)
-                .createdAt(LocalDateTime.now())
-                .expiresAt(LocalDateTime.now().plusHours(1))
-                .build();
+        LocalDateTime now = LocalDateTime.now();
+        NewsSession session = new NewsSession(
+                sessionId, List.copyOf(articles), 0, 2, keyword, now, now.plusHours(1));
         sessionMap.put(sessionId, session);
         log.debug("创建会话: sessionId={}, count={}", sessionId, articles.size());
         return session;

@@ -5,6 +5,7 @@ import com.example.spring.wechat.email.config.EmailProperties;
 import com.example.spring.wechat.email.model.DownloadedEmailAttachment;
 import com.example.spring.wechat.email.model.EmailMessageDetail;
 import com.example.spring.wechat.email.model.EmailMessageSummary;
+import com.example.spring.wechat.email.model.EmailUnreadBatchResult;
 import jakarta.mail.Address;
 import jakarta.mail.BodyPart;
 import jakarta.mail.FetchProfile;
@@ -19,6 +20,7 @@ import jakarta.mail.Store;
 import jakarta.mail.UIDFolder;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeUtility;
+import jakarta.mail.search.FlagTerm;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -108,27 +110,82 @@ public class EmailReceiveService {
     }
 
     public EmailMessageDetail read(String uid) {
+        return read(uid, false);
+    }
+
+    public EmailMessageDetail read(String uid, boolean markRead) {
         validateReceiveEnabled();
         long messageUid = parseUid(uid);
-        try (Mailbox mailbox = openInbox()) {
+        try (Mailbox mailbox = openInbox(markRead)) {
             Message message = mailbox.uidFolder().getMessageByUID(messageUid);
             if (message == null) {
                 throw new EmailToolException("没有找到这封邮件：" + uid);
             }
+            boolean unread = !message.isSet(Flags.Flag.SEEN);
             String text = extractText(message).strip();
+            if (markRead && unread) {
+                message.setFlag(Flags.Flag.SEEN, true);
+            }
             return new EmailMessageDetail(
                     String.valueOf(messageUid),
                     addresses(message.getFrom()),
                     addressList(message.getRecipients(Message.RecipientType.TO)),
                     decode(message.getSubject()),
                     sentAt(message),
-                    !message.isSet(Flags.Flag.SEEN),
+                    markRead ? false : unread,
                     countAttachments(message),
                     text.isBlank() ? "这封邮件没有可读取的正文内容。" : limitText(text, 3000));
         } catch (EmailToolException exception) {
             throw exception;
         } catch (MessagingException | IOException exception) {
             throw new EmailToolException("读取邮件失败：" + friendlyReceiveMessage(rootMessage(exception)), exception);
+        }
+    }
+
+    public void markRead(String uid) {
+        validateReceiveEnabled();
+        long messageUid = parseUid(uid);
+        try (Mailbox mailbox = openInbox(true)) {
+            Message message = mailbox.uidFolder().getMessageByUID(messageUid);
+            if (message == null) {
+                throw new EmailToolException("没有找到这封邮件：" + uid);
+            }
+            message.setFlag(Flags.Flag.SEEN, true);
+        } catch (EmailToolException exception) {
+            throw exception;
+        } catch (MessagingException exception) {
+            throw new EmailToolException("标记邮件已读失败：" + friendlyReceiveMessage(rootMessage(exception)), exception);
+        }
+    }
+
+    public EmailUnreadBatchResult readUnreadAndMarkRead(int limit) {
+        validateReceiveEnabled();
+        int safeLimit = Math.min(Math.max(limit, 1), 5);
+        try (Mailbox mailbox = openInbox(true)) {
+            Message[] unreadMessages = mailbox.folder().search(new FlagTerm(new Flags(Flags.Flag.SEEN), false));
+            if (unreadMessages == null || unreadMessages.length == 0) {
+                return new EmailUnreadBatchResult(0, List.of());
+            }
+            mailbox.folder().fetch(unreadMessages, envelopeProfile());
+            List<EmailMessageDetail> details = new ArrayList<>();
+            for (int index = unreadMessages.length - 1; index >= 0 && details.size() < safeLimit; index--) {
+                Message message = unreadMessages[index];
+                long uid = mailbox.uidFolder().getUID(message);
+                String text = extractText(message).strip();
+                details.add(new EmailMessageDetail(
+                        String.valueOf(uid),
+                        addresses(message.getFrom()),
+                        addressList(message.getRecipients(Message.RecipientType.TO)),
+                        decode(message.getSubject()),
+                        sentAt(message),
+                        false,
+                        countAttachments(message),
+                        text.isBlank() ? "这封邮件没有可读取的正文内容。" : limitText(text, 1200)));
+                message.setFlag(Flags.Flag.SEEN, true);
+            }
+            return new EmailUnreadBatchResult(unreadMessages.length, details);
+        } catch (MessagingException | IOException exception) {
+            throw new EmailToolException("批量读取未读邮件失败：" + friendlyReceiveMessage(rootMessage(exception)), exception);
         }
     }
 
@@ -159,6 +216,10 @@ public class EmailReceiveService {
     }
 
     private Mailbox openInbox() throws MessagingException {
+        return openInbox(false);
+    }
+
+    private Mailbox openInbox(boolean readWrite) throws MessagingException {
         Properties props = new Properties();
         String protocol = properties.isImapSsl() ? "imaps" : "imap";
         props.put("mail.store.protocol", protocol);
@@ -176,7 +237,7 @@ public class EmailReceiveService {
         Store store = session.getStore(protocol);
         store.connect(properties.getImapHost(), properties.getImapPort(), properties.getUsername(), properties.getPassword());
         Folder folder = store.getFolder("INBOX");
-        folder.open(Folder.READ_ONLY);
+        folder.open(readWrite ? Folder.READ_WRITE : Folder.READ_ONLY);
         if (!(folder instanceof UIDFolder uidFolder)) {
             throw new EmailToolException("当前 IMAP 服务不支持 UID 查询");
         }

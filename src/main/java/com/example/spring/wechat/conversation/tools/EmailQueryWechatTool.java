@@ -5,6 +5,7 @@ import com.example.spring.wechat.email.EmailToolException;
 import com.example.spring.wechat.email.model.DownloadedEmailAttachment;
 import com.example.spring.wechat.email.model.EmailMessageDetail;
 import com.example.spring.wechat.email.model.EmailMessageSummary;
+import com.example.spring.wechat.email.model.EmailUnreadBatchResult;
 import com.example.spring.wechat.email.service.EmailReceiveService;
 import org.springframework.stereotype.Component;
 
@@ -35,12 +36,12 @@ public class EmailQueryWechatTool implements WechatTool {
 
     @Override
     public String description() {
-        return "通过已配置的邮箱 IMAP 查询收件箱邮件，支持最近邮件、关键词搜索、读取邮件正文和下载邮件附件。";
+        return "通过已配置的邮箱 IMAP 查询收件箱邮件，支持最近邮件、关键词搜索、读取邮件正文、标记已读和下载邮件附件。";
     }
 
     @Override
     public List<String> arguments() {
-        return List.of("action", "query", "from", "limit", "unread_only", "message_id", "mail_index", "attachment_index");
+        return List.of("action", "query", "from", "limit", "unread_only", "message_id", "mail_index", "attachment_index", "mark_read");
     }
 
     @Override
@@ -48,8 +49,8 @@ public class EmailQueryWechatTool implements WechatTool {
         return List.of(
                 WechatToolParameter.optionalEnum(
                         "action",
-                        "操作类型：list=最近邮件，search=搜索邮件，read=读取正文，download_attachments=下载附件",
-                        List.of("list", "search", "read", "download_attachments"),
+                        "操作类型：list=最近邮件，search=搜索邮件，read=读取正文，read_unread=读取最多5封未读并标记已读，mark_read=标记已读，download_attachments=下载附件",
+                        List.of("list", "search", "read", "read_unread", "mark_read", "download_attachments"),
                         "list"),
                 WechatToolParameter.optionalString("query", "搜索关键词，可匹配主题、发件人和正文预览", "测试邮件"),
                 WechatToolParameter.optionalString("from", "发件人关键词或邮箱", "someone@qq.com"),
@@ -57,7 +58,8 @@ public class EmailQueryWechatTool implements WechatTool {
                 WechatToolParameter.optionalBoolean("unread_only", "是否只查未读邮件", false),
                 WechatToolParameter.optionalString("message_id", "邮件 UID；也可以传上次查询列表中的序号", "1"),
                 WechatToolParameter.optionalString("mail_index", "上次查询列表中的邮件序号", "1"),
-                WechatToolParameter.optionalString("attachment_index", "附件序号；不填表示下载全部附件", "1"));
+                WechatToolParameter.optionalString("attachment_index", "附件序号；不填表示下载全部附件", "1"),
+                WechatToolParameter.optionalBoolean("mark_read", "读取正文后是否标记为已读；默认不修改邮件状态", false));
     }
 
     @Override
@@ -66,9 +68,10 @@ public class EmailQueryWechatTool implements WechatTool {
                 "查询邮箱收件箱，读取邮件内容，下载邮件附件并返回给微信用户。",
                 List.of(
                         "只读访问收件箱，不删除邮件，不主动标记已读。",
+                        "只有用户明确要求标记已读，或参数 mark_read=true 时，才会修改邮件已读状态。",
                         "读取或下载附件前需要邮件编号；如果用户说“第一封、上一封”，优先使用上次查询结果。",
                         "不能查询未配置的邮箱，也不能绕过邮箱 IMAP 授权。"),
-                List.of("action：要执行的邮箱操作；read/download_attachments 需要 message_id 或 mail_index"),
+                List.of("action：要执行的邮箱操作；read/mark_read/download_attachments 需要 message_id 或 mail_index；read_unread 一次最多处理5封"),
                 List.of("邮件列表", "单封邮件摘要", "邮件附件文件"));
     }
 
@@ -79,6 +82,8 @@ public class EmailQueryWechatTool implements WechatTool {
             return switch (action) {
                 case "search" -> search(request);
                 case "read" -> read(request);
+                case "read_unread" -> readUnreadAndMarkRead(request);
+                case "mark_read" -> markRead(request);
                 case "download_attachments" -> downloadAttachments(request);
                 default -> listRecent(request);
             };
@@ -109,9 +114,26 @@ public class EmailQueryWechatTool implements WechatTool {
 
     private WechatReply read(WechatToolRequest request) {
         String uid = resolveMessageUid(request);
-        EmailMessageDetail detail = emailReceiveService.read(uid);
+        boolean markRead = shouldMarkRead(request);
+        EmailMessageDetail detail = emailReceiveService.read(uid, markRead);
         lastResults.put(request.sessionKey(), List.of(toSummary(detail)));
-        return WechatReply.text(formatDetail(detail));
+        String text = formatDetail(detail);
+        if (markRead) {
+            text = text + "\n\n已将这封邮件标记为已读。";
+        }
+        return WechatReply.text(text);
+    }
+
+    private WechatReply markRead(WechatToolRequest request) {
+        String uid = resolveMessageUid(request);
+        emailReceiveService.markRead(uid);
+        return WechatReply.text("已将这封邮件标记为已读。\n编号：" + uid);
+    }
+
+    private WechatReply readUnreadAndMarkRead(WechatToolRequest request) {
+        EmailUnreadBatchResult result = emailReceiveService.readUnreadAndMarkRead(5);
+        lastResults.put(request.sessionKey(), result.messages().stream().map(this::toSummary).toList());
+        return WechatReply.text(formatUnreadBatch(result));
     }
 
     private WechatReply downloadAttachments(WechatToolRequest request) {
@@ -147,14 +169,26 @@ public class EmailQueryWechatTool implements WechatTool {
             if (action.equals("download") || action.equals("attachment") || action.equals("attachments")) {
                 return "download_attachments";
             }
+            if (action.equals("markread") || action.equals("mark_read") || action.equals("readed")) {
+                return "mark_read";
+            }
+            if (action.equals("readunread") || action.equals("read_unread") || action.equals("read_unread_and_mark_read")) {
+                return "read_unread";
+            }
             return action;
         }
         String text = request.userText() == null ? "" : request.userText().strip().toLowerCase(java.util.Locale.ROOT);
         if (containsAny(text, "附件", "下载", "发给我", "attachment", "download")) {
             return "download_attachments";
         }
+        if (isReadAllUnreadRequest(text)) {
+            return "read_unread";
+        }
         if (containsAny(text, "读取", "读一下", "打开", "看看", "内容", "正文", "read")) {
             return "read";
+        }
+        if (containsAny(text, "标记已读", "设为已读", "标为已读", "标成已读", "置为已读", "mark read", "mark as read")) {
+            return "mark_read";
         }
         if (containsAny(text, "搜索", "查找", "包含", "关于", "from:", "search")) {
             return "search";
@@ -163,6 +197,22 @@ public class EmailQueryWechatTool implements WechatTool {
             return "search";
         }
         return "list";
+    }
+
+    private boolean isReadAllUnreadRequest(String text) {
+        if (text == null || text.isBlank() || !text.contains("未读")) {
+            return false;
+        }
+        boolean all = containsAny(text, "全部", "所有", "全都", "都");
+        boolean readOrMark = containsAny(text, "读取", "读一下", "打开", "看看", "内容", "正文", "标记已读", "设为已读", "read", "mark read");
+        return all && readOrMark;
+    }
+
+    private boolean shouldMarkRead(WechatToolRequest request) {
+        String text = request.userText() == null ? "" : request.userText().strip().toLowerCase(java.util.Locale.ROOT);
+        return request.booleanArgument("mark_read")
+                || request.booleanArgument("markRead")
+                || containsAny(text, "标记已读", "设为已读", "标为已读", "标成已读", "置为已读", "mark read", "mark as read");
     }
 
     private String resolveMessageUid(WechatToolRequest request) {
@@ -243,6 +293,35 @@ public class EmailQueryWechatTool implements WechatTool {
                 detail.uid(),
                 detail.attachmentCount(),
                 detail.text()).strip();
+    }
+
+    private String formatUnreadBatch(EmailUnreadBatchResult result) {
+        if (result.totalUnread() <= 0 || result.messages().isEmpty()) {
+            return "当前没有未读邮件。";
+        }
+        StringBuilder text = new StringBuilder();
+        text.append("当前最多一次读取并标记 5 封未读邮件。\n")
+                .append("读取前共有 ").append(result.totalUnread()).append(" 封未读邮件；")
+                .append("本次已读取并标记 ").append(result.messages().size()).append(" 封；")
+                .append("剩余 ").append(result.remainingUnread()).append(" 封未读。\n\n");
+        for (int i = 0; i < result.messages().size(); i++) {
+            EmailMessageDetail message = result.messages().get(i);
+            text.append(i + 1)
+                    .append(". ")
+                    .append(firstNonBlank(message.subject(), "无主题"))
+                    .append('\n')
+                    .append("发件人：").append(firstNonBlank(message.from(), "未知")).append('\n')
+                    .append("时间：").append(formatTime(message.sentAt())).append('\n')
+                    .append("编号：").append(message.uid()).append('\n');
+            if (message.attachmentCount() > 0) {
+                text.append("附件：").append(message.attachmentCount()).append(" 个\n");
+            }
+            text.append("正文：").append(limitText(message.text(), 600)).append('\n');
+            if (i < result.messages().size() - 1) {
+                text.append('\n');
+            }
+        }
+        return text.toString().strip();
     }
 
     private EmailMessageSummary toSummary(EmailMessageDetail detail) {
@@ -360,6 +439,14 @@ public class EmailQueryWechatTool implements WechatTool {
             return Math.max(1, bytes / 1024) + "KB";
         }
         return "%.2fMB".formatted(bytes / 1024.0 / 1024.0);
+    }
+
+    private String limitText(String text, int maxLength) {
+        String value = text == null ? "" : text.strip();
+        if (value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, Math.max(0, maxLength - 3)) + "...";
     }
 
     private String cleanMessage(Exception exception) {

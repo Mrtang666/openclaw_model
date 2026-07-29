@@ -10,6 +10,10 @@ import com.example.spring.wechat.taxi.client.DidiMcpProperties;
 import com.example.spring.wechat.payment.config.WechatPayProperties;
 import com.example.spring.wechat.food.config.FoodDeliveryProperties;
 import com.example.spring.wechat.travel.config.MeituanTravelProperties;
+import com.example.spring.xhs.config.XhsCollectorProperties;
+import com.example.spring.xhs.config.XhsAnalysisProperties;
+import com.example.spring.xhs.config.XhsAlertProperties;
+import com.example.spring.xhs.config.XhsConsoleProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -29,6 +33,10 @@ import com.example.spring.wechat.netdisk.config.BaiduNetdiskProperties;
         WechatPayProperties.class,
         FoodDeliveryProperties.class,
         MeituanTravelProperties.class,
+        XhsCollectorProperties.class,
+        XhsAnalysisProperties.class,
+        XhsAlertProperties.class,
+        XhsConsoleProperties.class,
         BaiduNetdiskProperties.class
 })
 @EnableScheduling

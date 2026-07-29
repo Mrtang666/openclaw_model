@@ -32,6 +32,8 @@ public class WechatLoginPageController {
                 .cacheControl(CacheControl.noStore())
                 .body(new LoginPageResponse(
                         session.id(),
+                        session.requestedRole(),
+                        roleLabel(session.requestedRole()),
                         session.matrix(),
                         session.matrixSize(),
                         status.name(),
@@ -49,8 +51,22 @@ public class WechatLoginPageController {
         };
     }
 
+    private static String roleLabel(String requestedRole) {
+        if (requestedRole == null || requestedRole.isBlank()) {
+            return "";
+        }
+        return switch (requestedRole) {
+            case "PATIENT" -> "患者身份登录";
+            case "PARENT" -> "家属身份登录";
+            case "DOCTOR" -> "医生身份登录";
+            default -> requestedRole;
+        };
+    }
+
     public record LoginPageResponse(
             String sessionId,
+            String requestedRole,
+            String roleLabel,
             List<String> matrix,
             int matrixSize,
             String status,

@@ -31,11 +31,16 @@ public class WechatLoginPageSessionService {
     }
 
     public WechatLoginPageSession create(String loginUrl, Supplier<WechatLoginState> liveStatus) {
+        return create(loginUrl, null, liveStatus);
+    }
+
+    public WechatLoginPageSession create(String loginUrl, String requestedRole, Supplier<WechatLoginState> liveStatus) {
         validateLoginUrl(loginUrl);
         purgeStaleSessions();
         List<String> matrix = encode(loginUrl);
         WechatLoginPageSession session = new WechatLoginPageSession(
                 UUID.randomUUID().toString(),
+                normalizeRole(requestedRole),
                 matrix,
                 matrix.size(),
                 Instant.now(),
@@ -68,6 +73,12 @@ public class WechatLoginPageSessionService {
 
     private boolean isExpired(WechatLoginPageSession session) {
         return session.createdAt().plus(properties.getSessionTtl()).isBefore(Instant.now());
+    }
+
+    private String normalizeRole(String requestedRole) {
+        return requestedRole == null || requestedRole.isBlank()
+                ? null
+                : requestedRole.strip().toUpperCase(java.util.Locale.ROOT);
     }
 
     private void purgeStaleSessions() {

@@ -35,6 +35,7 @@ class MedicalCareSchemaTests {
                 "medical_consents",
                 "medical_relation_permissions",
                 "medical_web_sessions",
+                "medical_login_sessions",
                 "medical_memory_events",
                 "medical_daily_checkins",
                 "medical_care_observations",

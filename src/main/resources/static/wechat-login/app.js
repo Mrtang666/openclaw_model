@@ -4,6 +4,10 @@ const canvas = document.querySelector("#particle-canvas");
 const qrCanvas = document.querySelector("#qr-canvas");
 const message = document.querySelector("#status-message");
 const detail = document.querySelector("#status-detail");
+const title = document.querySelector("h1");
+const eyebrow = document.querySelector(".eyebrow");
+const roleCaption = document.querySelector("#role-caption");
+const floatingMessageLayer = document.querySelector("#floating-message-layer");
 const sessionId = new URLSearchParams(location.search).get("session");
 const addUserButton = document.querySelector("#add-user-button");
 const connectionPanel = document.querySelector("#connection-panel");
@@ -21,11 +25,79 @@ const statusLabels = {
   ERROR: ["登录状态获取失败", "请查看 IDEA 日志后重试"]
 };
 
+const roleVisuals = {
+  PATIENT: {
+    bodyClass: "role-patient",
+    title: "患者身份扫码登录",
+    eyebrow: "PATIENT ACCESS",
+    caption: "扫码后通过微信完成提醒、打卡和安全确认。",
+    colorA: [0.18, 0.92, 0.68],
+    colorB: [0.35, 0.58, 1.0],
+    phrases: [
+      "自愈的路上，你从不孤单",
+      "坚持日常，遇见新生",
+      "今天完成一点点，也是在向前走",
+      "认真打卡，是给明天的自己一点确定",
+      "请慢慢来，我们会陪你一起完成",
+      "每一次确认安全，都很重要",
+      "小步骤，也会带来大改变"
+    ]
+  },
+  PARENT: {
+    bodyClass: "role-caregiver",
+    title: "家属身份扫码登录",
+    eyebrow: "CAREGIVER ACCESS",
+    caption: "扫码后查看患者状态、异常提醒和照护摘要。",
+    colorA: [1.0, 0.72, 0.36],
+    colorB: [1.0, 0.44, 0.58],
+    phrases: [
+      "守护在身边，安心每一天",
+      "家人同心，照护有光",
+      "你关心的每一次查看，都有意义",
+      "及时了解状态，让陪伴更踏实",
+      "异常提醒会帮你更早发现变化",
+      "把担心交给系统，把陪伴留给家人",
+      "一份状态摘要，也是一份安心"
+    ]
+  },
+  DOCTOR: {
+    bodyClass: "role-doctor",
+    title: "医生身份扫码登录",
+    eyebrow: "DOCTOR ACCESS",
+    caption: "扫码后查看患者、处理告警、审核计划和调整任务。",
+    colorA: [0.24, 0.58, 1.0],
+    colorB: [0.38, 0.92, 1.0],
+    phrases: [
+      "专业守护，精准照护",
+      "每一次关注，都托举康复",
+      "告警聚合，让风险更早被看见",
+      "计划可追踪，任务可调整",
+      "把重复提醒交给系统，把判断留给医生",
+      "数据沉淀，服务连续照护",
+      "清晰状态，辅助更稳的决策"
+    ]
+  },
+  DEFAULT: {
+    bodyClass: "",
+    title: "微信扫码登录",
+    eyebrow: "iLink BOT",
+    caption: "正在识别本次登录身份，请稍候。",
+    colorA: [0.12, 0.60, 1.0],
+    colorB: [0.62, 0.26, 1.0],
+    phrases: []
+  }
+};
+
 let renderer;
 let scene;
 let camera;
 let cloud;
 let clock;
+let particleCount = 0;
+let activeRole = "DEFAULT";
+let activeTargetIndex = 0;
+let targetCycleTimer;
+let floatingMessageTimer;
 let dragging = false;
 let lastPointer = { x: 0, y: 0 };
 let targetRotation = { x: -0.08, y: 0.2 };
@@ -62,6 +134,170 @@ function drawQr(matrix, matrixSize, targetCanvas = qrCanvas) {
     });
   });
   targetCanvas.classList.add("ready");
+}
+
+function normalizeRole(role) {
+  const value = String(role || "").trim().toUpperCase();
+  return roleVisuals[value] ? value : "DEFAULT";
+}
+
+function applyLoginRole(role) {
+  const roleKey = normalizeRole(role);
+  if (roleKey === activeRole && (roleKey === "DEFAULT" || floatingMessageTimer)) return;
+  activeRole = roleKey;
+  activeTargetIndex = 0;
+  const visual = roleVisuals[roleKey];
+  document.body.classList.remove("role-patient", "role-caregiver", "role-doctor");
+  if (visual.bodyClass) document.body.classList.add(visual.bodyClass);
+  title.textContent = visual.title;
+  eyebrow.textContent = visual.eyebrow;
+  if (roleCaption) roleCaption.textContent = visual.caption;
+  clearInterval(targetCycleTimer);
+  targetCycleTimer = null;
+  if (roleKey === "DEFAULT") {
+    stopFloatingMessages();
+    if (cloud) cloud.visible = true;
+    return;
+  }
+  if (cloud) cloud.visible = false;
+  startFloatingMessages(roleKey);
+}
+
+function startFloatingMessages(roleKey) {
+  stopFloatingMessages();
+  if (!floatingMessageLayer) return;
+  for (let index = 0; index < 8; index++) {
+    setTimeout(() => spawnFloatingMessage(roleKey), index * 280);
+  }
+  floatingMessageTimer = setInterval(() => {
+    const count = 1 + Math.floor(Math.random() * 3);
+    for (let index = 0; index < count; index++) {
+      setTimeout(() => spawnFloatingMessage(roleKey), index * 180);
+    }
+  }, 1700);
+}
+
+function stopFloatingMessages() {
+  clearInterval(floatingMessageTimer);
+  floatingMessageTimer = null;
+  if (floatingMessageLayer) floatingMessageLayer.replaceChildren();
+}
+
+function spawnFloatingMessage(roleKey) {
+  const phrases = roleVisuals[roleKey]?.phrases || [];
+  if (!floatingMessageLayer || !phrases.length) return;
+  const item = document.createElement("span");
+  const sizeClass = Math.random() > 0.72 ? "large" : (Math.random() > 0.5 ? "small" : "");
+  item.className = `floating-message ${sizeClass}`.trim();
+  item.textContent = phrases[Math.floor(Math.random() * phrases.length)];
+  const position = randomMessagePosition();
+  item.style.left = `${position.left}%`;
+  item.style.top = `${position.top}%`;
+  item.style.animationDuration = `${4.8 + Math.random() * 2.2}s`;
+  floatingMessageLayer.append(item);
+  window.setTimeout(() => item.remove(), 7600);
+}
+
+function randomMessagePosition() {
+  const zones = [
+    { left: [5, 30], top: [14, 34] },
+    { left: [62, 84], top: [14, 34] },
+    { left: [6, 28], top: [42, 72] },
+    { left: [68, 86], top: [42, 72] },
+    { left: [28, 54], top: [72, 86] },
+    { left: [36, 58], top: [10, 22] }
+  ];
+  const zone = zones[Math.floor(Math.random() * zones.length)];
+  return {
+    left: randomBetween(zone.left[0], zone.left[1]),
+    top: randomBetween(zone.top[0], zone.top[1])
+  };
+}
+
+function randomBetween(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function updateParticleTarget(roleKey, targetIndex) {
+  if (!cloud || !particleCount) return;
+  const targets = roleVisuals[roleKey]?.targets || roleVisuals.DEFAULT.targets;
+  const target = targets[targetIndex % targets.length];
+  const positions = target.type === "heart"
+    ? heartTargetPositions(particleCount)
+    : textTargetPositions(particleCount, target.value);
+  cloud.geometry.setAttribute("aTarget", new THREE.BufferAttribute(positions, 3));
+  cloud.geometry.attributes.aTarget.needsUpdate = true;
+}
+
+function textTargetPositions(count, text) {
+  const width = 1200;
+  const height = 360;
+  const offscreen = document.createElement("canvas");
+  offscreen.width = width;
+  offscreen.height = height;
+  const context = offscreen.getContext("2d");
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = "#fff";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  const lines = splitParticleText(text);
+  const longestLine = Math.max(...lines.map((line) => line.length));
+  const fontSize = longestLine > 6 ? 132 : 152;
+  context.font = `700 ${fontSize}px "Microsoft YaHei", "PingFang SC", sans-serif`;
+  lines.forEach((line, index) => {
+    const lineY = height / 2 + (index - (lines.length - 1) / 2) * fontSize * 1.02;
+    context.fillText(line, width / 2, lineY, width - 72);
+  });
+  const image = context.getImageData(0, 0, width, height).data;
+  const samples = [];
+  const step = 3;
+  for (let y = 0; y < height; y += step) {
+    for (let x = 0; x < width; x += step) {
+      if (image[(y * width + x) * 4 + 3] > 32) {
+        samples.push([x, y]);
+      }
+    }
+  }
+  if (!samples.length) return heartTargetPositions(count);
+  const result = new Float32Array(count * 3);
+  for (let index = 0; index < count; index++) {
+    const sample = samples[index % samples.length];
+    const offset = index * 3;
+    result[offset] = (sample[0] / width - 0.5) * 2.65 + randomJitter(0.006);
+    result[offset + 1] = (0.5 - sample[1] / height) * 1.72 + 0.72 + randomJitter(0.006);
+    result[offset + 2] = randomJitter(0.08) - 0.18;
+  }
+  return result;
+}
+
+function splitParticleText(text) {
+  if (text.includes("|")) return text.split("|").filter(Boolean);
+  if (text.length <= 10) return [text];
+  const punctuationIndex = Math.max(text.indexOf("，"), text.indexOf("、"));
+  if (punctuationIndex > 1 && punctuationIndex < text.length - 2) {
+    return [text.slice(0, punctuationIndex), text.slice(punctuationIndex + 1)];
+  }
+  const middle = Math.ceil(text.length / 2);
+  return [text.slice(0, middle), text.slice(middle)];
+}
+
+function heartTargetPositions(count) {
+  const result = new Float32Array(count * 3);
+  for (let index = 0; index < count; index++) {
+    const t = (index / count) * Math.PI * 2 * 18 + Math.random() * 0.08;
+    const radius = Math.sqrt(Math.random());
+    const x = 16 * Math.pow(Math.sin(t), 3);
+    const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+    const offset = index * 3;
+    result[offset] = x / 8.6 * radius + randomJitter(0.018);
+    result[offset + 1] = y / 11.5 * radius + 0.34 + randomJitter(0.018);
+    result[offset + 2] = randomJitter(0.2) - 0.22;
+  }
+  return result;
+}
+
+function randomJitter(amount) {
+  return (Math.random() - 0.5) * amount;
 }
 
 function createParticleCloud() {
@@ -168,6 +404,7 @@ function initBackground() {
     renderer.setSize(innerWidth, innerHeight, false);
     clock = new THREE.Clock();
     createParticleCloud();
+    applyLoginRole("DEFAULT");
     addEventListener("resize", resize);
     canvas.addEventListener("pointerdown", pointerDown);
     addEventListener("pointermove", pointerMove, { passive: true });
@@ -230,11 +467,12 @@ function animate() {
   renderer.render(scene, camera);
 }
 
-async function fetchSession(targetSessionId, targetCanvas = qrCanvas) {
+async function fetchSession(targetSessionId, targetCanvas = qrCanvas, shouldApplyRole = targetCanvas === qrCanvas) {
   if (!targetSessionId) throw new Error("缺少登录会话");
   const response = await fetch(`/api/wechat-login/${encodeURIComponent(targetSessionId)}`, { cache: "no-store" });
   if (!response.ok) throw new Error("登录会话不存在或已过期");
   const data = await response.json();
+  if (shouldApplyRole) applyLoginRole(data.requestedRole);
   if (!targetCanvas.classList.contains("ready")) drawQr(data.matrix, data.matrixSize, targetCanvas);
   return data;
 }
@@ -305,7 +543,7 @@ async function pollManager() {
 
 async function pollDialogSession(targetSessionId) {
   try {
-    const data = await fetchSession(targetSessionId, dialogQrCanvas);
+    const data = await fetchSession(targetSessionId, dialogQrCanvas, false);
     const labels = statusLabels[data.status] || [data.message, ""];
     dialogStatus.textContent = labels[0];
     if (["LOGGED_IN", "EXPIRED", "ERROR"].includes(data.status)) return;

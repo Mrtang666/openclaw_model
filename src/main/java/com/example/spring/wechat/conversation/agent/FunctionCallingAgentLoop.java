@@ -6,6 +6,8 @@ import com.example.spring.tool.protocol.function.FunctionCallingModelResponse;
 import com.example.spring.tool.protocol.function.FunctionCallingToolCall;
 import com.example.spring.tool.protocol.validation.ToolCallValidationResult;
 import com.example.spring.tool.protocol.validation.ToolCallValidator;
+import com.example.spring.skill.SkillDefinition;
+import com.example.spring.skill.SkillManager;
 import com.example.spring.wechat.bot.WechatReply;
 import com.example.spring.wechat.conversation.tools.WechatToolDefinition;
 import com.example.spring.wechat.conversation.tools.WechatToolRegistry;
@@ -13,6 +15,7 @@ import com.example.spring.wechat.conversation.tools.WechatToolRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -65,6 +68,7 @@ public class FunctionCallingAgentLoop {
     private final DashScopeFunctionCallingClient client;
     private final WechatToolRegistry toolRegistry;
     private final ToolCallValidator toolCallValidator;
+    private final SkillManager skillManager;
     private final int maxLoopRounds;
 
     @Autowired
@@ -72,10 +76,12 @@ public class FunctionCallingAgentLoop {
             DashScopeFunctionCallingClient client,
             WechatToolRegistry toolRegistry,
             ToolCallValidator toolCallValidator,
+            ObjectProvider<SkillManager> skillManagerProvider,
             @Value("${agent.tool-calling.max-loop-rounds:5}") int maxLoopRounds) {
         this.client = client;
         this.toolRegistry = toolRegistry;
         this.toolCallValidator = toolCallValidator;
+        this.skillManager = skillManagerProvider == null ? null : skillManagerProvider.getIfAvailable();
         this.maxLoopRounds = Math.max(1, maxLoopRounds);
     }
 
@@ -83,7 +89,20 @@ public class FunctionCallingAgentLoop {
             DashScopeFunctionCallingClient client,
             WechatToolRegistry toolRegistry,
             int maxLoopRounds) {
-        this(client, toolRegistry, new ToolCallValidator(), maxLoopRounds);
+        this(client, toolRegistry, new ToolCallValidator(), (SkillManager) null, maxLoopRounds);
+    }
+
+    FunctionCallingAgentLoop(
+            DashScopeFunctionCallingClient client,
+            WechatToolRegistry toolRegistry,
+            ToolCallValidator toolCallValidator,
+            SkillManager skillManager,
+            int maxLoopRounds) {
+        this.client = client;
+        this.toolRegistry = toolRegistry;
+        this.toolCallValidator = toolCallValidator;
+        this.skillManager = skillManager;
+        this.maxLoopRounds = Math.max(1, maxLoopRounds);
     }
 
     public Optional<WechatReply> run(FunctionCallingAgentRequest request) {
@@ -97,7 +116,7 @@ public class FunctionCallingAgentLoop {
         }
 
         AgentLoopState state = AgentLoopState.start(
-                SYSTEM_PROMPT + System.lineSeparator() + RAG_SYSTEM_RULES,
+                buildSystemPrompt(toolDefinitions),
                 userPrompt(request),
                 request.historyText());
         log.info("Function Calling Agent Loop 开始，userId={}, text={}",
@@ -493,6 +512,23 @@ public class FunctionCallingAgentLoop {
                 .append("当前可用图片资源：")
                 .append(request.images().size())
                 .append(" 张。若用户是在询问、分析、总结、提取或修改这些图片，请调用图片相关工具；不要假装已经看过图片。");
+        return prompt.toString();
+    }
+
+    private String buildSystemPrompt(List<WechatToolDefinition> toolDefinitions) {
+        StringBuilder prompt = new StringBuilder(SYSTEM_PROMPT);
+        if (skillManager != null && toolDefinitions != null && !toolDefinitions.isEmpty()) {
+            List<String> selectedSkillNames = skillManager.findByToolNames(
+                            toolDefinitions.stream().map(WechatToolDefinition::name).toList())
+                    .stream()
+                    .map(SkillDefinition::name)
+                    .toList();
+            String skillContext = skillManager.renderSkillContext(selectedSkillNames);
+            if (!skillContext.isBlank()) {
+                prompt.append(System.lineSeparator()).append(skillContext);
+            }
+        }
+        prompt.append(System.lineSeparator()).append(RAG_SYSTEM_RULES);
         return prompt.toString();
     }
 

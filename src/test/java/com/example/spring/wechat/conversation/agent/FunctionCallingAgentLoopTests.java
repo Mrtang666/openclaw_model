@@ -4,6 +4,10 @@ import com.example.spring.tool.protocol.function.DashScopeFunctionCallingClient;
 import com.example.spring.tool.protocol.function.FunctionCallingMessage;
 import com.example.spring.tool.protocol.function.FunctionCallingModelResponse;
 import com.example.spring.tool.protocol.function.FunctionCallingToolCall;
+import com.example.spring.tool.protocol.validation.ToolCallValidator;
+import com.example.spring.skill.SkillDefinition;
+import com.example.spring.skill.SkillManager;
+import com.example.spring.skill.SkillReference;
 import com.example.spring.wechat.bot.WechatReply;
 import com.example.spring.wechat.conversation.tools.WechatTool;
 import com.example.spring.wechat.conversation.tools.WechatToolParameter;
@@ -13,6 +17,7 @@ import com.example.spring.wechat.image.generation.model.ImageGenerationResult;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -151,6 +156,55 @@ class FunctionCallingAgentLoopTests {
                     assertThat(message.content()).contains("知识库检索结果");
                     assertThat(message.content()).contains("[知识1]");
                     assertThat(message.content()).contains("项目流程是什么");
+                });
+    }
+
+    @Test
+    void includesRelevantSkillContextInSystemPrompt() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        WechatToolRegistry registry = new WechatToolRegistry(List.of(new FakeMeituanTravelTool()));
+        SkillManager skillManager = mock(SkillManager.class);
+        SkillDefinition skill = new SkillDefinition(
+                "meituan-travel",
+                "Travel planning skill",
+                "Use `meituan_travel` for itinerary planning.",
+                Path.of("skills", "meituan-travel"),
+                List.of(new SkillReference(
+                        "references/cli-contract.md",
+                        Path.of("skills", "meituan-travel", "references", "cli-contract.md"))));
+        when(skillManager.findByToolNames(List.of("meituan_travel"))).thenReturn(List.of(skill));
+        when(skillManager.renderSkillContext(List.of("meituan-travel"))).thenReturn("""
+                [Skill: meituan-travel]
+                description: Travel planning skill
+                instructions:
+                Use `meituan_travel` for itinerary planning.
+                """);
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client, registry, new ToolCallValidator(), skillManager, 5);
+        when(client.chat(anyList(), anyList())).thenReturn(Optional.of(new FunctionCallingModelResponse("final", List.of())));
+
+        loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "Plan a Shanghai trip",
+                "",
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                })).orElseThrow();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<FunctionCallingMessage>> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(client).chat(messagesCaptor.capture(), anyList());
+        List<FunctionCallingMessage> firstRoundMessages = messagesCaptor.getValue();
+
+        assertThat(firstRoundMessages)
+                .anySatisfy(message -> {
+                    assertThat(message.role()).isEqualTo("system");
+                    assertThat(message.content()).contains("[Skill: meituan-travel]");
+                    assertThat(message.content()).contains("Travel planning skill");
                 });
     }
 

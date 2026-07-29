@@ -12,6 +12,7 @@ public record FunctionCallingAgentRequest(
         String sessionKey,
         String userText,
         String historyText,
+        String ragContext,
         List<WechatIncomingFile> files,
         List<WechatIncomingImage> images,
         List<WechatIncomingVideo> videos,
@@ -23,9 +24,33 @@ public record FunctionCallingAgentRequest(
         sessionKey = sessionKey == null ? "" : sessionKey.strip();
         userText = userText == null ? "" : userText.strip();
         historyText = historyText == null ? "" : historyText;
+        ragContext = ragContext == null ? "" : ragContext;
         files = files == null ? List.of() : List.copyOf(files);
         images = images == null ? List.of() : List.copyOf(images);
         videos = videos == null ? List.of() : List.copyOf(videos);
+    }
+
+    public FunctionCallingAgentRequest(
+            String sessionKey,
+            String userText,
+            String historyText,
+            List<WechatIncomingFile> files,
+            List<WechatIncomingImage> images,
+            List<WechatIncomingVideo> videos,
+            WechatToolRequest.PendingImagePromptRecorder pendingImagePromptRecorder,
+            WechatToolRequest.GeneratedImageRecorder generatedImageRecorder,
+            ToolExecutionRecorder toolExecutionRecorder) {
+        this(
+                sessionKey,
+                userText,
+                historyText,
+                "",
+                files,
+                images,
+                videos,
+                pendingImagePromptRecorder,
+                generatedImageRecorder,
+                toolExecutionRecorder);
     }
 
     public FunctionCallingAgentRequest(
@@ -40,6 +65,7 @@ public record FunctionCallingAgentRequest(
                 sessionKey,
                 userText,
                 historyText,
+                "",
                 files,
                 List.of(),
                 List.of(),
@@ -61,6 +87,7 @@ public record FunctionCallingAgentRequest(
                 sessionKey,
                 userText,
                 historyText,
+                "",
                 files,
                 images,
                 List.of(),
@@ -81,6 +108,7 @@ public record FunctionCallingAgentRequest(
                 sessionKey,
                 userText,
                 historyText,
+                "",
                 files,
                 images,
                 List.of(),

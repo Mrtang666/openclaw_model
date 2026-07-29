@@ -2,6 +2,7 @@ package com.example.spring;
 
 import com.example.spring.config.EnvFileLoader;
 import com.example.spring.wechat.knowledge.config.KnowledgeProperties;
+import com.example.spring.wechat.conversation.rag.RagProperties;
 import com.example.spring.wechat.netdisk.config.BaiduNetdiskProperties;
 import com.example.spring.wechat.knowledge.config.QdrantProperties;
 import com.example.spring.wechat.memory.config.WechatMemoryProperties;
@@ -23,6 +24,7 @@ import com.example.spring.wechat.netdisk.config.BaiduNetdiskProperties;
 @SpringBootApplication
 @EnableConfigurationProperties({
         WechatMemoryProperties.class,
+        RagProperties.class,
         KnowledgeProperties.class,
         QdrantProperties.class,
         WebToolProperties.class,

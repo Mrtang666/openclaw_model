@@ -13,6 +13,9 @@ import com.example.spring.wechat.memory.model.WechatConversationMemory;
 import com.example.spring.wechat.memory.service.WechatMemoryService;
 import com.example.spring.wechat.model.WechatIncomingMessage;
 import com.example.spring.wechat.conversation.tools.ChatWechatTool;
+import com.example.spring.wechat.conversation.agent.FunctionCallingAgentLoop;
+import com.example.spring.wechat.conversation.agent.FunctionCallingAgentRequest;
+import com.example.spring.wechat.conversation.rag.WechatRagContextService;
 import com.example.spring.wechat.conversation.tools.ImageGenerationWechatTool;
 import com.example.spring.wechat.conversation.tools.VoiceSynthesisWechatTool;
 import com.example.spring.wechat.conversation.tools.WeatherWechatTool;
@@ -26,6 +29,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -38,6 +42,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import org.mockito.ArgumentCaptor;
 import com.example.spring.wechat.conversation.intent.WeatherIntentParser;
 
 class WechatConversationServiceTests {
@@ -172,6 +177,98 @@ class WechatConversationServiceTests {
                 org.mockito.ArgumentMatchers.eq("TEXT"),
                 any());
         verify(memoryService, never()).startNewConversation(anyString(), any());
+    }
+
+    @Test
+    void functionCallingTextIncludesRagContextInAgentRequest() {
+        ChatService chatService = mock(ChatService.class);
+        WeatherService weatherService = mock(WeatherService.class);
+        FunctionCallingAgentLoop loop = mock(FunctionCallingAgentLoop.class);
+        WechatRagContextService ragContextService = mock(WechatRagContextService.class);
+        when(ragContextService.build("wx-rag", "项目流程是什么")).thenReturn("[知识1]\n内容：项目流程资料");
+        when(loop.run(any())).thenReturn(Optional.of(WechatReply.text("基于知识库回答")));
+        WechatToolRegistry toolRegistry = new WechatToolRegistry(List.of(new ChatWechatTool(chatService)));
+        WechatConversationService service = new WechatConversationService(
+                chatService,
+                weatherService,
+                null,
+                null,
+                null,
+                new WeatherIntentParser(),
+                null,
+                toolRegistry);
+        service.configureFunctionCallingAgentLoop(loop, "function-calling");
+        service.configureRagContextService(ragContextService);
+
+        WechatReply reply = service.handleWechat(new WechatIncomingMessage("wx-rag", "项目流程是什么"));
+
+        assertThat(reply.text()).isEqualTo("基于知识库回答");
+        ArgumentCaptor<FunctionCallingAgentRequest> requestCaptor = ArgumentCaptor.forClass(FunctionCallingAgentRequest.class);
+        verify(loop).run(requestCaptor.capture());
+        assertThat(requestCaptor.getValue().ragContext()).contains("[知识1]", "项目流程资料");
+    }
+
+    @Test
+    void functionCallingContinuesWhenRagContextFails() {
+        ChatService chatService = mock(ChatService.class);
+        WeatherService weatherService = mock(WeatherService.class);
+        FunctionCallingAgentLoop loop = mock(FunctionCallingAgentLoop.class);
+        WechatRagContextService ragContextService = mock(WechatRagContextService.class);
+        when(ragContextService.build("wx-rag-fail", "项目流程是什么")).thenThrow(new IllegalStateException("rag down"));
+        when(loop.run(any())).thenReturn(Optional.of(WechatReply.text("普通回答")));
+        WechatToolRegistry toolRegistry = new WechatToolRegistry(List.of(new ChatWechatTool(chatService)));
+        WechatConversationService service = new WechatConversationService(
+                chatService,
+                weatherService,
+                null,
+                null,
+                null,
+                new WeatherIntentParser(),
+                null,
+                toolRegistry);
+        service.configureFunctionCallingAgentLoop(loop, "function-calling");
+        service.configureRagContextService(ragContextService);
+
+        WechatReply reply = service.handleWechat(new WechatIncomingMessage("wx-rag-fail", "项目流程是什么"));
+
+        assertThat(reply.text()).isEqualTo("普通回答");
+        ArgumentCaptor<FunctionCallingAgentRequest> requestCaptor = ArgumentCaptor.forClass(FunctionCallingAgentRequest.class);
+        verify(loop).run(requestCaptor.capture());
+        assertThat(requestCaptor.getValue().ragContext()).isBlank();
+    }
+
+    @Test
+    void hashNewDoesNotBuildRagContext() {
+        ChatService chatService = mock(ChatService.class);
+        WeatherService weatherService = mock(WeatherService.class);
+        WechatMemoryService memoryService = mock(WechatMemoryService.class);
+        WechatRagContextService ragContextService = mock(WechatRagContextService.class);
+        when(memoryService.memoryFor("wx-new-rag")).thenReturn(WechatConversationMemory.empty(10));
+        WechatConversationService service = new WechatConversationService(
+                chatService,
+                weatherService,
+                null,
+                null,
+                null,
+                new ImageInputResolver(),
+                new WeatherIntentParser(),
+                new ImageGenerationIntentParser(),
+                null,
+                null,
+                memoryService);
+        service.configureRagContextService(ragContextService);
+
+        WechatReply reply = service.handleWechat(new WechatIncomingMessage(
+                "msg-new-rag",
+                "wx-new-rag",
+                null,
+                " #new ",
+                List.of(),
+                List.of(),
+                List.of()));
+
+        assertThat(reply.text()).isEqualTo("已开启新的对话。");
+        verify(ragContextService, never()).build(anyString(), anyString());
     }
 
     @Test

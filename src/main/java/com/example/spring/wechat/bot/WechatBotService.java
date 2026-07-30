@@ -284,9 +284,13 @@ public class WechatBotService {
     }
 
     public synchronized ClawBotConnectionSnapshot addConnection() {
+        return addConnection(null);
+    }
+
+    public synchronized ClawBotConnectionSnapshot addConnection(String requestedRole) {
         cleanupExpiredPendingConnections();
         ensureDispatcher();
-        return createConnectionInternal().snapshot();
+        return createConnectionInternal(requestedRole).snapshot();
     }
 
     public synchronized boolean stopConnection(String connectionId) {

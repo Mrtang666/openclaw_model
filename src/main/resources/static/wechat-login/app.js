@@ -561,7 +561,10 @@ async function addUser() {
   dialogStatus.textContent = "正在生成二维码...";
   loginDialog.showModal();
   try {
-    const response = await fetch("/api/clawbot/connections", { method: "POST" });
+    const roleQuery = activeRole && activeRole !== "DEFAULT"
+      ? `?role=${encodeURIComponent(activeRole)}`
+      : "";
+    const response = await fetch(`/api/clawbot/connections${roleQuery}`, { method: "POST" });
     const body = await response.json();
     if (!response.ok) throw new Error(body.message || "无法新增连接");
     await pollDialogSession(body.loginSessionId);

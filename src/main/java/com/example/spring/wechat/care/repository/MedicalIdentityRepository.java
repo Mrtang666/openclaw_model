@@ -12,16 +12,18 @@ import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 
 @Repository
 public class MedicalIdentityRepository {
@@ -46,37 +48,10 @@ public class MedicalIdentityRepository {
             String displayName,
             MedicalRole role,
             Instant now) {
-        Optional<MedicalUser> existing = jdbc.query(
-                """
-                        SELECT u.* FROM medical_users u
-                        JOIN medical_user_wechat_bindings b ON b.user_id = u.id
-                        WHERE b.connection_id = ? AND b.from_user_id = ?
-                        """, USER_MAPPER, connectionId, fromUserId).stream().findFirst();
+        String userCode = userCode(role, fromUserId);
+        Optional<MedicalUser> existing = findUserByCode(userCode);
         if (existing.isPresent()) {
             MedicalUser user = existing.get();
-            jdbc.update("""
-                    UPDATE medical_users SET last_active_at=?, updated_at=?, version=version+1
-                    WHERE id=?
-                    """, timestamp(now), timestamp(now), user.id());
-            jdbc.update("""
-                    UPDATE medical_user_wechat_bindings
-                    SET latest_session_key=?, status='ACTIVE', last_seen_at=?, updated_at=?
-                    WHERE connection_id=? AND from_user_id=?
-                    """, sessionKey, timestamp(now), timestamp(now), connectionId, fromUserId);
-            ensureRole(user.id(), role, now);
-            return findUserById(user.id()).orElseThrow();
-        }
-
-        Optional<MedicalUser> sameWechatUser = jdbc.query(
-                """
-                        SELECT u.* FROM medical_users u
-                        JOIN medical_user_wechat_bindings b ON b.user_id = u.id
-                        WHERE b.from_user_id = ? AND u.status = 'ACTIVE' AND b.status = 'ACTIVE'
-                        ORDER BY b.last_seen_at DESC, b.id DESC
-                        LIMIT 1
-                        """, USER_MAPPER, fromUserId).stream().findFirst();
-        if (sameWechatUser.isPresent()) {
-            MedicalUser user = sameWechatUser.get();
             jdbc.update("""
                     UPDATE medical_users SET last_active_at=?, updated_at=?, version=version+1
                     WHERE id=?
@@ -93,8 +68,6 @@ public class MedicalIdentityRepository {
             return findUserById(user.id()).orElseThrow();
         }
 
-        String userCode = role.name().substring(0, Math.min(role.name().length(), 3))
-                + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(Locale.ROOT);
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbc.update(connection -> {
             PreparedStatement statement = connection.prepareStatement("""
@@ -119,6 +92,55 @@ public class MedicalIdentityRepository {
                 timestamp(now), timestamp(now), timestamp(now), timestamp(now));
         ensureRole(userId, role, now);
         return findUserById(userId).orElseThrow();
+    }
+
+    private String userCode(MedicalRole role, String fromUserId) {
+        return roleCodePrefix(role) + "-" + stableSuffix(roleIdentity(role) + ":" + clean(fromUserId));
+    }
+
+    private String roleIdentity(MedicalRole role) {
+        if (role == null) {
+            return "USER";
+        }
+        if (role.isFamily()) {
+            return "FAMILY";
+        }
+        return role.name();
+    }
+
+    private String roleCodePrefix(MedicalRole role) {
+        if (role == null) {
+            return "USR";
+        }
+        if (role == MedicalRole.PATIENT) {
+            return "PAT";
+        }
+        if (role.isFamily()) {
+            return "FAM";
+        }
+        if (role == MedicalRole.DOCTOR) {
+            return "DOC";
+        }
+        if (role == MedicalRole.NURSE) {
+            return "NUR";
+        }
+        if (role == MedicalRole.THERAPIST) {
+            return "THP";
+        }
+        if (role == MedicalRole.DIETITIAN) {
+            return "DIT";
+        }
+        return role.name().substring(0, Math.min(role.name().length(), 3)).toUpperCase(Locale.ROOT);
+    }
+
+    private String stableSuffix(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(clean(value).getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest, 0, 5).toUpperCase(Locale.ROOT);
+        } catch (Exception exception) {
+            return Integer.toHexString(clean(value).hashCode()).replace("-", "0").toUpperCase(Locale.ROOT);
+        }
     }
 
     @Transactional

@@ -20,6 +20,8 @@ class SidecarConfig:
     author_hash_key: str
     collect_comments: bool
     comment_limit: int
+    detail_max_attempts: int
+    detail_retry_delay_ms: int
 
     @classmethod
     def from_env(cls) -> "SidecarConfig":
@@ -35,12 +37,14 @@ class SidecarConfig:
             spider_root=Path(spider_root_value).resolve(),
             spider_python=os.getenv("SPIDER_XHS_PYTHON", os.sys.executable).strip() or os.sys.executable,
             worker_timeout_seconds=_integer("XHS_SIDECAR_WORKER_TIMEOUT_SECONDS", 300, 10, 3600),
-            worker_threads=_integer("XHS_SIDECAR_WORKER_THREADS", 2, 1, 8),
+            worker_threads=_integer("XHS_SIDECAR_WORKER_THREADS", 1, 1, 8),
             max_queued_jobs=_integer("XHS_SIDECAR_MAX_QUEUED_JOBS", 20, 1, 1000),
             job_retention_hours=_integer("XHS_SIDECAR_JOB_RETENTION_HOURS", 168, 1, 8760),
             author_hash_key=os.getenv("XHS_AUTHOR_HASH_KEY", "openclaw-local-only"),
             collect_comments=_boolean("XHS_COLLECT_COMMENTS", True),
             comment_limit=_integer("XHS_COMMENT_LIMIT", 100, 0, 1000),
+            detail_max_attempts=_integer("XHS_DETAIL_MAX_ATTEMPTS", 3, 1, 5),
+            detail_retry_delay_ms=_integer("XHS_DETAIL_RETRY_DELAY_MS", 800, 0, 10000),
         )
 
     def validate(self) -> None:

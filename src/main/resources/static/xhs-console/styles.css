@@ -96,6 +96,16 @@ tbody tr:hover { background: #fafbfc; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .form-grid .full { grid-column: 1 / -1; }
 .form-actions { display: flex; gap: 8px; align-items: center; margin-top: 15px; }
+.option-row, .inline-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.option-row label { display: flex; align-items: center; gap: 6px; color: var(--text); }
+.option-row input { width: 16px; height: 16px; }
+.delivery-list { display: grid; gap: 8px; min-width: 180px; }
+.delivery-list > div { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.delivery-list .muted { overflow-wrap: anywhere; }
+.artifact-list { display: grid; gap: 7px; min-width: 220px; }
+.artifact-list a { display: flex; align-items: center; gap: 7px; color: var(--primary); text-decoration: none; }
+.artifact-list a span:last-child { max-width: 280px; overflow-wrap: anywhere; }
+.artifact-list a:hover span:last-child { text-decoration: underline; }
 .project-list { display: grid; gap: 10px; }
 .project-row { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(220px, 1.4fr) auto; gap: 16px; align-items: center; padding: 14px 15px; border: 1px solid var(--border); border-radius: 7px; }
 .project-row h3 { margin: 0 0 4px; font-size: 15px; }

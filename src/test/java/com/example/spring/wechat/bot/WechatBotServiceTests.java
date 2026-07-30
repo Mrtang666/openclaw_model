@@ -119,6 +119,27 @@ class WechatBotServiceTests {
     }
 
     @Test
+    void sendsProactiveFileThroughSpecifiedRunningConnection() throws Exception {
+        FakeWechatClient client = new FakeWechatClient(1);
+        WechatBotService service = new WechatBotService(() -> client, mock(AgentService.class));
+
+        service.start();
+        String connectionId = service.managerSnapshot().connections().get(0).connectionId();
+        client.loginFuture.complete(new WechatLoginInfo("bot-1"));
+        awaitRunning(service);
+
+        boolean sent = service.sendProactiveFile(
+                connectionId, "user@im.wechat", "docx".getBytes(), "report.docx", "舆情报告");
+
+        assertThat(sent).isTrue();
+        assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
+        assertThat(client.sentFiles).hasSize(1);
+        assertThat(client.sentFiles.peek().fileName()).isEqualTo("report.docx");
+        assertThat(client.sentFiles.peek().caption()).isEqualTo("舆情报告");
+        service.stop();
+    }
+
+    @Test
     void showsNativeTypingStateWhileProcessingWechatMessage() throws Exception {
         FakeWechatClient client = new FakeWechatClient(1);
         AgentService agentService = mock(AgentService.class);

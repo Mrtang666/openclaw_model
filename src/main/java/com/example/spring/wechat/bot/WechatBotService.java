@@ -257,6 +257,30 @@ public class WechatBotService {
         }
     }
 
+    public boolean sendProactiveFile(String connectionId, String userId, byte[] bytes,
+                                     String fileName, String caption) {
+        if (connectionId == null || connectionId.isBlank() || userId == null || userId.isBlank()
+                || bytes == null || bytes.length == 0 || fileName == null || fileName.isBlank()) {
+            return false;
+        }
+        ClientRuntime runtime = runtimes.get(connectionId.strip());
+        if (runtime == null || runtime.state != WechatBotState.RUNNING || runtime.stopRequested) {
+            return false;
+        }
+        try {
+            sendMediaWithRetry("主动报告文件", userId.strip(), fileName,
+                    () -> runtime.client.sendFile(userId.strip(), bytes, fileName,
+                            caption == null ? "" : caption));
+            runtime.lastActivityAt = Instant.now();
+            return true;
+        } catch (IOException | RuntimeException exception) {
+            runtime.lastError = "主动文件发送失败：" + rootMessage(exception);
+            log.warn("微信主动文件发送失败，connectionId={}, userId={}, fileName={}, error={}",
+                    connectionId, userId, fileName, rootMessage(exception));
+            return false;
+        }
+    }
+
     @PreDestroy
     public void shutdown() {
         stop();

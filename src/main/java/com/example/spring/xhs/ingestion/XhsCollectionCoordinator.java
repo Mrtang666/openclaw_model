@@ -111,7 +111,7 @@ public class XhsCollectionCoordinator {
                     ? XhsCollectionStatus.SUCCEEDED
                     : XhsCollectionStatus.PARTIAL;
             jobRepository.finish(job.jobKey(), finalStatus, result.complete(), imported.postCount(),
-                    result.nextCursor(), "", "", Instant.now());
+                    result.nextCursor(), result.errorCode(), result.errorMessage(), Instant.now());
         } catch (RuntimeException exception) {
             jobRepository.recordPoll(job.jobKey(), XhsCollectionStatus.RUNNING);
         }

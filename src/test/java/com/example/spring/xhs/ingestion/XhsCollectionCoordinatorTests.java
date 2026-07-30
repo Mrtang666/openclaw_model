@@ -71,13 +71,15 @@ class XhsCollectionCoordinatorTests {
                 new XhsImportResult("project-a", XhsSourceType.SPIDER_XHS_LAB, 3, 0, 0));
         source.result = new XhsCollectorJobResult(
                 XhsCollectionStatus.SUCCEEDED, false, "cursor-2", objectMapper.createArrayNode(),
-                "", "", Instant.now());
+                "PARTIAL_COLLECTION", "two details unavailable", Instant.now());
 
         coordinator(source, mock(XhsOpinionRepository.class), jobs, importer, 5).pollPending();
 
         assertThat(jobs.finishedStatus).isEqualTo(XhsCollectionStatus.PARTIAL);
         assertThat(jobs.complete).isFalse();
         assertThat(jobs.nextCursor).isEqualTo("cursor-2");
+        assertThat(jobs.errorCode).isEqualTo("PARTIAL_COLLECTION");
+        assertThat(jobs.errorMessage).isEqualTo("two details unavailable");
     }
 
     @Test
@@ -138,6 +140,7 @@ class XhsCollectionCoordinatorTests {
         private int recordCount;
         private String nextCursor;
         private String errorCode;
+        private String errorMessage;
 
         @Override
         public void create(String jobKey, long projectId, XhsSourceType sourceType, String query, Instant now) {
@@ -165,6 +168,7 @@ class XhsCollectionCoordinatorTests {
             this.recordCount = recordCount;
             this.nextCursor = nextCursor;
             this.errorCode = errorCode;
+            this.errorMessage = errorMessage;
         }
     }
 }

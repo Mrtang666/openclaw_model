@@ -59,6 +59,10 @@ class SubprocessSpiderRunner:
                 str(self._config.spider_root),
                 "--comment-limit",
                 str(self._config.comment_limit),
+                "--detail-max-attempts",
+                str(self._config.detail_max_attempts),
+                "--detail-retry-delay-ms",
+                str(self._config.detail_retry_delay_ms),
             ]
             if include_comments and self._config.collect_comments:
                 command.append("--collect-comments")

@@ -81,7 +81,7 @@ class BrowserMcpClientTests {
     }
 
     @Test
-    void screenshotPassesConfiguredDirectoryToSidecar() {
+    void screenshotLetsSidecarChooseItsContainerDirectory() {
         RecordingMcpToolClient toolClient = new RecordingMcpToolClient("""
                 {"success":true,"message":"captured","screenshotPath":"data/browser/screenshots/home.png"}
                 """);
@@ -91,7 +91,42 @@ class BrowserMcpClientTests {
 
         assertThat(toolClient.toolName).isEqualTo("browser_screenshot");
         assertThat(toolClient.arguments).containsEntry("name", "home");
-        assertThat(toolClient.arguments).containsEntry("screenshotDir", "data/browser/screenshots");
+        assertThat(toolClient.arguments).doesNotContainKey("screenshotDir");
+    }
+
+    @Test
+    void screenshotReadsImagePayloadFromStructuredContent() {
+        RecordingMcpToolClient toolClient = new RecordingMcpToolClient("""
+                {"content":[{"type":"text","text":"Screenshot captured"}],
+                 "structuredContent":{
+                   "success":true,
+                   "message":"Screenshot captured",
+                   "screenshotPath":"data/browser/screenshots/home.png",
+                   "screenshotImageBase64":"iVBORw0KGgo=",
+                   "screenshotContentType":"image/png",
+                   "screenshotFileName":"home.png"
+                 }}
+                """);
+        BrowserMcpClient client = new BrowserMcpClient(toolClient, properties());
+
+        var result = client.screenshot("home");
+
+        assertThat(result.screenshotImageBase64()).isEqualTo("iVBORw0KGgo=");
+        assertThat(result.screenshotContentType()).isEqualTo("image/png");
+        assertThat(result.screenshotFileName()).isEqualTo("home.png");
+    }
+
+    @Test
+    void readsMcpErrorTextWhenStructuredContentIsMissing() {
+        RecordingMcpToolClient toolClient = new RecordingMcpToolClient("""
+                {"content":[{"type":"text","text":"EACCES: permission denied, mkdir 'data'"}],"isError":true}
+                """);
+        BrowserMcpClient client = new BrowserMcpClient(toolClient, properties());
+
+        var result = client.screenshot("home");
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).isEqualTo("EACCES: permission denied, mkdir 'data'");
     }
 
     private BrowserAutomationProperties properties() {

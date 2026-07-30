@@ -1,6 +1,9 @@
 package com.example.spring.wechat.conversation;
 
 import com.example.spring.agent.ReplyEmitter;
+import com.example.spring.agent.goal.AgentGoalEvaluationStatus;
+import com.example.spring.agent.goal.AgentGoalHandle;
+import com.example.spring.agent.goal.AgentGoalService;
 import com.example.spring.chat.ChatService;
 import com.example.spring.chat.ChatServiceException;
 import com.example.spring.wechat.image.generation.model.ImageGenerationRequest;
@@ -98,6 +101,7 @@ public class WechatConversationService {
     private WebResourceContextService webResourceContextService = new WebResourceContextService();
     private WechatRagContextService ragContextService;
     private FunctionCallingAgentLoop functionCallingAgentLoop;
+    private AgentGoalService agentGoalService;
     private String toolCallingMode = "prompt-json";
     private final Map<String, WechatConversationMemory> memories = new ConcurrentHashMap<>();
     private final Map<String, List<WechatIncomingVideo>> pendingVideos = new ConcurrentHashMap<>();
@@ -167,6 +171,15 @@ public class WechatConversationService {
         this.ragContextService = ragContextService;
     }
 
+    @Autowired
+    void configureAgentGoalService(ObjectProvider<AgentGoalService> provider) {
+        configureAgentGoalService(provider.getIfAvailable());
+    }
+
+    void configureAgentGoalService(AgentGoalService agentGoalService) {
+        this.agentGoalService = agentGoalService;
+    }
+
     private boolean isFunctionCallingMode() {
         return "function-calling".equalsIgnoreCase(toolCallingMode);
     }
@@ -184,6 +197,101 @@ public class WechatConversationService {
                         || part.hasImage()
                         || part.hasVoice()
                         || part.hasFile()));
+    }
+
+    private Optional<AgentGoalHandle> startAgentGoal(String sessionKey, String text) {
+        if (agentGoalService == null) {
+            return Optional.empty();
+        }
+        return agentGoalService.startWechatGoal(sessionKey, text);
+    }
+
+    private void completeAgentGoal(Optional<AgentGoalHandle> handle, WechatReply reply) {
+        if (agentGoalService == null || handle.isEmpty()) {
+            return;
+        }
+        agentGoalService.complete(handle.get(), replySummary(reply));
+    }
+
+    private void failAgentGoal(Optional<AgentGoalHandle> handle, String reason) {
+        if (agentGoalService == null || handle.isEmpty()) {
+            return;
+        }
+        agentGoalService.fail(handle.get(), reason);
+    }
+
+    private void recordAgentGoalStep(
+            Optional<AgentGoalHandle> handle,
+            String toolName,
+            Map<String, String> arguments,
+            String resultSummary,
+            String status) {
+        if (agentGoalService == null || handle.isEmpty()) {
+            return;
+        }
+        agentGoalService.recordToolStep(handle.get(), toolName, arguments, resultSummary, status);
+    }
+
+    private void recordAgentGoalEvaluation(
+            Optional<AgentGoalHandle> handle,
+            AgentGoalEvaluationStatus status,
+            String reasoning) {
+        if (agentGoalService == null || handle.isEmpty()) {
+            return;
+        }
+        agentGoalService.recordEvaluation(handle.get(), "rule-based", status, reasoning);
+    }
+
+    private void recordAgentGoalReviewAction(Optional<AgentGoalHandle> handle, String reason) {
+        if (agentGoalService == null || handle.isEmpty()) {
+            return;
+        }
+        agentGoalService.recordFailureReviewAction(handle.get(), reason);
+    }
+
+    private String replySummary(WechatReply reply) {
+        if (reply == null) {
+            return "";
+        }
+        StringBuilder summary = new StringBuilder();
+        if (reply.text() != null && !reply.text().isBlank()) {
+            summary.append(reply.text().strip());
+        }
+        if (reply.parts() != null) {
+            for (WechatReply.Part part : reply.parts()) {
+                if (part == null) {
+                    continue;
+                }
+                appendReplySummary(summary, part.text());
+                if (part.hasImage()) {
+                    appendReplySummary(summary, "[已生成图片]");
+                }
+                if (part.hasVoice()) {
+                    String transcript = part.voice() == null ? "" : part.voice().transcriptText();
+                    appendReplySummary(summary, transcript == null || transcript.isBlank() ? "[已生成语音]" : transcript);
+                }
+                if (part.hasFile()) {
+                    String fileName = part.file() == null ? "" : part.file().fileName();
+                    appendReplySummary(summary, fileName.isBlank() ? "[已生成文件]" : "[已生成文件：" + fileName + "]");
+                }
+            }
+        }
+        String value = summary.toString().strip();
+        return value.length() <= 2_000 ? value : value.substring(0, 2_000);
+    }
+
+    private void appendReplySummary(StringBuilder summary, String text) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        String value = text.strip();
+        if (summary.indexOf(value) >= 0) {
+            return;
+        }
+        if (!summary.isEmpty()) {
+            summary.append(System.lineSeparator());
+        }
+        summary.append(value);
     }
 
     WechatConversationService(ChatService chatService, WeatherService weatherService) {
@@ -558,30 +666,57 @@ public class WechatConversationService {
         }
 
         if (isFunctionCallingMode() && functionCallingAgentLoop != null) {
-            Optional<WechatReply> loopReply = functionCallingAgentLoop.run(new FunctionCallingAgentRequest(
-                    sessionKey,
-                    text,
-                    conversationContext(sessionKey),
-                    ragContext(sessionKey, text),
-                    files,
-                    images,
-                    List.of(),
-                    (userText, prompt) -> memoryFor(sessionKey).recordPendingImagePrompt(userText, prompt),
-                    (userText, prompt) -> memoryFor(sessionKey).recordImage(userText, prompt),
-                    (toolName, arguments, resultSummary, status) -> {
-                        if (!DEFAULT_SESSION_KEY.equals(sessionKey)) {
-                            wechatMemoryService.recordToolExecution(
-                                    sessionKey,
-                                    toolName,
-                                    arguments,
-                                    resultSummary,
-                                    status,
-                                    java.time.Instant.now());
-                        }
-                    }));
-            if (loopReply.isPresent() && hasReplyContent(loopReply.get())) {
-                rememberPlannedReply(sessionKey, text, loopReply.get());
-                return loopReply;
+            Optional<AgentGoalHandle> goalHandle = startAgentGoal(sessionKey, text);
+            try {
+                Optional<WechatReply> loopReply = functionCallingAgentLoop.run(new FunctionCallingAgentRequest(
+                        sessionKey,
+                        text,
+                        conversationContext(sessionKey),
+                        ragContext(sessionKey, text),
+                        files,
+                        images,
+                        List.of(),
+                        (userText, prompt) -> memoryFor(sessionKey).recordPendingImagePrompt(userText, prompt),
+                        (userText, prompt) -> memoryFor(sessionKey).recordImage(userText, prompt),
+                        (toolName, arguments, resultSummary, status) -> {
+                            recordAgentGoalStep(goalHandle, toolName, arguments, resultSummary, status);
+                            if (!DEFAULT_SESSION_KEY.equals(sessionKey)) {
+                                wechatMemoryService.recordToolExecution(
+                                        sessionKey,
+                                        toolName,
+                                        arguments,
+                                        resultSummary,
+                                        status,
+                                        java.time.Instant.now());
+                            }
+                        }));
+                if (loopReply.isPresent() && hasReplyContent(loopReply.get())) {
+                    rememberPlannedReply(sessionKey, text, loopReply.get());
+                    completeAgentGoal(goalHandle, loopReply.get());
+                    recordAgentGoalEvaluation(
+                            goalHandle,
+                            AgentGoalEvaluationStatus.PASSED,
+                            "reply contains user-visible content");
+                    return loopReply;
+                }
+                failAgentGoal(goalHandle, "Function Calling Agent Loop 未返回可用回复");
+                recordAgentGoalEvaluation(
+                        goalHandle,
+                        AgentGoalEvaluationStatus.FAILED,
+                        "Function Calling Agent Loop returned no user-visible reply");
+                recordAgentGoalReviewAction(
+                        goalHandle,
+                        "Function Calling Agent Loop returned no user-visible reply");
+            } catch (RuntimeException exception) {
+                failAgentGoal(goalHandle, "Function Calling Agent Loop 执行失败：" + rootMessage(exception));
+                recordAgentGoalEvaluation(
+                        goalHandle,
+                        AgentGoalEvaluationStatus.FAILED,
+                        "Function Calling Agent Loop execution failed: " + rootMessage(exception));
+                recordAgentGoalReviewAction(
+                        goalHandle,
+                        "Function Calling Agent Loop execution failed: " + rootMessage(exception));
+                throw exception;
             }
         }
 
@@ -864,7 +999,18 @@ public class WechatConversationService {
             String context = memoryContextBuilder.build(
                     memoryFor(sessionKey),
                     combinedResourceContext(sessionKey));
+            if (hasStructuredContext(context)) {
+                return context;
+            }
         }
+        return fallbackConversationContext(sessionKey);
+    }
+
+    private boolean hasStructuredContext(String context) {
+        return context != null && !context.isBlank() && !"无".equals(context.strip());
+    }
+
+    private String fallbackConversationContext(String sessionKey) {
         WechatConversationMemory memory = memoryFor(sessionKey);
         StringBuilder context = new StringBuilder();
         memory.pendingClarificationUserText().ifPresent(text ->

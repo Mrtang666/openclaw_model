@@ -196,10 +196,14 @@ public class FunctionCallingAgentLoop {
                 if ("taxi_service".equals(toolCall.name())
                         || "food_delivery".equals(toolCall.name())
                         || "meituan_travel".equals(toolCall.name())
-                        || "email_send".equals(toolCall.name())) {
+                        || "email_send".equals(toolCall.name())
+                        || "browser_screenshot".equals(toolCall.name())) {
                     // These tools own their user-facing response. Continuing the model loop would
                     // duplicate a staged action or rewrite an official provider result.
                     state.stop(AgentLoopStopReason.SPECIAL_TOOL_DONE);
+                    if (!toolResult.visibleParts().isEmpty()) {
+                        return Optional.of(WechatReply.ordered(toolResult.visibleParts()));
+                    }
                     return Optional.of(WechatReply.text(toolResult.modelText()));
                 }
                 if ("FAILED".equals(toolResult.status())) {
@@ -431,7 +435,8 @@ public class FunctionCallingAgentLoop {
         }
         boolean mediaTool = "image_generation".equals(toolName)
                 || "voice_synthesis".equals(toolName)
-                || "document_generation".equals(toolName);
+                || "document_generation".equals(toolName)
+                || "browser_screenshot".equals(toolName);
         if (!mediaTool) {
             return List.of();
         }

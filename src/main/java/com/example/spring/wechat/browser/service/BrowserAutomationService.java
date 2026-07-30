@@ -58,14 +58,15 @@ public class BrowserAutomationService {
         if (safe(text).isBlank()) {
             return "Tell me what text to type.";
         }
-        if (looksSensitive(target, text)) {
-            return "For safety, browser automation cannot type passwords, verification codes, bank card numbers, or private keys.";
-        }
         return format(browserMcpClient.type(target, text));
     }
 
     public String screenshot(String userId, String name) {
-        return format(browserMcpClient.screenshot(name));
+        return format(screenshotResult(userId, name));
+    }
+
+    public BrowserActionResult screenshotResult(String userId, String name) {
+        return browserMcpClient.screenshot(name);
     }
 
     public String readPage(String userId, int maxChars) {
@@ -103,63 +104,15 @@ public class BrowserAutomationService {
                 || text.contains("\u63d0\u4ea4")
                 || text.contains("\u53d1\u9001")
                 || text.contains("\u6388\u6743")
-                || text.contains("\u767b\u5f55")
                 || text.contains("delete")
                 || text.contains("pay")
                 || text.contains("buy")
                 || text.contains("submit")
                 || text.contains("send")
-                || text.contains("authorize")
-                || text.contains("login");
+                || text.contains("authorize");
     }
 
-    private boolean looksSensitive(String target, String text) {
-        String combined = (safe(target) + " " + safe(text)).toLowerCase(Locale.ROOT);
-        return combined.contains("\u5bc6\u7801")
-                || combined.contains("\u9a8c\u8bc1\u7801")
-                || combined.contains("\u94f6\u884c\u5361")
-                || combined.contains("\u79c1\u94a5")
-                || combined.contains("password")
-                || combined.contains("verification code")
-                || combined.contains("secret")
-                || combined.contains("private key")
-                || looksLikeOtp(target, text)
-                || looksLikeBankCardNumber(text);
-    }
-
-    private boolean looksLikeOtp(String target, String text) {
-        String safeTarget = safe(target).toLowerCase(Locale.ROOT);
-        String digits = safe(text).replaceAll("\\D", "");
-        return digits.length() >= 4 && digits.length() <= 8
-                && (safeTarget.contains("code")
-                || safeTarget.contains("otp")
-                || safeTarget.contains("\u9a8c\u8bc1")
-                || safeTarget.contains("\u6821\u9a8c"));
-    }
-
-    private boolean looksLikeBankCardNumber(String text) {
-        String digits = safe(text).replaceAll("[\\s-]", "");
-        return digits.matches("\\d{13,19}") && luhnValid(digits);
-    }
-
-    private boolean luhnValid(String digits) {
-        int sum = 0;
-        boolean doubleDigit = false;
-        for (int index = digits.length() - 1; index >= 0; index--) {
-            int digit = digits.charAt(index) - '0';
-            if (doubleDigit) {
-                digit *= 2;
-                if (digit > 9) {
-                    digit -= 9;
-                }
-            }
-            sum += digit;
-            doubleDigit = !doubleDigit;
-        }
-        return sum % 10 == 0;
-    }
-
-    private String format(BrowserActionResult result) {
+    public String format(BrowserActionResult result) {
         try {
             StringBuilder text = new StringBuilder(result.message().isBlank() ? "Browser action completed." : result.message());
             if (!result.title().isBlank()) {

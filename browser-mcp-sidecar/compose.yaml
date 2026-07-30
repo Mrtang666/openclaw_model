@@ -20,7 +20,7 @@ services:
     ports:
       - "127.0.0.1:3333:3333"
     volumes:
-      - browser-chrome-profile:/data/chrome-profile
+      - browser-chrome-profile-v3:/data/chrome-profile
       - browser-screenshots:/data/screenshots
     shm_size: "1gb"
     healthcheck:
@@ -37,5 +37,5 @@ services:
       - no-new-privileges:true
 
 volumes:
-  browser-chrome-profile:
+  browser-chrome-profile-v3:
   browser-screenshots:

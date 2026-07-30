@@ -72,6 +72,32 @@ class FunctionCallingAgentLoopTests {
     }
 
     @Test
+    void browserScreenshotResultIsReturnedDirectlyWithoutAnotherModelRound() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        FakeBrowserScreenshotTool screenshot = new FakeBrowserScreenshotTool();
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client, new WechatToolRegistry(List.of(screenshot)), 1);
+        when(client.chat(anyList(), anyList())).thenReturn(Optional.of(new FunctionCallingModelResponse("",
+                List.of(new FunctionCallingToolCall("screenshot-1", "browser_screenshot", Map.of(
+                        "name", "dashboard"))))));
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "Take a dashboard screenshot",
+                "",
+                List.of(),
+                (a, b) -> { },
+                (a, b) -> { },
+                (a, b, c, d) -> { })).orElseThrow();
+
+        assertThat(reply.parts()).hasSize(1);
+        assertThat(reply.parts().get(0).hasImage()).isTrue();
+        assertThat(reply.parts().get(0).image().fileName()).isEqualTo("dashboard.png");
+        assertThat(screenshot.callCount).isEqualTo(1);
+        verify(client, org.mockito.Mockito.times(1)).chat(anyList(), anyList());
+    }
+
+    @Test
     void executesToolCallsReturnsToolResultToModelAndUsesFinalAssistantAnswer() {
         DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
         WechatToolRegistry registry = new WechatToolRegistry(List.of(new FakeWeatherTool()));
@@ -759,6 +785,26 @@ class FunctionCallingAgentLoopTests {
         public List<String> arguments(){return List.of("operation");}
         public List<WechatToolParameter> parameters(){return List.of(WechatToolParameter.requiredString("operation","operation","open_didi_app"));}
         public WechatReply execute(WechatToolRequest request){callCount++;return WechatReply.text("滴滴链接：https://v.didi.cn/test");}
+    }
+
+    private static final class FakeBrowserScreenshotTool implements WechatTool {
+        private int callCount;
+        public String name(){return "browser_screenshot";}
+        public String description(){return "browser screenshot";}
+        public List<String> arguments(){return List.of("name");}
+        public List<WechatToolParameter> parameters(){return List.of(WechatToolParameter.optionalString("name", "name", "dashboard"));}
+        public WechatReply execute(WechatToolRequest request){
+            callCount++;
+            ImageGenerationResult image = new ImageGenerationResult(
+                    "Browser screenshot",
+                    "",
+                    new byte[]{1, 2, 3},
+                    "dashboard.png",
+                    "image/png",
+                    null,
+                    null);
+            return WechatReply.ordered(List.of(WechatReply.Part.image("Screenshot captured\nScreenshot: data/browser/screenshots/dashboard.png", image)));
+        }
     }
 
     private static final class FakeMeituanTravelTool implements WechatTool {

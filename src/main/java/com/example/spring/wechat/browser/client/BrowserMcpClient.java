@@ -37,7 +37,6 @@ public class BrowserMcpClient {
     public BrowserActionResult screenshot(String name) {
         Map<String, Object> arguments = new LinkedHashMap<>();
         arguments.put("name", safe(name));
-        arguments.put("screenshotDir", properties.screenshotDir());
         return call("browser_screenshot", arguments);
     }
 

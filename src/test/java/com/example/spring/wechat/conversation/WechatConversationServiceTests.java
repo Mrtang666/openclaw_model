@@ -1,6 +1,9 @@
 package com.example.spring.wechat.conversation;
 
 import com.example.spring.chat.ChatService;
+import com.example.spring.agent.goal.AgentGoalEvaluationStatus;
+import com.example.spring.agent.goal.AgentGoalHandle;
+import com.example.spring.agent.goal.AgentGoalService;
 import com.example.spring.wechat.image.generation.model.ImageGenerationRequest;
 import com.example.spring.wechat.image.generation.model.ImageGenerationResult;
 import com.example.spring.wechat.image.generation.service.ImageGenerationService;
@@ -29,6 +32,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -206,6 +210,188 @@ class WechatConversationServiceTests {
         ArgumentCaptor<FunctionCallingAgentRequest> requestCaptor = ArgumentCaptor.forClass(FunctionCallingAgentRequest.class);
         verify(loop).run(requestCaptor.capture());
         assertThat(requestCaptor.getValue().ragContext()).contains("[知识1]", "项目流程资料");
+    }
+
+    @Test
+    void functionCallingHistoryUsesStructuredMemoryContext() {
+        ChatService chatService = mock(ChatService.class);
+        WeatherService weatherService = mock(WeatherService.class);
+        WechatMemoryService memoryService = mock(WechatMemoryService.class);
+        FunctionCallingAgentLoop loop = mock(FunctionCallingAgentLoop.class);
+        WechatConversationMemory memory = WechatConversationMemory.empty(
+                10,
+                "用户正在准备小红书舆情复盘，需要优先参考上次沉淀的处理思路。");
+        when(memoryService.acceptIncoming(anyString(), anyString(), anyString(), anyString(), any()))
+                .thenReturn(true);
+        when(memoryService.memoryFor("wx-memory")).thenReturn(memory);
+        when(loop.run(any())).thenReturn(Optional.of(WechatReply.text("已结合记忆回答")));
+        WechatToolRegistry toolRegistry = new WechatToolRegistry(List.of(new ChatWechatTool(chatService)));
+        WechatConversationService service = new WechatConversationService(
+                chatService,
+                weatherService,
+                null,
+                null,
+                null,
+                new ImageInputResolver(),
+                new WeatherIntentParser(),
+                new ImageGenerationIntentParser(),
+                null,
+                toolRegistry,
+                memoryService);
+        service.configureFunctionCallingAgentLoop(loop, "function-calling");
+
+        WechatReply reply = service.handleWechat(new WechatIncomingMessage(
+                "msg-memory",
+                "wx-memory",
+                null,
+                "继续刚才的复盘",
+                List.of(),
+                List.of(),
+                List.of()));
+
+        assertThat(reply.text()).isEqualTo("已结合记忆回答");
+        ArgumentCaptor<FunctionCallingAgentRequest> requestCaptor = ArgumentCaptor.forClass(FunctionCallingAgentRequest.class);
+        verify(loop).run(requestCaptor.capture());
+        assertThat(requestCaptor.getValue().historyText())
+                .contains("conversation_summary / 会话摘要")
+                .contains("小红书舆情复盘");
+        assertThat(requestCaptor.getValue().userText()).isEqualTo("继续刚才的复盘");
+    }
+
+    @Test
+    void functionCallingCreatesAndCompletesAgentGoal() {
+        ChatService chatService = mock(ChatService.class);
+        WeatherService weatherService = mock(WeatherService.class);
+        FunctionCallingAgentLoop loop = mock(FunctionCallingAgentLoop.class);
+        AgentGoalService goalService = mock(AgentGoalService.class);
+        AgentGoalHandle handle = new AgentGoalHandle(42L);
+        when(goalService.startWechatGoal("wx-goal", "帮我生成今日舆情日报"))
+                .thenReturn(Optional.of(handle));
+        when(loop.run(any())).thenReturn(Optional.of(WechatReply.text("今日舆情日报已生成")));
+        WechatToolRegistry toolRegistry = new WechatToolRegistry(List.of(new ChatWechatTool(chatService)));
+        WechatConversationService service = new WechatConversationService(
+                chatService,
+                weatherService,
+                null,
+                null,
+                null,
+                new WeatherIntentParser(),
+                null,
+                toolRegistry);
+        service.configureFunctionCallingAgentLoop(loop, "function-calling");
+        service.configureAgentGoalService(goalService);
+
+        WechatReply reply = service.handleWechat(new WechatIncomingMessage("wx-goal", "帮我生成今日舆情日报"));
+
+        assertThat(reply.text()).isEqualTo("今日舆情日报已生成");
+        verify(goalService).startWechatGoal("wx-goal", "帮我生成今日舆情日报");
+        verify(goalService).complete(handle, "今日舆情日报已生成");
+    }
+
+    @Test
+    void functionCallingRecordsToolExecutionsAsAgentGoalSteps() {
+        ChatService chatService = mock(ChatService.class);
+        WeatherService weatherService = mock(WeatherService.class);
+        FunctionCallingAgentLoop loop = mock(FunctionCallingAgentLoop.class);
+        AgentGoalService goalService = mock(AgentGoalService.class);
+        AgentGoalHandle handle = new AgentGoalHandle(43L);
+        Map<String, String> arguments = Map.of("query", "OpenClaw");
+        when(goalService.startWechatGoal("wx-goal-step", "搜索 OpenClaw 资料"))
+                .thenReturn(Optional.of(handle));
+        when(loop.run(any())).thenAnswer(invocation -> {
+            FunctionCallingAgentRequest request = invocation.getArgument(0);
+            request.toolExecutionRecorder().record("web_search", arguments, "找到 3 条资料", "SUCCESS");
+            return Optional.of(WechatReply.text("搜索完成"));
+        });
+        WechatToolRegistry toolRegistry = new WechatToolRegistry(List.of(new ChatWechatTool(chatService)));
+        WechatConversationService service = new WechatConversationService(
+                chatService,
+                weatherService,
+                null,
+                null,
+                null,
+                new WeatherIntentParser(),
+                null,
+                toolRegistry);
+        service.configureFunctionCallingAgentLoop(loop, "function-calling");
+        service.configureAgentGoalService(goalService);
+
+        WechatReply reply = service.handleWechat(new WechatIncomingMessage("wx-goal-step", "搜索 OpenClaw 资料"));
+
+        assertThat(reply.text()).isEqualTo("搜索完成");
+        verify(goalService).recordToolStep(handle, "web_search", arguments, "找到 3 条资料", "SUCCESS");
+        verify(goalService).complete(handle, "搜索完成");
+    }
+
+    @Test
+    void functionCallingRecordsCompletionEvaluation() {
+        ChatService chatService = mock(ChatService.class);
+        WeatherService weatherService = mock(WeatherService.class);
+        FunctionCallingAgentLoop loop = mock(FunctionCallingAgentLoop.class);
+        AgentGoalService goalService = mock(AgentGoalService.class);
+        AgentGoalHandle handle = new AgentGoalHandle(44L);
+        when(goalService.startWechatGoal("wx-goal-evaluation", "write report"))
+                .thenReturn(Optional.of(handle));
+        when(loop.run(any())).thenReturn(Optional.of(WechatReply.text("report is ready")));
+        WechatToolRegistry toolRegistry = new WechatToolRegistry(List.of(new ChatWechatTool(chatService)));
+        WechatConversationService service = new WechatConversationService(
+                chatService,
+                weatherService,
+                null,
+                null,
+                null,
+                new WeatherIntentParser(),
+                null,
+                toolRegistry);
+        service.configureFunctionCallingAgentLoop(loop, "function-calling");
+        service.configureAgentGoalService(goalService);
+
+        WechatReply reply = service.handleWechat(new WechatIncomingMessage("wx-goal-evaluation", "write report"));
+
+        assertThat(reply.text()).isEqualTo("report is ready");
+        verify(goalService).complete(handle, "report is ready");
+        verify(goalService).recordEvaluation(
+                handle,
+                "rule-based",
+                AgentGoalEvaluationStatus.PASSED,
+                "reply contains user-visible content");
+    }
+
+    @Test
+    void functionCallingQueuesReviewActionWhenLoopReturnsNoReply() {
+        ChatService chatService = mock(ChatService.class);
+        WeatherService weatherService = mock(WeatherService.class);
+        FunctionCallingAgentLoop loop = mock(FunctionCallingAgentLoop.class);
+        AgentGoalService goalService = mock(AgentGoalService.class);
+        AgentGoalHandle handle = new AgentGoalHandle(45L);
+        when(goalService.startWechatGoal("wx-goal-review", "write report"))
+                .thenReturn(Optional.of(handle));
+        when(loop.run(any())).thenReturn(Optional.empty());
+        doAnswer(invocation -> {
+            com.example.spring.agent.ReplyEmitter emitter = invocation.getArgument(1);
+            emitter.emit("fallback reply");
+            return null;
+        }).when(chatService).streamReply(anyString(), any());
+        WechatToolRegistry toolRegistry = new WechatToolRegistry(List.of(new ChatWechatTool(chatService)));
+        WechatConversationService service = new WechatConversationService(
+                chatService,
+                weatherService,
+                null,
+                null,
+                null,
+                new WeatherIntentParser(),
+                null,
+                toolRegistry);
+        service.configureFunctionCallingAgentLoop(loop, "function-calling");
+        service.configureAgentGoalService(goalService);
+
+        WechatReply reply = service.handleWechat(new WechatIncomingMessage("wx-goal-review", "write report"));
+
+        assertThat(reply.text()).isEqualTo("fallback reply");
+        verify(goalService).fail(handle, "Function Calling Agent Loop 未返回可用回复");
+        verify(goalService).recordFailureReviewAction(
+                handle,
+                "Function Calling Agent Loop returned no user-visible reply");
     }
 
     @Test

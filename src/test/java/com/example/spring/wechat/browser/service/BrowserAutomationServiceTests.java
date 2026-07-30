@@ -55,47 +55,49 @@ class BrowserAutomationServiceTests {
     }
 
     @Test
-    void blocksSensitiveInput() {
+    void allowsPasswordInputForUserDrivenLogin() {
         RecordingBrowserMcpClient client = new RecordingBrowserMcpClient();
         BrowserAutomationService service = new BrowserAutomationService(client, localOnlyProperties());
 
         String result = service.type("wx-user-1", "password", "123456");
 
-        assertThat(result).contains("cannot type passwords");
-        assertThat(client.typedText).isNull();
+        assertThat(result).contains("Typed");
+        assertThat(client.typedTarget).isEqualTo("password");
+        assertThat(client.typedText).isEqualTo("123456");
     }
 
     @Test
-    void blocksChineseSensitiveInput() {
-        RecordingBrowserMcpClient client = new RecordingBrowserMcpClient();
-        BrowserAutomationService service = new BrowserAutomationService(client, localOnlyProperties());
-
-        String result = service.type("wx-user-1", "\u5bc6\u7801", "123456");
-
-        assertThat(result).contains("cannot type passwords");
-        assertThat(client.typedText).isNull();
-    }
-
-    @Test
-    void blocksLikelyVerificationCodeEvenWithGenericTarget() {
+    void allowsVerificationCodeInputForUserDrivenLogin() {
         RecordingBrowserMcpClient client = new RecordingBrowserMcpClient();
         BrowserAutomationService service = new BrowserAutomationService(client, localOnlyProperties());
 
         String result = service.type("wx-user-1", "code", "123456");
 
-        assertThat(result).contains("cannot type passwords");
-        assertThat(client.typedText).isNull();
+        assertThat(result).contains("Typed");
+        assertThat(client.typedTarget).isEqualTo("code");
+        assertThat(client.typedText).isEqualTo("123456");
     }
 
     @Test
-    void blocksLikelyBankCardNumberEvenWithGenericTarget() {
+    void loginClickDoesNotRequireConfirmation() {
         RecordingBrowserMcpClient client = new RecordingBrowserMcpClient();
         BrowserAutomationService service = new BrowserAutomationService(client, localOnlyProperties());
 
-        String result = service.type("wx-user-1", "card", "4111111111111111");
+        String result = service.click("wx-user-1", "login", "");
 
-        assertThat(result).contains("cannot type passwords");
-        assertThat(client.typedText).isNull();
+        assertThat(result).contains("Clicked");
+        assertThat(client.clickedTarget).isEqualTo("login");
+    }
+
+    @Test
+    void chineseLoginClickDoesNotRequireConfirmation() {
+        RecordingBrowserMcpClient client = new RecordingBrowserMcpClient();
+        BrowserAutomationService service = new BrowserAutomationService(client, localOnlyProperties());
+
+        String result = service.click("wx-user-1", "\u767b\u5f55", "");
+
+        assertThat(result).contains("Clicked");
+        assertThat(client.clickedTarget).isEqualTo("\u767b\u5f55");
     }
 
     private BrowserAutomationProperties localOnlyProperties() {
@@ -113,6 +115,7 @@ class BrowserAutomationServiceTests {
     private static final class RecordingBrowserMcpClient extends BrowserMcpClient {
         private String openedUrl;
         private String clickedTarget;
+        private String typedTarget;
         private String typedText;
 
         private RecordingBrowserMcpClient() {
@@ -133,6 +136,7 @@ class BrowserAutomationServiceTests {
 
         @Override
         public BrowserActionResult type(String target, String text) {
+            this.typedTarget = target;
             this.typedText = text;
             return result("Typed", "", "", "");
         }

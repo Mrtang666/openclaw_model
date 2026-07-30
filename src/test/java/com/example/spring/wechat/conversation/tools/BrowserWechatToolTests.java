@@ -1,6 +1,8 @@
 package com.example.spring.wechat.conversation.tools;
 
+import com.example.spring.wechat.browser.model.BrowserActionResult;
 import com.example.spring.wechat.browser.service.BrowserAutomationService;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -58,6 +60,31 @@ class BrowserWechatToolTests {
     }
 
     @Test
+    void screenshotToolReturnsWechatImageWhenScreenshotBytesArePresent() {
+        RecordingBrowserAutomationService service = new RecordingBrowserAutomationService();
+        service.screenshotResult = new BrowserActionResult(
+                true,
+                "Screenshot captured",
+                "Dashboard",
+                "http://localhost:8080/dashboard",
+                "data/browser/screenshots/dashboard.png",
+                "AQID",
+                "image/png",
+                "dashboard.png",
+                JsonNodeFactory.instance.objectNode());
+        BrowserScreenshotWechatTool tool = new BrowserScreenshotWechatTool(service);
+
+        var reply = tool.execute(request(Map.of("name", "dashboard")));
+
+        assertThat(reply.parts()).hasSize(1);
+        assertThat(reply.parts().get(0).hasImage()).isTrue();
+        assertThat(reply.parts().get(0).image().imageBytes()).containsExactly(1, 2, 3);
+        assertThat(reply.parts().get(0).image().fileName()).isEqualTo("dashboard.png");
+        assertThat(reply.parts().get(0).image().contentType()).isEqualTo("image/png");
+        assertThat(reply.parts().get(0).text()).contains("Screenshot captured", "dashboard.png");
+    }
+
+    @Test
     void readPageToolParsesMaxChars() {
         RecordingBrowserAutomationService service = new RecordingBrowserAutomationService();
         BrowserReadPageWechatTool tool = new BrowserReadPageWechatTool(service);
@@ -92,6 +119,7 @@ class BrowserWechatToolTests {
         private String confirmToken;
         private String screenshotName;
         private int maxChars;
+        private BrowserActionResult screenshotResult;
 
         private RecordingBrowserAutomationService() {
             super(null, null);
@@ -125,6 +153,15 @@ class BrowserWechatToolTests {
             this.userId = userId;
             this.screenshotName = name;
             return "screenshot-result";
+        }
+
+        @Override
+        public BrowserActionResult screenshotResult(String userId, String name) {
+            this.userId = userId;
+            this.screenshotName = name;
+            return screenshotResult == null
+                    ? new BrowserActionResult(true, "screenshot-result", "", "", "", "", "", "", JsonNodeFactory.instance.objectNode())
+                    : screenshotResult;
         }
 
         @Override

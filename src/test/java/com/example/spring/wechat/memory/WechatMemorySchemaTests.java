@@ -40,6 +40,10 @@ class WechatMemorySchemaTests {
                 "user_preferences",
                 "conversation_summaries",
                 "tool_execution_logs",
-                "wechat_images");
+                "wechat_images",
+                "agent_goals",
+                "agent_goal_steps",
+                "agent_goal_evaluations",
+                "agent_goal_review_actions");
     }
 }

@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
-import { structuredFromEvaluateResult, textFromContent } from "./tool-result.js";
+import { structuredFromEvaluateResult, textFromContent, valueFromEvaluateResult } from "./tool-result.js";
 
 const host = process.env.BROWSER_MCP_HOST || "0.0.0.0";
 const port = Number(process.env.BROWSER_MCP_PORT || 3333);
@@ -20,6 +20,7 @@ let chromeClientPromise;
 function chromeClient() {
   if (!chromeClientPromise) {
     chromeClientPromise = (async () => {
+      await cleanupChromeProfileLocks();
       const client = new Client({ name: "openclaw-browser-sidecar", version: "0.1.0" });
       const args = [
         "./node_modules/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js",
@@ -44,9 +45,56 @@ function chromeClient() {
   return chromeClientPromise;
 }
 
-async function callChromeTool(name, args = {}) {
+async function cleanupChromeProfileLocks() {
+  await Promise.all([
+    rm(join(userDataDir, "SingletonCookie"), { force: true }),
+    rm(join(userDataDir, "SingletonLock"), { force: true }),
+    rm(join(userDataDir, "SingletonSocket"), { force: true })
+  ]);
+}
+
+async function callChromeTool(name, args = {}, allowRetry = true) {
   const client = await chromeClient();
-  return client.callTool({ name, arguments: args });
+  try {
+    const result = await client.callTool({ name, arguments: args });
+    if (allowRetry && isChromeToolFailure(result)) {
+      await resetChromeClient();
+      return callChromeTool(name, args, false);
+    }
+    return result;
+  } catch (error) {
+    if (!allowRetry) {
+      throw error;
+    }
+    await resetChromeClient();
+    return callChromeTool(name, args, false);
+  }
+}
+
+async function resetChromeClient() {
+  const clientPromise = chromeClientPromise;
+  chromeClientPromise = undefined;
+  try {
+    const client = await clientPromise;
+    await client.close();
+  } catch {
+    // Best-effort cleanup before the next call starts a fresh Chrome DevTools MCP client.
+  }
+}
+
+function isChromeToolFailure(result) {
+  if (result?.isError) {
+    return true;
+  }
+  const text = textFromContent(result);
+  return text.includes("Protocol error") || text.includes("Target closed");
+}
+
+async function evaluatePageScript(functionBody, args = []) {
+  return callChromeTool("evaluate", {
+    script: `(${functionBody})()`,
+    ...(args.length > 0 ? { args } : {})
+  });
 }
 
 function toolResponse(message, extra = {}) {
@@ -73,13 +121,15 @@ function createBrowserServer() {
       inputSchema: { url: z.string().url() }
     },
     async ({ url }) => {
-      await callChromeTool("new_page", { url });
-      const snapshot = await callChromeTool("take_snapshot", {});
-      const text = textFromContent(snapshot);
+      await callChromeTool("navigate", { url });
+      const pageState = await evaluatePageScript("() => ({ title: document.title, url: location.href, text: document.body?.innerText || '' })");
+      const parsed = valueFromEvaluateResult(pageState);
+      const text = textFromContent(pageState);
+      const pageTitle = parsed && typeof parsed === "object" ? parsed.title || firstLine(parsed.text) : firstLine(text);
       return toolResponse("Opened page", {
         url,
-        title: firstLine(text),
-        pageText: text.slice(0, 2000)
+        title: pageTitle,
+        pageText: (parsed?.text || text).slice(0, 2000)
       });
     }
   );
@@ -95,16 +145,26 @@ function createBrowserServer() {
       const script = `
       () => {
         const target = ${JSON.stringify(target)};
+        const normalizedTarget = target.trim().toLowerCase();
         const bySelector = (() => { try { return document.querySelector(target); } catch { return null; } })();
-        const elements = Array.from(document.querySelectorAll('button,a,input,[role="button"],[onclick]'));
-        const byText = elements.find((el) => (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().includes(target));
+        const elements = Array.from(document.querySelectorAll('button,a,input,[role="button"],[onclick],[type="submit"]'));
+        const byText = elements.find((el) => {
+          const text = [
+            el.innerText,
+            el.textContent,
+            el.value,
+            el.getAttribute('aria-label'),
+            el.getAttribute('title')
+          ].filter(Boolean).join(' ').trim().toLowerCase();
+          return text.includes(normalizedTarget);
+        });
         const el = bySelector || byText;
         if (!el) return { success: false, message: 'Element not found: ' + target };
         el.click();
         return { success: true, message: 'Clicked: ' + target, title: document.title, url: location.href };
       }
     `;
-      const result = await callChromeTool("evaluate_script", { function: script });
+      const result = await evaluatePageScript(script);
       const structured = structuredFromEvaluateResult(result);
       return toolResponse(structured.message, structured);
     }
@@ -122,17 +182,36 @@ function createBrowserServer() {
       () => {
         const target = ${JSON.stringify(target)};
         const value = ${JSON.stringify(text)};
+        const normalizedTarget = target.trim().toLowerCase();
         const bySelector = (() => { try { return document.querySelector(target); } catch { return null; } })();
         const controls = Array.from(document.querySelectorAll('input,textarea,[contenteditable="true"]'));
         const byHint = controls.find((el) => {
-          const hint = [el.name, el.id, el.placeholder, el.getAttribute('aria-label')].filter(Boolean).join(' ');
-          return hint.includes(target);
+          const labelText = Array.from(el.labels || []).map((label) => label.innerText || label.textContent || '').join(' ');
+          const wrapperLabel = el.closest('label');
+          const hint = [
+            el.name,
+            el.id,
+            el.type,
+            el.autocomplete,
+            el.placeholder,
+            el.getAttribute('aria-label'),
+            el.getAttribute('title'),
+            labelText,
+            wrapperLabel ? wrapperLabel.innerText || wrapperLabel.textContent : ''
+          ].filter(Boolean).join(' ').toLowerCase();
+          return hint.includes(normalizedTarget);
         });
         const el = bySelector || byHint;
         if (!el) return { success: false, message: 'Input not found: ' + target };
         el.focus();
         if ('value' in el) {
-          el.value = value;
+          const prototype = Object.getPrototypeOf(el);
+          const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+          if (descriptor && descriptor.set) {
+            descriptor.set.call(el, value);
+          } else {
+            el.value = value;
+          }
           el.dispatchEvent(new Event('input', { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
         } else {
@@ -142,7 +221,7 @@ function createBrowserServer() {
         return { success: true, message: 'Typed text', title: document.title, url: location.href };
       }
     `;
-      const result = await callChromeTool("evaluate_script", { function: script });
+      const result = await evaluatePageScript(script);
       const structured = structuredFromEvaluateResult(result);
       return toolResponse(structured.message, structured);
     }
@@ -158,16 +237,35 @@ function createBrowserServer() {
     async ({ name = "screenshot", screenshotDir: requestedScreenshotDir }) => {
       const directory = safeDirectory(requestedScreenshotDir) || screenshotDir;
       await mkdir(directory, { recursive: true });
-      const result = await callChromeTool("take_screenshot", {});
+      const result = await callChromeTool("screenshot", {});
+      if (isChromeToolFailure(result)) {
+        const errorText = textFromContent(result) || "Chrome DevTools MCP target is not available.";
+        return toolResponse(`Screenshot failed: ${errorText}`, { success: false });
+      }
       const content = Array.isArray(result?.content) ? result.content : [];
       const image = content.find((item) => item?.type === "image" && item?.data);
-      if (!image) {
-        return toolResponse("Screenshot failed: Chrome DevTools MCP did not return image data.", { success: false });
-      }
       const safeName = name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 60) || "screenshot";
-      const file = join(directory, `${Date.now()}-${safeName}.png`);
-      await writeFile(file, Buffer.from(image.data, "base64"));
-      return toolResponse("Screenshot captured", { screenshotPath: file });
+      const fileName = `${Date.now()}-${safeName}.png`;
+      const file = join(directory, fileName);
+      let imageBase64 = "";
+      if (image) {
+        imageBase64 = image.data;
+        await writeFile(file, Buffer.from(imageBase64, "base64"));
+      } else {
+        const sourcePath = firstLine(textFromContent(result));
+        if (!sourcePath) {
+          return toolResponse("Screenshot failed: Chrome DevTools MCP did not return image data or a file path.", { success: false });
+        }
+        const bytes = await readFile(sourcePath);
+        imageBase64 = bytes.toString("base64");
+        await writeFile(file, bytes);
+      }
+      return toolResponse("Screenshot captured", {
+        screenshotPath: file,
+        screenshotImageBase64: imageBase64,
+        screenshotContentType: "image/png",
+        screenshotFileName: fileName
+      });
     }
   );
 
@@ -179,8 +277,9 @@ function createBrowserServer() {
       inputSchema: { maxChars: z.number().int().positive().max(10000).optional() }
     },
     async ({ maxChars = 2000 }) => {
-      const result = await callChromeTool("take_snapshot", {});
-      const text = textFromContent(result).slice(0, maxChars);
+      const result = await evaluatePageScript("() => document.body?.innerText || ''");
+      const value = valueFromEvaluateResult(result);
+      const text = String(value ?? textFromContent(result)).slice(0, maxChars);
       return toolResponse(text || "No visible page text was found.", { pageText: text });
     }
   );
@@ -194,7 +293,7 @@ function firstLine(text) {
 
 function safeDirectory(value) {
   const directory = (value || "").trim();
-  if (!directory || directory.includes("\0")) {
+  if (!directory || directory.includes("\0") || !isAbsolute(directory)) {
     return "";
   }
   return directory;

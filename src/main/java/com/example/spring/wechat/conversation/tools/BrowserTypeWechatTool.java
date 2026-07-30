@@ -24,7 +24,7 @@ public class BrowserTypeWechatTool implements WechatTool {
 
     @Override
     public String description() {
-        return "Type ordinary text into an input on the current browser page.";
+        return "Type text into an input on the current browser page, including login form fields when the user explicitly requests it.";
     }
 
     @Override
@@ -42,8 +42,8 @@ public class BrowserTypeWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "Type ordinary text into a page.",
-                List.of("Do not type passwords, verification codes, bank card numbers, private keys, or other sensitive secrets."),
+                "Type user-requested text into a page input, including credentials for a login flow.",
+                List.of("Only type values explicitly provided by the user.", "Do not invent credentials or verification codes."),
                 List.of("target: input field description.", "text: ordinary text."),
                 List.of("Typing result."));
     }

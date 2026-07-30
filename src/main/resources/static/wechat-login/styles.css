@@ -71,24 +71,33 @@ body.role-doctor .floating-message-layer { display: block; }
 
 .floating-message {
   position: absolute;
-  max-width: min(360px, 42vw);
-  padding: 10px 14px;
+  max-width: min(220px, 20vw);
+  padding: 9px 12px;
   border: 1px solid rgba(255,255,255,.24);
   border-radius: 8px;
   color: rgba(255,255,255,.92);
   background: rgba(255,255,255,.12);
   box-shadow: 0 18px 48px rgba(0,0,0,.22);
   backdrop-filter: blur(14px) saturate(125%);
-  font-size: clamp(14px, 1.35vw, 20px);
+  font-size: clamp(13px, 1.1vw, 16px);
   font-weight: 650;
   line-height: 1.45;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
   opacity: 0;
   transform: translateY(16px) scale(.96);
   animation: float-message 5.8s ease forwards;
 }
 
-.floating-message.small { font-size: clamp(13px, 1.1vw, 16px); opacity: .82; }
-.floating-message.large { font-size: clamp(18px, 1.8vw, 26px); }
+.floating-message.small { font-size: clamp(12px, 1vw, 14px); opacity: .84; }
+.floating-message.large { font-size: clamp(15px, 1.4vw, 18px); }
+
+@media (max-width: 960px) {
+  .floating-message {
+    max-width: min(180px, 24vw);
+  }
+}
 
 @keyframes float-message {
   0% { opacity: 0; transform: translateY(18px) scale(.94); }

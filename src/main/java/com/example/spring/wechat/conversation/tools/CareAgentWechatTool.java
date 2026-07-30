@@ -13,6 +13,7 @@ import com.example.spring.wechat.care.repository.CareNotificationRepository;
 import com.example.spring.wechat.care.repository.MedicalIdentityRepository;
 import com.example.spring.wechat.care.service.CareAuthorizationService;
 import com.example.spring.wechat.care.service.CarePermissions;
+import com.example.spring.wechat.care.service.CarePlanDraftService;
 import com.example.spring.wechat.care.service.CareReportService;
 import com.example.spring.wechat.care.service.CareWebLinkService;
 import com.example.spring.wechat.reminder.service.ReminderNotificationSender;
@@ -37,17 +38,19 @@ public class CareAgentWechatTool implements WechatTool {
     private final CareAuthorizationService authorizationService;
     private final CareReportService reportService;
     private final CareWebLinkService linkService;
+    private final CarePlanDraftService draftService;
     private final CareNotificationRepository notificationRepository;
     private final ObjectProvider<ReminderNotificationSender> notificationSenderProvider;
     private final ChatService chatService;
     private final Clock clock;
-    private final Map<String, PendingPlanDraft> pendingPlanDrafts = new ConcurrentHashMap<>();
+    private final Map<String, String> pendingDraftIdsBySession = new ConcurrentHashMap<>();
 
     public CareAgentWechatTool(
             MedicalIdentityRepository identityRepository,
             CareAuthorizationService authorizationService,
             CareReportService reportService,
             CareWebLinkService linkService,
+            CarePlanDraftService draftService,
             CareNotificationRepository notificationRepository,
             ObjectProvider<ReminderNotificationSender> notificationSenderProvider,
             ChatService chatService,
@@ -56,6 +59,7 @@ public class CareAgentWechatTool implements WechatTool {
         this.authorizationService = authorizationService;
         this.reportService = reportService;
         this.linkService = linkService;
+        this.draftService = draftService;
         this.notificationRepository = notificationRepository;
         this.notificationSenderProvider = notificationSenderProvider;
         this.chatService = chatService;
@@ -255,8 +259,20 @@ public class CareAgentWechatTool implements WechatTool {
         MedicalUser patient = choosePatient(patients, request.argument("patient_code"), request.userText());
         String rawPlan = firstNonBlank(request.argument("plan_text"), request.userText());
         String refined = refinePlan(patient, rawPlan);
-        String link = linkService.createForWechatSession(request.sessionKey(), "/doctor/alerts-review").url();
-        pendingPlanDrafts.put(request.sessionKey(), new PendingPlanDraft(patient.id(), patient.displayName(), patient.userCode(), refined));
+        CarePlanDraftService.CarePlanDraftDetails draft = draftService.createDraft(
+                actor,
+                patient.id(),
+                patient.displayName(),
+                patient.userCode(),
+                patient.displayName() + "照护方案草案",
+                rawPlan,
+                refined,
+                traceId());
+        pendingDraftIdsBySession.put(request.sessionKey(), draft.id());
+        String link = linkService.createForWechatSession(
+                request.sessionKey(),
+                "/doctor/alerts-review",
+                Map.of("draftId", draft.id())).url();
         return """
                 已整理成医生审核草稿，暂未发送给患者。
 
@@ -275,36 +291,17 @@ public class CareAgentWechatTool implements WechatTool {
         if (!actor.role().isClinical()) {
             return "只有医生/医护身份可以确认发送患者方案。";
         }
-        PendingPlanDraft draft = pendingPlanDrafts.get(sessionKey);
-        if (draft == null) {
+        String draftId = pendingDraftIdsBySession.get(sessionKey);
+        if (draftId == null) {
             return "当前没有待确认的患者方案草稿。请先描述要给患者制定的方案。";
         }
-        authorizationService.require(actor, draft.patientUserId(), CarePermissions.PLAN_MANAGE,
-                "SEND_PLAN_DRAFT", "CARE_PLAN_DRAFT", Long.toString(draft.patientUserId()), traceId());
-        List<NotificationTarget> targets = identityRepository.listUserNotificationTargets(draft.patientUserId());
-        if (targets.isEmpty()) {
-            return "患者当前没有可用的微信接收通道，请让患者先通过 /patient 登录。";
+        CarePlanDraftService.DraftSendResult result = draftService.confirm(actor, draftId, traceId());
+        pendingDraftIdsBySession.remove(sessionKey);
+        if (result.deliveredCount() == 0 && result.queuedCount() == 0) {
+            return "这份方案已经发送给患者，可在审核页查看状态。";
         }
-        String content = """
-                【新的照护方案】
-                医生：%s
-                患者：%s（%s）
-
-                %s
-                """.formatted(actor.displayName(), draft.patientName(), draft.patientCode(), draft.refinedPlan()).strip();
-        int delivered = 0;
-        for (NotificationTarget target : targets) {
-            if (trySendNow(target, content)) {
-                delivered++;
-            } else {
-                enqueue(draft.patientUserId(), target, "CARE_PLAN_TO_PATIENT", content);
-            }
-        }
-        pendingPlanDrafts.remove(sessionKey);
-        if (delivered == targets.size()) {
-            return "已把确认后的方案发送给患者。";
-        }
-        return "已确认方案并提交给患者；其中 " + delivered + " 个微信通道已即时送达，其余会在通知通道可用后继续发送。";
+        return "已确认方案并提交给患者；其中 " + result.deliveredCount()
+                + " 个微信通道已即时送达，其余会在通知通道可用后继续发送。";
     }
 
     private String refinePlan(MedicalUser patient, String rawPlan) {
@@ -373,17 +370,38 @@ public class CareAgentWechatTool implements WechatTool {
 
     private String resolveAction(WechatToolRequest request, MedicalRole role) {
         String action = request.argument("action").strip().toLowerCase(Locale.ROOT);
-        if (!action.isBlank()) {
+        String text = request.userText();
+        if (!action.isBlank() && !"status".equals(action)) {
             return action;
         }
-        String text = request.userText();
         if (containsAny(text, "我是谁", "当前身份", "身份")) return "whoami";
         if (containsAny(text, "绑定", "新增患者", "添加患者")) return "bind";
         if (containsAny(text, "联系医生", "通知医生", "告诉医生", "紧急", "发给医生")) return "contact_doctor";
         if (containsAny(text, "确认发送", "发送给患者", "发给患者", "确认并发送")) return "plan_confirm";
-        if (containsAny(text, "方案", "计划", "任务", "提醒") && role.isClinical()) return "plan_draft";
+        if (looksLikeCarePlanDraft(request, text, role)) return "plan_draft";
         if (containsAny(text, "工作台", "切换患者") && role.isClinical()) return "doctor_workspace";
         return "status";
+    }
+
+    private boolean looksLikeCarePlanDraft(WechatToolRequest request, String text, MedicalRole role) {
+        if (role == null || !role.isClinical()) {
+            return false;
+        }
+        if (!request.argument("plan_text").isBlank()) {
+            return true;
+        }
+        boolean explicitDraft = containsAny(text, "方案", "计划", "提醒", "定时", "制定", "重新制定", "调整", "发布");
+        if (explicitDraft) {
+            return true;
+        }
+        boolean statusQuery = containsAny(text, "查看", "查询", "完成情况", "状态", "怎么样", "多少");
+        if (statusQuery && !containsAny(text, "发送", "每", "早上", "晚上", "中午", "半小时", "小时")) {
+            return false;
+        }
+        return containsAny(text,
+                "喝水", "饮水", "服药", "吃药", "安全确认", "确认安全", "打卡", "散步",
+                "每半小时", "半小时", "每小时", "每个小时", "每2个小时", "每两个小时",
+                "每天早上", "每天晚上", "早上", "晚上", "中午", "频率");
     }
 
     private MedicalRole firstRole(long userId) {
@@ -485,6 +503,4 @@ public class CareAgentWechatTool implements WechatTool {
         return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
     }
 
-    private record PendingPlanDraft(long patientUserId, String patientName, String patientCode, String refinedPlan) {
-    }
 }

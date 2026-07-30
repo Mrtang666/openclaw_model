@@ -13,7 +13,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.time.Clock;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class CareWebLinkService {
@@ -43,24 +45,40 @@ public class CareWebLinkService {
     }
 
     public CareWebSessionLink createForWechatSession(String sessionKey, String route) {
+        return createForWechatSession(sessionKey, route, Map.of());
+    }
+
+    public CareWebSessionLink createForWechatSession(String sessionKey, String route, Map<String, String> extraParams) {
         MedicalUser user = identityRepository.findUserBySessionKey(sessionKey)
                 .orElseThrow(() -> new CareException(CareErrorCode.UNAUTHORIZED, "当前微信账号尚未完成医疗身份登录"));
         MedicalRole role = identityRepository.findCurrentRoleBySessionKey(sessionKey)
                 .orElseGet(() -> firstActiveRole(user.id()));
         CareSessionService.IssuedSession session = sessionService.issue(user, role, clock.instant());
-        return new CareWebSessionLink(url(route, session.accessToken(), role), session.actor());
+        return new CareWebSessionLink(url(route, session.accessToken(), role, extraParams), session.actor());
     }
 
     public String url(String route, String accessToken, MedicalRole role) {
+        return url(route, accessToken, role, Map.of());
+    }
+
+    public String url(String route, String accessToken, MedicalRole role, Map<String, String> extraParams) {
         String normalizedRoute = route == null || route.isBlank() ? "/caregiver/status" : route.strip();
         if (!normalizedRoute.startsWith("/")) {
             normalizedRoute = "/" + normalizedRoute;
         }
+        Map<String, String> params = new LinkedHashMap<>();
+        if (extraParams != null) {
+            extraParams.forEach((key, value) -> {
+                if (key != null && !key.isBlank() && value != null && !value.isBlank()) {
+                    params.put(key, value);
+                }
+            });
+        }
+        params.put("token", accessToken);
+        params.put("role", role == null ? "" : role.name());
         return UriComponentsBuilder.fromHttpUrl(baseUrl())
                 .path("/medical-console/")
-                .fragment(normalizedRoute
-                        + "?token=" + encode(accessToken)
-                        + "&role=" + encode(role == null ? "" : role.name()))
+                .fragment(normalizedRoute + "?" + buildQuery(params))
                 .build(true)
                 .toUriString();
     }
@@ -91,6 +109,17 @@ public class CareWebLinkService {
 
     private String encode(String value) {
         return java.net.URLEncoder.encode(value == null ? "" : value, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private String buildQuery(Map<String, String> params) {
+        StringBuilder builder = new StringBuilder();
+        for (Map.Entry<String, String> entry : params.entrySet()) {
+            if (builder.length() > 0) {
+                builder.append('&');
+            }
+            builder.append(encode(entry.getKey())).append('=').append(encode(entry.getValue()));
+        }
+        return builder.toString();
     }
 
     public record CareWebSessionLink(String url, CareActor actor) {

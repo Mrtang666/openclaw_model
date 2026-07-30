@@ -105,11 +105,20 @@ const routes = {
     "/doctor/alerts-review": renderAlertsAndReview
 };
 
+const routeRoles = {
+    "/bind/caregiver": ["CAREGIVER", "FAMILY"],
+    "/caregiver/status": ["CAREGIVER", "FAMILY"],
+    "/bind/doctor": ["DOCTOR", "NURSE", "THERAPIST", "DIETITIAN"],
+    "/doctor/patients": ["DOCTOR", "NURSE", "THERAPIST", "DIETITIAN"],
+    "/doctor/detail": ["DOCTOR", "NURSE", "THERAPIST", "DIETITIAN"],
+    "/doctor/alerts-review": ["DOCTOR", "NURSE", "THERAPIST", "DIETITIAN"]
+};
+
 function root() {
     return document.querySelector("#app");
 }
 
-function currentRoute() {
+function currentRouteInfo() {
     const hash = location.hash.replace(/^#/, "") || "/bind/caregiver";
     const [path, query = ""] = hash.split("?");
     const params = new URLSearchParams(query);
@@ -117,7 +126,10 @@ function currentRoute() {
     const role = params.get("role");
     if (token) localStorage.setItem("care_access_token", token);
     if (role) localStorage.setItem("care_active_role", role);
-    return path || "/bind/caregiver";
+    return {
+        path: path || "/bind/caregiver",
+        params
+    };
 }
 
 function selectedPatient() {
@@ -126,8 +138,14 @@ function selectedPatient() {
 }
 
 async function render() {
-    const route = currentRoute();
+    const routeInfo = currentRouteInfo();
+    const route = routeInfo.path;
+    updateShell(route, routeInfo.params);
     updateNav(route);
+    if (!isRouteAllowed(route, routeInfo.params)) {
+        renderRouteBlocked(route);
+        return;
+    }
     await (routes[route] || renderCaregiverBind)();
 }
 
@@ -137,6 +155,17 @@ function token() {
 
 function role() {
     return localStorage.getItem("care_active_role") || "";
+}
+
+function activeRouteRole(params) {
+    return (params.get("role") || role()).toUpperCase();
+}
+
+function isRouteAllowed(route, params) {
+    const allowed = routeRoles[route];
+    const activeRole = activeRouteRole(params);
+    if (!allowed || !activeRole) return true;
+    return allowed.includes(activeRole);
 }
 
 async function careApi(path, options = {}) {
@@ -207,8 +236,8 @@ async function hydratePatientStatus(patient, kind) {
     patient.tasks = (tasks || []).map((task) => ({
         id: task.id,
         title: task.title || `任务 #${task.id}`,
-        status: task.status || "待处理",
-        detail: task.instructions || task.dueAt || "查看任务详情"
+        status: taskStatusLabel(task.status),
+        detail: taskDetailText(task)
     }));
     patient.alerts = (alerts || []).map((alert) => ({
         id: alert.id,
@@ -231,6 +260,24 @@ function backendUnavailableMessage(error) {
     return `<div class="message info">当前显示演示数据。真实接口暂不可用：${escapeHtml(error.message)}</div>`;
 }
 
+function taskStatusLabel(status) {
+    const value = String(status || "").toUpperCase();
+    if (value === "COMPLETED") return "已完成";
+    if (value === "OVERDUE") return "已超时";
+    if (value === "CANCELLED") return "已取消";
+    if (value === "PENDING") return "待完成";
+    return status || "待处理";
+}
+
+function taskDetailText(task) {
+    const due = task?.dueAt ? new Date(task.dueAt).toLocaleString() : "";
+    const instructions = task?.instructions || "";
+    if (due && instructions) {
+        return `提醒时间：${due} · ${instructions}`;
+    }
+    return instructions || due || "查看任务详情";
+}
+
 function escapeHtml(value) {
     return String(value || "")
         .replaceAll("&", "&amp;")
@@ -240,6 +287,23 @@ function escapeHtml(value) {
         .replaceAll("'", "&#039;");
 }
 
+function updateShell(route, params) {
+    const standalone = Boolean(routeRoles[route]) && params.get("nav") !== "1";
+    document.body.classList.toggle("standalone-view", standalone);
+}
+
+function renderRouteBlocked(route) {
+    root().innerHTML = `
+        <section class="single-message">
+            <div class="card">
+                <h1>当前身份不能访问这个页面</h1>
+                <p class="header-text">请从机器人发送给你的业务链接进入对应界面，不要手动切换到其他身份的页面。</p>
+                <div class="message info">当前页面：${escapeHtml(route)}</div>
+            </div>
+        </section>
+    `;
+}
+
 function updateNav(route) {
     document.querySelectorAll(".nav-list a").forEach((item) => {
         item.classList.toggle("active", item.getAttribute("href") === `#${route}`);
@@ -247,12 +311,13 @@ function updateNav(route) {
 }
 
 function header(kicker, title, text, actions = "") {
+    const showText = text && !document.body.classList.contains("standalone-view");
     return `
         <header class="page-header">
             <div>
                 <div class="eyebrow">${kicker}</div>
                 <h1>${title}</h1>
-                <p class="header-text">${text}</p>
+                ${showText ? `<p class="header-text">${text}</p>` : ""}
             </div>
             <div class="toolbar">${actions}</div>
         </header>
@@ -382,6 +447,7 @@ async function renderCaregiverStatus() {
             </div>
         </section>
     `;
+    bindSummaryJumps();
     const contactButton = document.querySelector(".page-header .button.primary");
     if (contactButton) {
         contactButton.addEventListener("click", () => contactDoctor(patient));
@@ -413,6 +479,7 @@ async function renderDoctorSwitcher() {
             </div>
         </section>
     `;
+    bindSummaryJumps();
     bindPatientTabs(renderDoctorSwitcher);
 }
 
@@ -456,11 +523,29 @@ async function renderDoctorDetail() {
     bindPatientTabs(renderDoctorDetail);
 }
 
-function renderAlertsAndReview() {
+async function renderAlertsAndReview() {
     const source = livePatients.length ? livePatients : patients;
     const urgentPatients = source.filter((patient) => patient.alerts.length > 0);
+    let draftList = [];
+    let draftDetail = null;
+    let notice = "";
+    try {
+        await loadPatients("clinical");
+        await hydratePatientStatus(selectedPatient(), "clinical");
+        draftList = await careApi(`${apiPrefix("clinical")}/plan-drafts`);
+        const routeDraftId = routeParams().get("draftId");
+        const selectedId = routeDraftId || draftList.find((draft) => draft.status === "待审核")?.id || draftList[0]?.id || "";
+        if (selectedId) {
+            draftDetail = await careApi(`${apiPrefix("clinical")}/plan-drafts/${selectedId}`);
+        }
+    } catch (error) {
+        notice = backendUnavailableMessage(error);
+        draftList = [];
+    }
+    const activeDraftId = draftDetail?.id || draftList.find((draft) => draft.status === "待审核")?.id || draftList[0]?.id || "";
     root().innerHTML = `
-        ${header("告警与审核", "告警中心和方案审核", "医生在这里处理异常提醒，并确认机器人优化后的照护计划。", `<button class="button">批量忽略低风险</button><button class="button primary">确认当前方案</button>`)}
+        ${header("告警与审核", "告警中心和方案审核", "", `<button class="button">批量忽略低风险</button><button class="button primary">确认当前方案</button>`)}
+        ${notice}
         <section class="grid two">
             <div class="card">
                 <h2 class="card-title">告警中心</h2>
@@ -480,32 +565,119 @@ function renderAlertsAndReview() {
             </div>
             <div class="card">
                 <h2 class="card-title">方案审核</h2>
-                <div class="list">
-                    <div class="list-item">
-                        <div class="list-row">
-                            <div>
-                                <div class="item-title">${planDraft.title}</div>
-                                <div class="item-meta">状态：${planDraft.status}</div>
+                <div class="draft-list">
+                    ${draftList.length ? draftList.map((draft) => `
+                        <button class="draft-item ${draft.id === activeDraftId ? "active" : ""}" data-draft-id="${draft.id}" type="button">
+                            <div class="list-row">
+                                <div>
+                                    <div class="item-title">${draft.patientName} · ${draft.title}</div>
+                                    <div class="item-meta">${draft.patientCode} · ${draft.status}</div>
+                                </div>
+                                <span class="badge ${draft.status === "已发送" ? "green" : "blue"}">${draft.status}</span>
                             </div>
-                            <span class="badge blue">待审核</span>
-                        </div>
-                    </div>
-                    <div class="list-item">
-                        <div class="item-title">医生原始要求</div>
-                        <div class="item-meta">${planDraft.doctorInput}</div>
-                    </div>
-                    <div class="list-item">
-                        <div class="item-title">机器人优化建议</div>
-                        <div class="item-meta">${planDraft.botRefined}</div>
-                    </div>
+                        </button>
+                    `).join("") : `<div class="empty-state">当前没有待审核方案。</div>`}
                 </div>
-                <div class="toolbar" style="margin-top: 14px;">
-                    <button class="button">退回修改</button>
-                    <button class="button primary">确认并发送给患者</button>
-                </div>
+                ${draftDetail ? draftDetailPanel(draftDetail) : ""}
             </div>
         </section>
     `;
+    bindDraftActions(draftDetail);
+}
+
+function draftDetailPanel(draft) {
+    return `
+        <div class="draft-detail">
+            <div class="list-item">
+                <div class="list-row">
+                    <div>
+                        <div class="item-title">${draft.patientName} · ${draft.title}</div>
+                        <div class="item-meta">${draft.patientCode} · ${draft.status}</div>
+                    </div>
+                    <span class="badge ${draft.status === "已发送" ? "green" : "blue"}">${draft.status}</span>
+                </div>
+            </div>
+            <div class="field">
+                <label for="draft-title">方案标题</label>
+                <input id="draft-title" value="${escapeHtml(draft.title || "")}">
+            </div>
+            <div class="field">
+                <label>医生原始要求</label>
+                <div class="message info">${escapeHtml(draft.doctorInput || "")}</div>
+            </div>
+            <div class="field">
+                <label>机器人优化建议</label>
+                <div class="message info">${escapeHtml(draft.refinedPlan || "")}</div>
+            </div>
+            <div class="field">
+                <label for="draft-final-plan">发送内容</label>
+                <textarea id="draft-final-plan" rows="10">${escapeHtml(draft.editedPlan || draft.refinedPlan || "")}</textarea>
+            </div>
+            <div class="toolbar" style="margin-top: 14px;">
+                <button class="button" type="button" data-draft-save ${draft.editable ? "" : "disabled"}>保存修改</button>
+                <button class="button primary" type="button" data-draft-confirm>${draft.editable ? "确认并发送给患者" : "同步任务详情"}</button>
+            </div>
+            ${draft.confirmedAt ? `<div class="message success" style="margin-top: 12px;">已发送给患者：${new Date(draft.confirmedAt).toLocaleString()}</div>` : ""}
+        </div>
+    `;
+}
+
+function bindDraftActions(draft) {
+    document.querySelectorAll("[data-draft-id]").forEach((button) => {
+        button.addEventListener("click", () => selectDraft(button.dataset.draftId));
+    });
+    if (!draft) return;
+    const saveButton = document.querySelector("[data-draft-save]");
+    const confirmButton = document.querySelector("[data-draft-confirm]");
+    if (saveButton) {
+        saveButton.addEventListener("click", async () => {
+            try {
+                await careApi(`${apiPrefix("clinical")}/plan-drafts/${draft.id}`, {
+                    method: "PATCH",
+                    body: JSON.stringify({
+                        title: document.querySelector("#draft-title")?.value || "",
+                        editedPlan: document.querySelector("#draft-final-plan")?.value || ""
+                    })
+                });
+                await renderAlertsAndReview();
+            } catch (error) {
+                window.alert(error.message);
+            }
+        });
+    }
+    if (confirmButton) {
+        confirmButton.addEventListener("click", async () => {
+            try {
+                await careApi(`${apiPrefix("clinical")}/plan-drafts/${draft.id}/confirm`, {
+                    method: "POST"
+                });
+                await renderAlertsAndReview();
+            } catch (error) {
+                window.alert(error.message);
+            }
+        });
+    }
+}
+
+function selectDraft(draftId) {
+    const params = routeParams();
+    const next = new URLSearchParams();
+    const currentToken = params.get("token") || token();
+    const currentRole = params.get("role") || role();
+    if (currentToken) {
+        next.set("token", currentToken);
+    }
+    if (currentRole) {
+        next.set("role", currentRole);
+    }
+    next.set("draftId", draftId);
+    location.hash = `#/doctor/alerts-review?${next.toString()}`;
+}
+
+function routeParams() {
+    const hash = location.hash.replace(/^#/, "");
+    const query = hash.includes("?") ? hash.split("?")[1] : "";
+    return new URLSearchParams(query);
 }
 
 function patientTabs() {
@@ -541,6 +713,44 @@ function bindPatientTabs(callback) {
         button.addEventListener("click", () => {
             selectedPatientId = button.dataset.patientId;
             callback();
+        });
+    });
+}
+
+function bindSummaryJumps() {
+    const detailCards = document.querySelectorAll(".grid.two > .card");
+    if (detailCards[0] && !detailCards[0].id) {
+        detailCards[0].id = "task-detail";
+    }
+    if (detailCards[1] && !detailCards[1].id) {
+        detailCards[1].id = "status-detail";
+    }
+
+    const jumpTargets = ["", "task-detail", "status-detail"];
+    document.querySelectorAll(".summary-card").forEach((card, index) => {
+        const targetId = jumpTargets[index];
+        if (!targetId) {
+            return;
+        }
+        card.classList.add("summary-action");
+        card.setAttribute("role", "button");
+        card.setAttribute("tabindex", "0");
+        card.dataset.jumpTarget = targetId;
+        const jump = () => {
+            const target = document.getElementById(targetId);
+            if (!target) {
+                return;
+            }
+            target.scrollIntoView({ behavior: "smooth", block: "start" });
+            target.classList.add("jump-highlight");
+            window.setTimeout(() => target.classList.remove("jump-highlight"), 1200);
+        };
+        card.addEventListener("click", jump);
+        card.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                jump();
+            }
         });
     });
 }

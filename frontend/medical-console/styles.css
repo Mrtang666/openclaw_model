@@ -44,6 +44,22 @@ a {
     min-height: 100vh;
 }
 
+body.standalone-view .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+body.standalone-view .sidebar {
+    display: none;
+}
+
+body.standalone-view .main-panel {
+    padding: 34px 26px;
+}
+
+body.standalone-view .view-root {
+    max-width: 1040px;
+}
+
 .sidebar {
     background: #172126;
     color: #ffffff;
@@ -226,6 +242,32 @@ h1 {
     gap: 8px;
 }
 
+.summary-action {
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+
+.summary-action:hover {
+    border-color: var(--primary);
+    transform: translateY(-1px);
+}
+
+.summary-action:focus-visible {
+    outline: 2px solid rgba(17, 107, 93, .28);
+    outline-offset: 2px;
+}
+
+#task-detail,
+#status-detail {
+    scroll-margin-top: 18px;
+}
+
+.jump-highlight {
+    box-shadow: 0 0 0 3px rgba(17, 107, 93, .18), var(--shadow);
+}
+
 .summary-value {
     font-size: 28px;
     font-weight: 800;
@@ -254,6 +296,36 @@ h1 {
 .list {
     display: grid;
     gap: 10px;
+}
+
+.draft-list {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.draft-item {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-soft);
+    padding: 14px;
+    cursor: pointer;
+    text-align: left;
+}
+
+.draft-item.active {
+    border-color: var(--primary);
+    background: var(--green-soft);
+}
+
+.draft-detail {
+    display: grid;
+    gap: 12px;
+}
+
+.draft-detail textarea {
+    min-height: 180px;
+    resize: vertical;
 }
 
 .list-item {
@@ -345,6 +417,16 @@ h1 {
     padding: 24px;
     text-align: center;
     color: var(--muted);
+}
+
+.single-message {
+    min-height: calc(100vh - 68px);
+    display: grid;
+    place-items: center;
+}
+
+.single-message .card {
+    width: min(100%, 620px);
 }
 
 @media (max-width: 980px) {

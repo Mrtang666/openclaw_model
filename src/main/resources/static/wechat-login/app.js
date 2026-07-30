@@ -192,7 +192,9 @@ function spawnFloatingMessage(roleKey) {
   item.className = `floating-message ${sizeClass}`.trim();
   item.textContent = phrases[Math.floor(Math.random() * phrases.length)];
   const position = randomMessagePosition();
-  item.style.left = `${position.left}%`;
+  item.style.left = "";
+  item.style.right = "";
+  item.style[position.anchor] = `${position.offset}%`;
   item.style.top = `${position.top}%`;
   item.style.animationDuration = `${4.8 + Math.random() * 2.2}s`;
   floatingMessageLayer.append(item);
@@ -201,16 +203,17 @@ function spawnFloatingMessage(roleKey) {
 
 function randomMessagePosition() {
   const zones = [
-    { left: [5, 30], top: [14, 34] },
-    { left: [62, 84], top: [14, 34] },
-    { left: [6, 28], top: [42, 72] },
-    { left: [68, 86], top: [42, 72] },
-    { left: [28, 54], top: [72, 86] },
-    { left: [36, 58], top: [10, 22] }
+    { anchor: "left", offset: [1, 6], top: [8, 22] },
+    { anchor: "left", offset: [1, 6], top: [30, 46] },
+    { anchor: "left", offset: [1, 6], top: [62, 84] },
+    { anchor: "right", offset: [1, 6], top: [8, 22] },
+    { anchor: "right", offset: [1, 6], top: [30, 46] },
+    { anchor: "right", offset: [1, 6], top: [62, 84] }
   ];
   const zone = zones[Math.floor(Math.random() * zones.length)];
   return {
-    left: randomBetween(zone.left[0], zone.left[1]),
+    anchor: zone.anchor,
+    offset: randomBetween(zone.offset[0], zone.offset[1]),
     top: randomBetween(zone.top[0], zone.top[1])
   };
 }

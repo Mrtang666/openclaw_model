@@ -3,6 +3,7 @@ package com.example.spring.wechat.care.web;
 import com.example.spring.wechat.care.model.CareActor;
 import com.example.spring.wechat.care.service.CareAuthorizationService;
 import com.example.spring.wechat.care.service.CareMemoryService;
+import com.example.spring.wechat.care.service.CarePlanDraftService;
 import com.example.spring.wechat.care.service.CarePlanService;
 import com.example.spring.wechat.care.service.CareReportService;
 import com.example.spring.wechat.care.service.CareTaskService;
@@ -33,6 +34,7 @@ public class ClinicalCareController {
     private final DailyCheckInService checkInService;
     private final SafetyAlertService alertService;
     private final CarePlanService planService;
+    private final CarePlanDraftService draftService;
     private final CareTaskService taskService;
 
     public ClinicalCareController(
@@ -43,6 +45,7 @@ public class ClinicalCareController {
             DailyCheckInService checkInService,
             SafetyAlertService alertService,
             CarePlanService planService,
+            CarePlanDraftService draftService,
             CareTaskService taskService) {
         this.apiSupport = apiSupport;
         this.authorizationService = authorizationService;
@@ -51,6 +54,7 @@ public class ClinicalCareController {
         this.checkInService = checkInService;
         this.alertService = alertService;
         this.planService = planService;
+        this.draftService = draftService;
         this.taskService = taskService;
     }
 
@@ -151,6 +155,41 @@ public class ClinicalCareController {
         Context context = context(authorization, requestId);
         return CareApiResponse.success(
                 planService.details(context.actor(), planId, context.traceId()), context.traceId());
+    }
+
+    @GetMapping("/plan-drafts")
+    public CareApiResponse<?> planDrafts(@RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(draftService.list(context.actor(), context.traceId()), context.traceId());
+    }
+
+    @GetMapping("/plan-drafts/{draftId}")
+    public CareApiResponse<?> planDraft(@RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable String draftId) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(draftService.get(context.actor(), draftId, context.traceId()), context.traceId());
+    }
+
+    @PatchMapping("/plan-drafts/{draftId}")
+    public CareApiResponse<?> updatePlanDraft(@RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable String draftId,
+            @RequestBody PlanDraftUpdateRequest request) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(draftService.update(context.actor(), draftId,
+                new CarePlanDraftService.DraftUpdateCommand(request.title(), request.editedPlan(), context.traceId())),
+                context.traceId());
+    }
+
+    @PostMapping("/plan-drafts/{draftId}/confirm")
+    public CareApiResponse<?> confirmPlanDraft(@RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable String draftId) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(draftService.confirm(context.actor(), draftId, context.traceId()),
+                context.traceId());
     }
 
     @PostMapping("/patients/{patientId}/plans")
@@ -299,5 +338,8 @@ public class ClinicalCareController {
             String relationLabel,
             Set<String> permissions,
             Instant expiresAt) {
+    }
+
+    public record PlanDraftUpdateRequest(String title, String editedPlan) {
     }
 }

@@ -8,6 +8,7 @@ const title = document.querySelector("h1");
 const eyebrow = document.querySelector(".eyebrow");
 const roleCaption = document.querySelector("#role-caption");
 const floatingMessageLayer = document.querySelector("#floating-message-layer");
+const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 const sessionId = new URLSearchParams(location.search).get("session");
 const addUserButton = document.querySelector("#add-user-button");
 const connectionPanel = document.querySelector("#connection-panel");
@@ -31,6 +32,7 @@ const roleVisuals = {
     title: "患者身份扫码登录",
     eyebrow: "PATIENT ACCESS",
     caption: "扫码后通过微信完成提醒、打卡和安全确认。",
+    waitingDetail: "请使用患者本人微信扫码，二维码仅用于本次身份绑定。",
     colorA: [0.18, 0.92, 0.68],
     colorB: [0.35, 0.58, 1.0],
     phrases: [
@@ -48,6 +50,7 @@ const roleVisuals = {
     title: "家属身份扫码登录",
     eyebrow: "CAREGIVER ACCESS",
     caption: "扫码后查看患者状态、异常提醒和照护摘要。",
+    waitingDetail: "请使用已授权家属微信扫码，患者信息将按授权范围展示。",
     colorA: [1.0, 0.72, 0.36],
     colorB: [1.0, 0.44, 0.58],
     phrases: [
@@ -65,6 +68,7 @@ const roleVisuals = {
     title: "医生身份扫码登录",
     eyebrow: "DOCTOR ACCESS",
     caption: "扫码后查看患者、处理告警、审核计划和调整任务。",
+    waitingDetail: "请使用已认证医护微信扫码，访问范围受角色权限控制。",
     colorA: [0.24, 0.58, 1.0],
     colorB: [0.38, 0.92, 1.0],
     phrases: [
@@ -82,6 +86,7 @@ const roleVisuals = {
     title: "微信扫码登录",
     eyebrow: "iLink BOT",
     caption: "正在识别本次登录身份，请稍候。",
+    waitingDetail: "二维码保持固定，背景粒子可以拖动交互。",
     colorA: [0.12, 0.60, 1.0],
     colorB: [0.62, 0.26, 1.0],
     phrases: []
@@ -98,6 +103,10 @@ let activeRole = "DEFAULT";
 let activeTargetIndex = 0;
 let targetCycleTimer;
 let floatingMessageTimer;
+let floatingResizeTimer;
+const floatingMessageTimeouts = new Set();
+let parallaxFrame;
+let pendingParallax = { x: 0, y: 0 };
 let dragging = false;
 let lastPointer = { x: 0, y: 0 };
 let targetRotation = { x: -0.08, y: 0.2 };
@@ -107,7 +116,9 @@ let dragEnergy = 0;
 function setStatus(status) {
   const labels = statusLabels[status] || ["正在等待登录状态", "请稍候"];
   message.textContent = labels[0];
-  detail.textContent = labels[1];
+  detail.textContent = status === "WAITING"
+    ? (roleVisuals[activeRole]?.waitingDetail || labels[1])
+    : labels[1];
   message.style.color = status === "LOGGED_IN" ? "#7dffbf" : (status === "ERROR" || status === "EXPIRED" ? "#ff9c9c" : "#d9f7e7");
 }
 
@@ -167,52 +178,159 @@ function applyLoginRole(role) {
 function startFloatingMessages(roleKey) {
   stopFloatingMessages();
   if (!floatingMessageLayer) return;
-  for (let index = 0; index < 8; index++) {
-    setTimeout(() => spawnFloatingMessage(roleKey), index * 280);
+  const config = floatingMessageConfig();
+  for (let index = 0; index < config.initialCount; index++) {
+    trackFloatingTimeout(() => spawnFloatingMessage(roleKey), index * 420);
   }
-  floatingMessageTimer = setInterval(() => {
-    const count = 1 + Math.floor(Math.random() * 3);
-    for (let index = 0; index < count; index++) {
-      setTimeout(() => spawnFloatingMessage(roleKey), index * 180);
-    }
-  }, 1700);
+  scheduleNextFloatingMessage(roleKey);
 }
 
 function stopFloatingMessages() {
-  clearInterval(floatingMessageTimer);
+  clearTimeout(floatingMessageTimer);
   floatingMessageTimer = null;
+  floatingMessageTimeouts.forEach((timeoutId) => clearTimeout(timeoutId));
+  floatingMessageTimeouts.clear();
   if (floatingMessageLayer) floatingMessageLayer.replaceChildren();
+}
+
+function trackFloatingTimeout(callback, delay) {
+  const timeoutId = window.setTimeout(() => {
+    floatingMessageTimeouts.delete(timeoutId);
+    callback();
+  }, delay);
+  floatingMessageTimeouts.add(timeoutId);
+}
+
+function scheduleNextFloatingMessage(roleKey) {
+  clearTimeout(floatingMessageTimer);
+  floatingMessageTimer = window.setTimeout(() => {
+    if (activeRole !== roleKey) return;
+    spawnFloatingMessage(roleKey);
+    scheduleNextFloatingMessage(roleKey);
+  }, randomBetween(1600, 2500));
+}
+
+function floatingMessageConfig() {
+  if (reducedMotionQuery.matches || innerHeight < 420) {
+    return { initialCount: 0, maxVisible: 0, allowLarge: false };
+  }
+  if (innerWidth <= 640 || innerHeight < 620) {
+    return { initialCount: 2, maxVisible: 3, allowLarge: false };
+  }
+  if (innerWidth <= 1100) {
+    return { initialCount: 4, maxVisible: 5, allowLarge: false };
+  }
+  return { initialCount: 5, maxVisible: 6, allowLarge: true };
 }
 
 function spawnFloatingMessage(roleKey) {
   const phrases = roleVisuals[roleKey]?.phrases || [];
   if (!floatingMessageLayer || !phrases.length) return;
+  const config = floatingMessageConfig();
+  const visibleMessages = floatingMessageLayer.querySelectorAll(".floating-message");
+  if (!config.maxVisible || visibleMessages.length >= config.maxVisible) return;
   const item = document.createElement("span");
-  const sizeClass = Math.random() > 0.72 ? "large" : (Math.random() > 0.5 ? "small" : "");
-  item.className = `floating-message ${sizeClass}`.trim();
-  item.textContent = phrases[Math.floor(Math.random() * phrases.length)];
-  const position = randomMessagePosition();
-  item.style.left = `${position.left}%`;
-  item.style.top = `${position.top}%`;
-  item.style.animationDuration = `${4.8 + Math.random() * 2.2}s`;
+  const sizeClass = config.allowLarge && Math.random() > 0.86
+    ? "large"
+    : (Math.random() > 0.48 ? "small" : "");
+  item.className = `floating-message is-positioning ${sizeClass}`.trim();
+  const visiblePhrases = new Set([...visibleMessages].map((messageItem) => messageItem.textContent));
+  const phrasePool = phrases.filter((phrase) => !visiblePhrases.has(phrase));
+  const candidates = phrasePool.length ? phrasePool : phrases;
+  item.textContent = candidates[Math.floor(Math.random() * candidates.length)];
   floatingMessageLayer.append(item);
-  window.setTimeout(() => item.remove(), 7600);
+  const position = findFloatingMessagePosition(item);
+  if (!position) {
+    item.remove();
+    return;
+  }
+  item.style.left = `${position.left}px`;
+  item.style.top = `${position.top}px`;
+  item.style.animationDuration = `${6.2 + Math.random() * 1.4}s`;
+  requestAnimationFrame(() => item.classList.remove("is-positioning"));
+  trackFloatingTimeout(() => item.remove(), 7900);
 }
 
-function randomMessagePosition() {
-  const zones = [
-    { left: [5, 30], top: [14, 34] },
-    { left: [62, 84], top: [14, 34] },
-    { left: [6, 28], top: [42, 72] },
-    { left: [68, 86], top: [42, 72] },
-    { left: [28, 54], top: [72, 86] },
-    { left: [36, 58], top: [10, 22] }
+function findFloatingMessagePosition(item) {
+  const itemWidth = item.offsetWidth;
+  const itemHeight = item.offsetHeight;
+  const viewportPadding = innerWidth <= 640 ? 12 : 20;
+  const maxLeft = innerWidth - viewportPadding - itemWidth;
+  const maxTop = innerHeight - viewportPadding - itemHeight;
+  if (maxLeft <= viewportPadding || maxTop <= viewportPadding) return null;
+
+  const protectedMargin = innerWidth <= 640 ? 18 : 30;
+  const blockedRects = protectedMessageRects(protectedMargin);
+  floatingMessageLayer.querySelectorAll(".floating-message:not(.is-positioning)").forEach((messageItem) => {
+    blockedRects.push(expandRect(messageItem.getBoundingClientRect(), 16));
+  });
+
+  for (let attempt = 0; attempt < 90; attempt++) {
+    const useEdgeLane = attempt < 60;
+    const laneWidth = Math.max(0, (maxLeft - viewportPadding) * 0.24);
+    let left;
+    if (useEdgeLane) {
+      left = attempt % 2 === 0
+        ? viewportPadding + randomBetween(0, laneWidth)
+        : maxLeft - randomBetween(0, laneWidth);
+    } else {
+      left = randomBetween(viewportPadding, maxLeft);
+    }
+    const top = randomBetween(viewportPadding, maxTop);
+    const candidate = {
+      left,
+      top,
+      right: left + itemWidth,
+      bottom: top + itemHeight
+    };
+    if (blockedRects.every((blocked) => !rectsIntersect(candidate, blocked))) {
+      return { left: Math.round(left), top: Math.round(top) };
+    }
+  }
+  return null;
+}
+
+function protectedMessageRects(margin) {
+  const selectors = [
+    ".login-overlay",
+    ".qr-shell",
+    ".status-detail",
+    ".connection-panel",
+    ".mobile-panel-toggle",
+    ".login-dialog[open]"
   ];
-  const zone = zones[Math.floor(Math.random() * zones.length)];
+  return selectors.flatMap((selector) => [...document.querySelectorAll(selector)])
+    .filter((element) => isVisibleInViewport(element))
+    .map((element) => expandRect(element.getBoundingClientRect(), margin));
+}
+
+function isVisibleInViewport(element) {
+  const style = getComputedStyle(element);
+  const rect = element.getBoundingClientRect();
+  return style.display !== "none"
+    && style.visibility !== "hidden"
+    && rect.width > 0
+    && rect.height > 0
+    && rect.right > 0
+    && rect.bottom > 0
+    && rect.left < innerWidth
+    && rect.top < innerHeight;
+}
+
+function expandRect(rect, margin) {
   return {
-    left: randomBetween(zone.left[0], zone.left[1]),
-    top: randomBetween(zone.top[0], zone.top[1])
+    left: rect.left - margin,
+    top: rect.top - margin,
+    right: rect.right + margin,
+    bottom: rect.bottom + margin
   };
+}
+
+function rectsIntersect(first, second) {
+  return first.left < second.right
+    && first.right > second.left
+    && first.top < second.bottom
+    && first.bottom > second.top;
 }
 
 function randomBetween(min, max) {
@@ -425,6 +543,7 @@ function pointerDown(event) {
 }
 
 function pointerMove(event) {
+  updateRoleParallax(event);
   if (!dragging) return;
   const dx = event.clientX - lastPointer.x;
   const dy = event.clientY - lastPointer.y;
@@ -437,15 +556,34 @@ function pointerMove(event) {
   dragEnergy = Math.min(1, dragEnergy + Math.hypot(dx, dy) * 0.012);
 }
 
+function updateRoleParallax(event) {
+  if (activeRole === "DEFAULT" || reducedMotionQuery.matches) return;
+  pendingParallax = {
+    x: ((event.clientX / Math.max(1, innerWidth)) - 0.5) * 14,
+    y: ((event.clientY / Math.max(1, innerHeight)) - 0.5) * 10
+  };
+  if (parallaxFrame) return;
+  parallaxFrame = requestAnimationFrame(() => {
+    document.documentElement.style.setProperty("--ambient-shift-x", `${pendingParallax.x.toFixed(2)}px`);
+    document.documentElement.style.setProperty("--ambient-shift-y", `${pendingParallax.y.toFixed(2)}px`);
+    parallaxFrame = null;
+  });
+}
+
 function pointerUp() {
   dragging = false;
 }
 
 function resize() {
-  if (!renderer || !camera) return;
-  camera.aspect = innerWidth / Math.max(1, innerHeight);
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight, false);
+  if (renderer && camera) {
+    camera.aspect = innerWidth / Math.max(1, innerHeight);
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight, false);
+  }
+  clearTimeout(floatingResizeTimer);
+  floatingResizeTimer = window.setTimeout(() => {
+    if (activeRole !== "DEFAULT") startFloatingMessages(activeRole);
+  }, 180);
 }
 
 function animate() {

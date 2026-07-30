@@ -497,3 +497,25 @@ Function Calling Agent Loop 开始
 - [ ] 微信发送“你好”可以收到回复。
 - [ ] 微信发送搜索、知识库、天气等请求可以正常调用工具。
 
+## Browser Automation Sidecar
+
+Browser automation is opt-in and disabled by default.
+
+Start the Docker sidecar:
+
+```powershell
+docker compose -f browser-mcp-sidecar/compose.yaml up --build
+```
+
+Enable Java tools in `.env`:
+
+```properties
+BROWSER_AUTOMATION_ENABLED=true
+BROWSER_AUTOMATION_MCP_ENDPOINT=http://127.0.0.1:3333/mcp
+BROWSER_AUTOMATION_ALLOW_EXTERNAL_URL=false
+BROWSER_AUTOMATION_ALLOWED_HOSTS=localhost,127.0.0.1
+BROWSER_AUTOMATION_SCREENSHOT_DIR=/data/screenshots
+```
+
+Default mode only permits local pages. Do not use browser automation for passwords, verification codes, payments, account authorization, or destructive actions without explicit confirmation.
+

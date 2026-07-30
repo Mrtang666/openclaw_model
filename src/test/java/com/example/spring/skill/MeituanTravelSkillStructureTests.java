@@ -14,7 +14,7 @@ class MeituanTravelSkillStructureTests {
 
     @Test
     void skillHasProjectMetadataAndNoPlaceholders() throws Exception {
-        String skill = Files.readString(SKILL_DIR.resolve("SKILL.md"), StandardCharsets.UTF_8);
+        String skill = readNormalized(SKILL_DIR.resolve("SKILL.md"));
         String agent = Files.readString(SKILL_DIR.resolve("agents").resolve("openai.yaml"), StandardCharsets.UTF_8);
 
         assertThat(skill).startsWith("---\nname: meituan-travel\n");
@@ -26,7 +26,7 @@ class MeituanTravelSkillStructureTests {
 
     @Test
     void referencedFilesAndOfficialChannelExist() throws Exception {
-        String skill = Files.readString(SKILL_DIR.resolve("SKILL.md"), StandardCharsets.UTF_8);
+        String skill = readNormalized(SKILL_DIR.resolve("SKILL.md"));
         String channel = Files.readString(SKILL_DIR.resolve("channel.json"), StandardCharsets.UTF_8);
 
         assertThat(skill).contains(
@@ -35,5 +35,9 @@ class MeituanTravelSkillStructureTests {
         assertThat(SKILL_DIR.resolve("references").resolve("cli-contract.md")).exists();
         assertThat(SKILL_DIR.resolve("references").resolve("wechat-output-rules.md")).exists();
         assertThat(channel).contains("meituan-developer");
+    }
+
+    private String readNormalized(Path path) throws Exception {
+        return Files.readString(path, StandardCharsets.UTF_8).replace("\r\n", "\n");
     }
 }

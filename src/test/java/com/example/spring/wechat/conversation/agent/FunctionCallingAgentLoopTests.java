@@ -5,6 +5,7 @@ import com.example.spring.tool.protocol.function.FunctionCallingMessage;
 import com.example.spring.tool.protocol.function.FunctionCallingModelResponse;
 import com.example.spring.tool.protocol.function.FunctionCallingToolCall;
 import com.example.spring.wechat.bot.WechatReply;
+import com.example.spring.wechat.conversation.WechatConversationMode;
 import com.example.spring.wechat.conversation.tools.WechatTool;
 import com.example.spring.wechat.conversation.tools.WechatToolParameter;
 import com.example.spring.wechat.conversation.tools.WechatToolRegistry;
@@ -28,6 +29,38 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class FunctionCallingAgentLoopTests {
+
+    @Test
+    void appliesDifferentSystemPromptsForPatientCaregiverAndDoctorModes() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client,
+                new WechatToolRegistry(List.of(new FakeReminderAfterTool(false))),
+                5);
+        when(client.chat(anyList(), anyList())).thenReturn(Optional.of(
+                new FunctionCallingModelResponse("ok", List.of())));
+
+        loop.run(request("你好", WechatConversationMode.PATIENT)).orElseThrow();
+        loop.run(request("你好", WechatConversationMode.CAREGIVER)).orElseThrow();
+        loop.run(request("你好", WechatConversationMode.DOCTOR)).orElseThrow();
+        loop.run(request("你好", WechatConversationMode.GENERAL)).orElseThrow();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<FunctionCallingMessage>> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(client, org.mockito.Mockito.times(4)).chat(messagesCaptor.capture(), anyList());
+
+        List<List<FunctionCallingMessage>> calls = messagesCaptor.getAllValues();
+        assertThat(calls.get(0).get(0).content())
+                .contains("当前对话模式：患者端")
+                .contains("一次只推进一件最重要的事");
+        assertThat(calls.get(1).get(0).content())
+                .contains("当前对话模式：家属端")
+                .contains("当前情况、需要关注、建议行动");
+        assertThat(calls.get(2).get(0).content())
+                .contains("当前对话模式：医生端")
+                .contains("摘要、关键变化、风险/告警、依从性、待处理事项");
+        assertThat(calls.get(3).get(0).content()).doesNotContain("当前对话模式：");
+    }
 
     @Test
     void runtimePromptProvidesServerTimeAndRequiresRelativeReminderTool() {
@@ -507,6 +540,23 @@ class FunctionCallingAgentLoopTests {
                 (a, b) -> {
                 },
                 recorder);
+    }
+
+    private FunctionCallingAgentRequest request(String userText, WechatConversationMode conversationMode) {
+        return new FunctionCallingAgentRequest(
+                "clawbot:connection-1:wechat-user-1",
+                userText,
+                "No previous context",
+                List.of(),
+                List.of(),
+                List.of(),
+                (a, b) -> {
+                },
+                (a, b) -> {
+                },
+                (a, b, c, d) -> {
+                },
+                conversationMode);
     }
 
     private static final class FakeReminderAfterTool implements WechatTool {

@@ -15,6 +15,7 @@ import com.example.spring.xhs.config.XhsCollectorProperties;
 import com.example.spring.xhs.config.XhsAnalysisProperties;
 import com.example.spring.xhs.config.XhsAlertProperties;
 import com.example.spring.xhs.config.XhsConsoleProperties;
+import com.example.spring.xhs.config.XhsScheduledReportProperties;
 import com.example.spring.wechat.email.config.EmailProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -40,6 +41,7 @@ import com.example.spring.wechat.netdisk.config.BaiduNetdiskProperties;
         XhsAnalysisProperties.class,
         XhsAlertProperties.class,
         XhsConsoleProperties.class,
+        XhsScheduledReportProperties.class,
         EmailProperties.class,
         BaiduNetdiskProperties.class
 })

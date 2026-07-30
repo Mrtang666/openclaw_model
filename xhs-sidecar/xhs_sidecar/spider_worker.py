@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,8 @@ def main() -> int:
                 cursor=str(request.get("cursor", "")),
                 collect_comments=arguments.collect_comments,
                 comment_limit=arguments.comment_limit,
+                detail_max_attempts=arguments.detail_max_attempts,
+                detail_retry_delay_ms=arguments.detail_retry_delay_ms,
             )
     except Exception as exception:  # Worker boundary: return a normalized failure to the parent.
         result = _result(
@@ -50,6 +53,8 @@ def collect(
     cursor: str,
     collect_comments: bool,
     comment_limit: int,
+    detail_max_attempts: int = 3,
+    detail_retry_delay_ms: int = 800,
 ) -> dict[str, Any]:
     cookies = (os.getenv("XHS_COOKIES") or os.getenv("COOKIES") or "").strip()
     if not cookies:
@@ -103,7 +108,9 @@ def collect(
         request_url = source_url
         if token:
             request_url += f"?xsec_token={token}&xsec_source=pc_search"
-        detail_success, detail_message, detail = api.get_note_info(request_url)
+        detail_success, detail_message, detail = _get_note_with_retry(
+            api, request_url, detail_max_attempts, detail_retry_delay_ms
+        )
         items = _detail_items(detail)
         if not detail_success or not items:
             failures.append(f"{note_id}: {redact(detail_message, 300)}")
@@ -113,8 +120,6 @@ def collect(
             comment_success, comment_message, raw_comments = api.get_note_all_comment(request_url)
             if comment_success and isinstance(raw_comments, list):
                 comments = raw_comments[:comment_limit]
-            elif not comment_success:
-                failures.append(f"{note_id} comments: {redact(comment_message, 300)}")
         records.append(normalize_note(items[0], source_url, comments, author_hash_key, request_url))
 
     if failures and records:
@@ -122,6 +127,25 @@ def collect(
     if failures and not records:
         return _result("FAILED", False, [], "DETAIL_COLLECTION_FAILED", "; ".join(failures), "")
     return _result("SUCCEEDED", True, records, "", "", "")
+
+
+def _get_note_with_retry(
+    api: Any, request_url: str, max_attempts: int, retry_delay_ms: int
+) -> tuple[bool, str, Any]:
+    success = False
+    message = ""
+    detail: Any = None
+    attempts = max(1, min(max_attempts, 5))
+    for attempt in range(attempts):
+        try:
+            success, message, detail = api.get_note_info(request_url)
+        except Exception as exception:
+            success, message, detail = False, redact(exception, 300), None
+        if success and _detail_items(detail):
+            return True, message, detail
+        if attempt + 1 < attempts and retry_delay_ms > 0:
+            time.sleep(min(retry_delay_ms, 10000) / 1000)
+    return success, message, detail
 
 
 def resolve_link(spider_root: Path, note_id: str, query: str, limit: int) -> dict[str, Any]:
@@ -251,6 +275,8 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--spider-root", type=Path, required=True)
     parser.add_argument("--collect-comments", action="store_true")
     parser.add_argument("--comment-limit", type=int, default=100)
+    parser.add_argument("--detail-max-attempts", type=int, default=3)
+    parser.add_argument("--detail-retry-delay-ms", type=int, default=800)
     return parser.parse_args()
 
 

@@ -4,6 +4,12 @@ import com.example.spring.xhs.analysis.XhsIncidentView;
 import com.example.spring.xhs.link.XhsPostLinkService;
 import com.example.spring.xhs.report.XhsDailyReport;
 import com.example.spring.xhs.report.XhsDailyReportDocxService;
+import com.example.spring.xhs.schedule.XhsReportArtifactService;
+import com.example.spring.xhs.schedule.XhsReportRunView;
+import com.example.spring.xhs.schedule.XhsReportScheduleRequest;
+import com.example.spring.xhs.schedule.XhsReportScheduleService;
+import com.example.spring.xhs.schedule.XhsReportScheduleView;
+import com.example.spring.xhs.schedule.XhsScheduledReportDeliveryService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ContentDisposition;
@@ -34,18 +40,27 @@ public class XhsConsoleController {
     private final XhsPostLinkService postLinkService;
     private final XhsDailyReportDocxService reportDocxService;
     private final XhsConsoleUrlService consoleUrlService;
+    private final XhsReportScheduleService reportScheduleService;
+    private final XhsScheduledReportDeliveryService reportDeliveryService;
+    private final XhsReportArtifactService reportArtifactService;
 
     public XhsConsoleController(
             XhsConsoleService service,
             XhsConsoleHealthService healthService,
             XhsPostLinkService postLinkService,
             XhsDailyReportDocxService reportDocxService,
-            XhsConsoleUrlService consoleUrlService) {
+            XhsConsoleUrlService consoleUrlService,
+            XhsReportScheduleService reportScheduleService,
+            XhsScheduledReportDeliveryService reportDeliveryService,
+            XhsReportArtifactService reportArtifactService) {
         this.service = service;
         this.healthService = healthService;
         this.postLinkService = postLinkService;
         this.reportDocxService = reportDocxService;
         this.consoleUrlService = consoleUrlService;
+        this.reportScheduleService = reportScheduleService;
+        this.reportDeliveryService = reportDeliveryService;
+        this.reportArtifactService = reportArtifactService;
     }
 
     @GetMapping("/health")
@@ -159,6 +174,65 @@ public class XhsConsoleController {
         headers.setContentDisposition(ContentDisposition.attachment()
                 .filename(document.fileName(), StandardCharsets.UTF_8)
                 .build());
+        headers.setCacheControl(CacheControl.noStore());
+        return new ResponseEntity<>(document.bytes(), headers, HttpStatus.OK);
+    }
+
+    @GetMapping("/report-schedules")
+    public List<XhsReportScheduleView> reportSchedules(
+            @RequestParam(required = false) String projectKey) {
+        return reportScheduleService.schedules(projectKey);
+    }
+
+    @PostMapping("/report-schedules")
+    @ResponseStatus(HttpStatus.CREATED)
+    public XhsReportScheduleView createReportSchedule(@RequestBody XhsReportScheduleRequest request) {
+        return reportScheduleService.create(request);
+    }
+
+    @PatchMapping("/report-schedules/{scheduleId}")
+    public XhsReportScheduleView updateReportSchedule(
+            @PathVariable long scheduleId, @RequestBody XhsReportScheduleRequest request) {
+        return reportScheduleService.update(scheduleId, request);
+    }
+
+    @DeleteMapping("/report-schedules/{scheduleId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteReportSchedule(@PathVariable long scheduleId) {
+        reportScheduleService.delete(scheduleId);
+    }
+
+    @PostMapping("/report-schedules/{scheduleId}/run")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public Map<String, Long> runReportSchedule(@PathVariable long scheduleId) {
+        return Map.of("runId", reportScheduleService.queueNow(scheduleId));
+    }
+
+    @GetMapping("/report-runs")
+    public List<XhsReportRunView> reportRuns(
+            @RequestParam(required = false) String projectKey,
+            @RequestParam(defaultValue = "50") int limit) {
+        return reportScheduleService.runs(projectKey, limit);
+    }
+
+    @GetMapping("/report-runs/{runId}")
+    public XhsReportRunView reportRun(@PathVariable long runId) {
+        return reportScheduleService.run(runId);
+    }
+
+    @PostMapping("/report-deliveries/{deliveryId}/retry")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public void retryReportDelivery(@PathVariable long deliveryId) {
+        reportDeliveryService.retry(deliveryId);
+    }
+
+    @GetMapping("/report-artifacts/{artifactId}/download")
+    public ResponseEntity<byte[]> downloadReportArtifact(@PathVariable long artifactId) {
+        XhsReportArtifactService.Download document = reportArtifactService.download(artifactId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType(document.contentType()));
+        headers.setContentDisposition(ContentDisposition.attachment()
+                .filename(document.fileName(), StandardCharsets.UTF_8).build());
         headers.setCacheControl(CacheControl.noStore());
         return new ResponseEntity<>(document.bytes(), headers, HttpStatus.OK);
     }

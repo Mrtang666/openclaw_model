@@ -5,6 +5,7 @@ import com.example.spring.xhs.incident.XhsIncidentStatus;
 import com.example.spring.xhs.ingestion.XhsCollectionCoordinator;
 import com.example.spring.xhs.report.XhsDailyReport;
 import com.example.spring.xhs.report.XhsDailyReportService;
+import com.example.spring.xhs.report.XhsReportArtifactStorage;
 import com.example.spring.xhs.source.XhsCollectionRequest;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,16 +35,19 @@ public class XhsConsoleService {
     private final ObjectMapper objectMapper;
     private final XhsCollectionCoordinator collectionCoordinator;
     private final XhsDailyReportService dailyReportService;
+    private final XhsReportArtifactStorage reportArtifactStorage;
 
     public XhsConsoleService(
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
             XhsCollectionCoordinator collectionCoordinator,
-            XhsDailyReportService dailyReportService) {
+            XhsDailyReportService dailyReportService,
+            XhsReportArtifactStorage reportArtifactStorage) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.collectionCoordinator = collectionCoordinator;
         this.dailyReportService = dailyReportService;
+        this.reportArtifactStorage = reportArtifactStorage;
     }
 
     public List<ProjectView> projects() {
@@ -104,6 +108,36 @@ public class XhsConsoleService {
             throw new IllegalArgumentException("请输入完整项目标识以确认删除");
         }
         long projectId = projectId(key);
+        List<String> reportStorageKeys = jdbcTemplate.query("""
+                SELECT a.storage_key FROM xhs_report_artifacts a
+                JOIN xhs_report_runs r ON r.id = a.run_id
+                JOIN xhs_report_schedules s ON s.id = r.schedule_id
+                WHERE s.project_id = ?
+                """, (rs, row) -> rs.getString("storage_key"), projectId);
+        reportStorageKeys.forEach(reportArtifactStorage::delete);
+        jdbcTemplate.update("""
+                DELETE d FROM xhs_report_deliveries d
+                JOIN xhs_report_runs r ON r.id = d.run_id
+                JOIN xhs_report_schedules s ON s.id = r.schedule_id
+                WHERE s.project_id = ?
+                """, projectId);
+        jdbcTemplate.update("""
+                DELETE a FROM xhs_report_artifacts a
+                JOIN xhs_report_runs r ON r.id = a.run_id
+                JOIN xhs_report_schedules s ON s.id = r.schedule_id
+                WHERE s.project_id = ?
+                """, projectId);
+        jdbcTemplate.update("""
+                DELETE r FROM xhs_report_runs r
+                JOIN xhs_report_schedules s ON s.id = r.schedule_id
+                WHERE s.project_id = ?
+                """, projectId);
+        jdbcTemplate.update("""
+                DELETE rr FROM xhs_report_recipients rr
+                JOIN xhs_report_schedules s ON s.id = rr.schedule_id
+                WHERE s.project_id = ?
+                """, projectId);
+        jdbcTemplate.update("DELETE FROM xhs_report_schedules WHERE project_id = ?", projectId);
         jdbcTemplate.update("""
                 DELETE d FROM xhs_alert_deliveries d
                 JOIN xhs_alert_events e ON e.id = d.alert_event_id

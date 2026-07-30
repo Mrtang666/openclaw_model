@@ -75,12 +75,17 @@ $env:SPIDER_XHS_PYTHON = (Resolve-Path .\.venv\Scripts\python.exe)
 $env:XHS_COOKIES = "your complete authorized Cookie"
 $env:XHS_COLLECTOR_API_KEY = "a long random shared secret"
 $env:XHS_AUTHOR_HASH_KEY = "a separate long stable secret"
+$env:XHS_SIDECAR_WORKER_THREADS = "1"
+$env:XHS_DETAIL_MAX_ATTEMPTS = "3"
+$env:XHS_DETAIL_RETRY_DELAY_MS = "800"
 
 .\.venv\Scripts\python.exe -m xhs_sidecar.server --check
 .\.venv\Scripts\python.exe -m xhs_sidecar.server
 ```
 
 The bootstrap command validates archive paths and extracts Spider_XHS only into the ignored `runtime/vendor` directory. Spider source is not copied into the application source tree.
+
+Use one worker for a single Xiaohongshu account to avoid concurrent detail requests competing for the same session. Each note detail request is retried up to `XHS_DETAIL_MAX_ATTEMPTS`; `XHS_DETAIL_RETRY_DELAY_MS` controls the delay between attempts. Comment collection failure no longer downgrades a successfully collected note, while unrecoverable note-detail failures remain visible as `PARTIAL_COLLECTION`.
 
 ## Spring Boot configuration
 

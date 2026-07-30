@@ -497,3 +497,54 @@ Function Calling Agent Loop 开始
 - [ ] 微信发送“你好”可以收到回复。
 - [ ] 微信发送搜索、知识库、天气等请求可以正常调用工具。
 
+## 13. 小红书定时舆情报告配置
+
+管理页面的“定时报告”可以按日、周、月为指定项目生成 Word、XLSX，并选择邮件或微信投递。首次使用前，在 `.env` 中确认：
+
+```properties
+XHS_SCHEDULED_REPORT_ENABLED=true
+XHS_REPORT_STORAGE_DIR=data/xhs/reports
+XHS_REPORT_POLLING_DELAY=10s
+XHS_REPORT_COLLECTION_WAIT=15m
+XHS_REPORT_ANALYSIS_WAIT=10m
+XHS_REPORT_MAX_DELIVERY_ATTEMPTS=3
+XHS_REPORT_RETENTION_DAYS=30
+XHS_REPORT_CLEANUP_DELAY=1h
+```
+
+参数说明：
+
+- `XHS_REPORT_STORAGE_DIR`：持久化报告目录。Docker 部署时必须挂载为数据卷，否则重建容器会丢失报告文件。
+- `XHS_REPORT_POLLING_DELAY`：扫描到期计划、推进运行阶段和重试投递的间隔。
+- `XHS_REPORT_COLLECTION_WAIT`：生成报告前采集任务的最长等待时间。
+- `XHS_REPORT_ANALYSIS_WAIT`：新帖子分析的最长等待时间。超时仍会生成部分报告并记录原因。
+- `XHS_REPORT_MAX_DELIVERY_ATTEMPTS`：邮件或微信失败后的最大自动尝试次数。
+- `XHS_REPORT_RETENTION_DAYS`：报告文件保留天数。
+- `XHS_REPORT_CLEANUP_DELAY`：过期文件清理任务的执行间隔。
+
+邮件投递还需要启用 SMTP，并将所有定时收件人加入白名单：
+
+```properties
+EMAIL_ENABLED=true
+EMAIL_SMTP_HOST=smtp.qq.com
+EMAIL_SMTP_PORT=465
+EMAIL_SMTP_SSL_ENABLED=true
+EMAIL_SMTP_USERNAME=你的QQ邮箱
+EMAIL_SMTP_PASSWORD=QQ邮箱授权码
+EMAIL_FROM=${EMAIL_SMTP_USERNAME}
+EMAIL_ALLOWED_RECIPIENTS=receiver-a@example.com,receiver-b@example.com
+EMAIL_REQUIRE_CONFIRMATION_FOR_NON_WHITELIST=true
+```
+
+微信投递要求目标连接保持在线。先在 CLI 执行 `/wechat start` 完成登录，再从连接状态中取得连接 ID，并填写接收人的微信用户 ID。连接离线时本次投递会自动重试，超过最大次数后可在网页运行历史中手动重试。
+
+项目启动后，Flyway 会自动执行 `V18__create_xhs_scheduled_reports.sql`。进入管理页面的“定时报告”，创建计划后可以先点“立即执行”验证。运行历史会展示采集、分析、生成、投递状态，并提供 Word/XLSX 下载及失败投递重试。
+
+生产环境还需要确认：
+
+- 应用进程对报告目录有读写权限。
+- 数据库和报告目录都有持久化备份。
+- 系统时区与计划时区一致，默认使用 `Asia/Shanghai`。
+- 邮箱白名单不包含无关地址，不在仓库提交授权码或 Cookie。
+- 微信连接长期在线；若无法保证在线，建议同时配置邮件作为兜底渠道。
+

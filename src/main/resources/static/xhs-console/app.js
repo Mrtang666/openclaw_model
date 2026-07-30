@@ -14,6 +14,7 @@ const views = {
   opinions: ["舆情数据", "筛选分析结果并查看帖子原文与证据"],
   incidents: ["风险事件", "跟踪高风险事件并记录处置过程"],
   reports: ["舆情日报", "按项目和日期查看舆情摘要"],
+  "scheduled-reports": ["定时报告", "定期采集分析并通过邮件或微信发送报告文件"],
   alerts: ["告警管理", "配置风险告警规则并查看告警事件"],
   system: ["系统状态", "检查数据库、采集 Sidecar 和运行任务"],
 };
@@ -122,6 +123,7 @@ const renderers = {
   opinions: renderOpinions,
   incidents: renderIncidents,
   reports: renderReports,
+  "scheduled-reports": renderScheduledReports,
   alerts: renderAlerts,
   system: renderSystem,
 };
@@ -394,6 +396,152 @@ async function downloadReport(date, button) {
     button.disabled = false;
   }
 }
+
+async function renderScheduledReports() {
+  if (!state.projectKey) {
+    content.innerHTML = empty("请先在顶部选择一个项目");
+    return;
+  }
+  const [schedules, runs] = await Promise.all([
+    api(`/report-schedules${query({ projectKey: state.projectKey })}`),
+    api(`/report-runs${query({ projectKey: state.projectKey, limit: 30 })}`),
+  ]);
+  content.innerHTML = `
+    <section class="panel">
+      <div class="panel-header"><h2>新建定时报告计划</h2><span class="muted">定时发送邮箱必须位于服务端白名单</span></div>
+      <div class="panel-body">
+        <form id="scheduled-report-form" class="form-grid">
+          <label>计划名称<input name="name" required maxlength="255" placeholder="例如 每日品牌舆情报告"></label>
+          <label>执行频率<select name="frequency"><option value="DAILY">每日</option><option value="WEEKLY">每周</option><option value="MONTHLY">每月</option></select></label>
+          <label>执行时间<input name="runTime" type="time" value="09:00" required></label>
+          <label>时区<input name="timezone" value="Asia/Shanghai" required></label>
+          <label>每周执行日<select name="dayOfWeek"><option value="1">周一</option><option value="2">周二</option><option value="3">周三</option><option value="4">周四</option><option value="5">周五</option><option value="6">周六</option><option value="7">周日</option></select></label>
+          <label>每月执行日<input name="dayOfMonth" type="number" min="1" max="31" value="1"></label>
+          <label>每个关键词采集数<input name="collectionLimit" type="number" min="1" max="100" value="20"></label>
+          <label>报告重点笔记数<input name="topPostLimit" type="number" min="1" max="100" value="10"></label>
+          <label class="full">邮件接收人<input name="emails" placeholder="多个邮箱使用英文逗号分隔"></label>
+          <label>微信连接 ID<input name="wechatConnectionId" placeholder="可选，来自已登录微信连接"></label>
+          <label>微信接收人 ID<input name="wechatRecipientId" placeholder="可选，需与连接 ID 同时填写"></label>
+          <div class="full option-row">
+            <label><input name="collectBeforeReport" type="checkbox" checked> 生成前先按项目关键词采集</label>
+            <label><input name="docx" type="checkbox" checked> Word</label>
+            <label><input name="xlsx" type="checkbox"> XLSX</label>
+          </div>
+          <div class="full form-actions"><button class="button primary" type="submit">创建计划</button></div>
+        </form>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panel-header"><h2>报告计划</h2><span class="muted">${schedules.length} 个</span></div>
+      <div class="table-wrap">${schedules.length ? scheduledReportTable(schedules) : empty("暂无定时报告计划")}</div>
+    </section>
+    <section class="panel">
+      <div class="panel-header"><h2>运行历史</h2><span class="muted">运行中的任务会自动刷新</span></div>
+      <div class="table-wrap">${runs.length ? scheduledRunTable(runs) : empty("暂无报告运行记录")}</div>
+    </section>`;
+  document.querySelector("#scheduled-report-form").addEventListener("submit", createScheduledReport);
+  content.querySelectorAll("[data-report-run]").forEach(button => button.addEventListener("click", () => runScheduledReport(button)));
+  content.querySelectorAll("[data-report-toggle]").forEach(button => button.addEventListener("click", () => toggleScheduledReport(button, schedules)));
+  content.querySelectorAll("[data-report-delete]").forEach(button => button.addEventListener("click", () => deleteScheduledReport(button)));
+  content.querySelectorAll("[data-delivery-retry]").forEach(button => button.addEventListener("click", () => retryReportDelivery(button)));
+  if (runs.some(run => ["QUEUED", "COLLECTING", "ANALYZING", "GENERATING", "DELIVERING"].includes(run.status))) {
+    setTimeout(() => { if (state.view === "scheduled-reports") renderCurrent(); }, 5000);
+  }
+}
+
+function scheduledReportTable(schedules) {
+  return `<table><thead><tr><th>状态</th><th>计划</th><th>周期</th><th>格式</th><th>接收渠道</th><th>下次执行</th><th>操作</th></tr></thead><tbody>${schedules.map(item => {
+    const channels = [item.emailRecipients.length ? `邮件 ${item.emailRecipients.length}` : "", item.wechatRecipientId ? "微信" : ""].filter(Boolean).join(" · ") || "仅生成";
+    return `<tr><td><span class="tag ${item.enabled ? "normal" : "watch"}">${item.enabled ? "启用" : "暂停"}</span></td><td class="title-cell"><strong>${escapeHtml(item.name)}</strong><div class="muted">${item.collectBeforeReport ? "生成前采集" : "仅汇总已有数据"}</div></td><td>${scheduleFrequency(item)} · ${escapeHtml(item.runTime)}</td><td>${item.formats.map(value => `<span class="tag">${escapeHtml(value)}</span>`).join("")}</td><td>${escapeHtml(channels)}</td><td>${formatDate(item.nextRunAt)}</td><td><div class="inline-actions"><button class="button secondary" data-report-run="${item.id}">立即执行</button><button class="button secondary" data-report-toggle="${item.id}">${item.enabled ? "暂停" : "启用"}</button><button class="button danger" data-report-delete="${item.id}">删除</button></div></td></tr>`;
+  }).join("")}</tbody></table>`;
+}
+
+function scheduledRunTable(runs) {
+  return `<table><thead><tr><th>状态</th><th>计划</th><th>统计周期</th><th>文件</th><th>投递</th><th>开始</th><th>说明</th></tr></thead><tbody>${runs.map(run => `<tr><td><span class="tag ${reportRunClass(run.status)}">${reportRunStatus(run.status)}</span></td><td>${escapeHtml(run.scheduleName)}</td><td>${formatDate(run.periodStart)}<br><span class="muted">至 ${formatDate(run.periodEnd)}</span></td><td>${run.artifacts.length ? `<div class="artifact-list">${run.artifacts.map(file => `<a href="${API}/report-artifacts/${file.id}/download" title="下载 ${escapeAttr(file.fileName)}"><span class="tag">${escapeHtml(file.format)}</span><span>${escapeHtml(file.fileName)}</span></a>`).join("")}</div>` : "-"}</td><td>${deliverySummary(run)}</td><td>${formatDate(run.startedAt || run.createdAt)}</td><td class="title-cell muted">${escapeHtml(run.errorMessage || run.partialReason || "-")}</td></tr>`).join("")}</tbody></table>`;
+}
+
+function deliverySummary(run) {
+  if (!run.deliveries?.length) return run.status === "SUCCEEDED" ? "仅生成" : "-";
+  return `<div class="delivery-list">${run.deliveries.map(item => `<div><span class="tag ${item.status === "SENT" ? "succeeded" : item.status === "FAILED" ? "failed" : "running"}">${item.channel === "EMAIL" ? "邮件" : "微信"} · ${escapeHtml(item.status)}</span><span class="muted">${escapeHtml(item.target)}</span>${item.status === "FAILED" ? `<button class="button text" data-delivery-retry="${item.id}">重试</button>` : ""}${item.lastError ? `<div class="muted">${escapeHtml(item.lastError)}</div>` : ""}</div>`).join("")}</div>`;
+}
+
+async function retryReportDelivery(button) {
+  button.disabled = true;
+  try {
+    await api(`/report-deliveries/${button.dataset.deliveryRetry}/retry`, { method: "POST", body: "{}" });
+    showNotice("失败投递已重新排队", true);
+    await renderScheduledReports();
+  } catch (error) { showNotice(error.message); } finally { button.disabled = false; }
+}
+
+async function createScheduledReport(event) {
+  event.preventDefault();
+  const button = event.submitter;
+  const data = new FormData(event.currentTarget);
+  button.disabled = true;
+  try {
+    const formats = [data.get("docx") ? "DOCX" : "", data.get("xlsx") ? "XLSX" : ""].filter(Boolean);
+    if (!formats.length) throw new Error("至少选择一种报告格式");
+    await api("/report-schedules", { method: "POST", body: JSON.stringify({
+      projectKey: state.projectKey, name: data.get("name"), frequency: data.get("frequency"),
+      runTime: data.get("runTime"), dayOfWeek: Number(data.get("dayOfWeek")), dayOfMonth: Number(data.get("dayOfMonth")),
+      timezone: data.get("timezone"), formats, collectBeforeReport: Boolean(data.get("collectBeforeReport")),
+      collectionLimit: Number(data.get("collectionLimit")), topPostLimit: Number(data.get("topPostLimit")),
+      emailRecipients: splitEmails(data.get("emails")), wechatConnectionId: data.get("wechatConnectionId"),
+      wechatRecipientId: data.get("wechatRecipientId"), enabled: true,
+    }) });
+    showNotice("定时报告计划已创建", true);
+    await renderScheduledReports();
+  } catch (error) { showNotice(error.message); } finally { button.disabled = false; }
+}
+
+async function runScheduledReport(button) {
+  button.disabled = true;
+  try {
+    const result = await api(`/report-schedules/${button.dataset.reportRun}/run`, { method: "POST", body: "{}" });
+    showNotice(`报告任务已提交：${result.runId}`, true);
+    await renderScheduledReports();
+  } catch (error) { showNotice(error.message); } finally { button.disabled = false; }
+}
+
+async function toggleScheduledReport(button, schedules) {
+  const item = schedules.find(value => String(value.id) === button.dataset.reportToggle);
+  if (!item) return;
+  button.disabled = true;
+  try {
+    await api(`/report-schedules/${item.id}`, { method: "PATCH", body: JSON.stringify(schedulePayload(item, !item.enabled)) });
+    showNotice(item.enabled ? "报告计划已暂停" : "报告计划已启用", true);
+    await renderScheduledReports();
+  } catch (error) { showNotice(error.message); } finally { button.disabled = false; }
+}
+
+async function deleteScheduledReport(button) {
+  if (!window.confirm("确认删除该定时报告计划及其运行记录？")) return;
+  button.disabled = true;
+  try {
+    await api(`/report-schedules/${button.dataset.reportDelete}`, { method: "DELETE" });
+    showNotice("定时报告计划已删除", true);
+    await renderScheduledReports();
+  } catch (error) { showNotice(error.message); } finally { button.disabled = false; }
+}
+
+function schedulePayload(item, enabled) {
+  return { projectKey: item.projectKey, name: item.name, frequency: item.frequency, runTime: item.runTime,
+    dayOfWeek: item.dayOfWeek, dayOfMonth: item.dayOfMonth, timezone: item.timezone, formats: item.formats,
+    collectBeforeReport: item.collectBeforeReport, collectionLimit: item.collectionLimit,
+    topPostLimit: item.topPostLimit, emailRecipients: item.emailRecipients,
+    wechatConnectionId: item.wechatConnectionId, wechatRecipientId: item.wechatRecipientId, enabled };
+}
+
+function scheduleFrequency(item) {
+  if (item.frequency === "WEEKLY") return `每周${["", "一", "二", "三", "四", "五", "六", "日"][item.dayOfWeek]}`;
+  if (item.frequency === "MONTHLY") return `每月 ${item.dayOfMonth} 日`;
+  return "每日";
+}
+
+function splitEmails(value) { return String(value || "").split(/[,，\n]/).map(item => item.trim()).filter(Boolean); }
+function reportRunClass(value) { return ({ SUCCEEDED: "succeeded", PARTIAL: "partial", FAILED: "failed", DELIVERING: "running", GENERATING: "running", ANALYZING: "running", COLLECTING: "running", QUEUED: "submitted" })[value] || "watch"; }
+function reportRunStatus(value) { return ({ QUEUED: "等待", COLLECTING: "采集中", ANALYZING: "分析中", GENERATING: "生成中", DELIVERING: "发送中", SUCCEEDED: "成功", PARTIAL: "部分成功", FAILED: "失败", SKIPPED: "已跳过" })[value] || value; }
 
 async function renderAlerts() {
   const [rules, events] = await Promise.all([api(`/alert-rules${query({ projectKey: state.projectKey })}`), api(`/alert-events${query({ projectKey: state.projectKey, limit: 50 })}`)]);

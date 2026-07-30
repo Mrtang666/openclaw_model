@@ -423,9 +423,8 @@ public class WechatBotService {
                 runtime.connectionId,
                 message.fromUserId(),
                 runtime.displayName,
-                Instant.now());
+                Instant.now()).ifPresent(bound -> runtime.displayName = medicalDisplayName(bound.role(), bound.user().displayName()));
     }
-
     private void refreshReminderRecipientBinding(ClientRuntime runtime, WechatIncomingMessage message) {
         if (reminderRecipientBindingService == null
                 || runtime.botId == null
@@ -1061,6 +1060,22 @@ public class WechatBotService {
         return loginPageUrlService.pageUrl(loginSessionId);
     }
 
+    private String medicalDisplayName(com.example.spring.wechat.care.model.MedicalRole role, String displayName) {
+        String label = role == null ? "" : switch (role) {
+            case PATIENT -> "患者";
+            case CAREGIVER, FAMILY -> "家属";
+            case DOCTOR -> "医生";
+            case NURSE -> "护士";
+            case THERAPIST -> "治疗师";
+            case DIETITIAN -> "营养师";
+            case ADMIN -> "管理员";
+        };
+        String name = displayName == null || displayName.isBlank() ? "未命名" : displayName.strip();
+        if (label.isBlank()) {
+            return name;
+        }
+        return label + " " + name;
+    }
     private synchronized void cleanupExpiredPendingConnections() {
         if (loginPageSessionService == null) {
             return;
@@ -1138,7 +1153,7 @@ public class WechatBotService {
 
     private static final class ClientRuntime {
         private final String connectionId;
-        private final String displayName;
+        private volatile String displayName;
         private final WechatClient client;
         private final String loginSessionId;
         private final Instant createdAt = Instant.now();

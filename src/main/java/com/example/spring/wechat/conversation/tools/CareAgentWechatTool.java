@@ -27,6 +27,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
@@ -73,17 +74,18 @@ public class CareAgentWechatTool implements WechatTool {
 
     @Override
     public List<String> arguments() {
-        return List.of("action", "patient_code", "message", "plan_text");
+        return List.of("action", "patient_code", "message", "plan_text", "nickname");
     }
 
     @Override
     public List<WechatToolParameter> parameters() {
         return List.of(
                 WechatToolParameter.optionalEnum("action", "操作类型", List.of(
-                        "status", "bind", "contact_doctor", "doctor_workspace", "plan_draft", "plan_confirm", "whoami"), "status"),
+                        "status", "bind", "contact_doctor", "doctor_workspace", "plan_draft", "plan_confirm", "whoami", "rename"), "status"),
                 WechatToolParameter.optionalString("patient_code", "患者编号，例如 PAT-12345678；绑定或指定患者时填写", "PAT-12345678"),
                 WechatToolParameter.optionalString("message", "联系医生时要发送的消息", "患者今天头晕，请医生关注。"),
-                WechatToolParameter.optionalString("plan_text", "医生输入的原始照护方案要求", "每天提醒患者喝水三次，晚上确认安全。"));
+                WechatToolParameter.optionalString("plan_text", "医生输入的原始照护方案要求", "每天提醒患者喝水三次，晚上确认安全。"),
+                WechatToolParameter.optionalString("nickname", "修改昵称时填写新昵称", "朵"));
     }
 
     @Override
@@ -121,6 +123,7 @@ public class CareAgentWechatTool implements WechatTool {
                 case "doctor_workspace" -> WechatReply.text(doctorWorkspace(actor, request.sessionKey()));
                 case "plan_draft" -> WechatReply.text(planDraft(actor, request));
                 case "plan_confirm" -> WechatReply.text(confirmPlanDraft(actor, request.sessionKey()));
+                case "rename" -> WechatReply.text(renameNickname(actor, request));
                 default -> WechatReply.text(status(actor, request));
             };
         } catch (CareException exception) {
@@ -136,6 +139,26 @@ public class CareAgentWechatTool implements WechatTool {
                 用户编号：%s
                 昵称：%s
                 """.formatted(roleLabel(actor.role()), actor.userCode(), actor.displayName()).strip();
+    }
+
+    private String renameNickname(CareActor actor, WechatToolRequest request) {
+        String nickname = extractNickname(request);
+        if (nickname.isBlank()) {
+            return """
+                    请直接告诉我你想改成的昵称。
+                    例如：我想改一下昵称:朵
+                    """.strip();
+        }
+        Optional<MedicalUser> updated = identityRepository.updateDisplayName(actor.userId(), nickname, clock.instant());
+        if (updated.isEmpty()) {
+            return "昵称修改失败，请稍后重试。";
+        }
+        MedicalUser user = updated.get();
+        return """
+                昵称已更新为：%s
+                当前医疗身份：%s
+                用户编号：%s
+                """.formatted(user.displayName(), roleLabel(actor.role()), user.userCode()).strip();
     }
 
     private String status(CareActor actor, WechatToolRequest request) {
@@ -395,6 +418,50 @@ public class CareAgentWechatTool implements WechatTool {
             if (value != null && !value.isBlank()) return value.strip();
         }
         return "";
+    }
+
+    private String extractNickname(WechatToolRequest request) {
+        String[] sources = {
+                request.argument("nickname"),
+                request.argument("message"),
+                request.userText()
+        };
+        for (String source : sources) {
+            String nickname = extractNickname(source);
+            if (!nickname.isBlank()) {
+                return nickname;
+            }
+        }
+        return "";
+    }
+
+    private String extractNickname(String text) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+        String value = text.strip();
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+                "(?:改(?:一下)?昵称|修改昵称|昵称改成|叫我|以后叫我|请叫我)[:：\\s]*([\\p{L}\\p{N}_·-]{1,32})")
+                .matcher(value);
+        if (matcher.find()) {
+            return cleanNickname(matcher.group(1));
+        }
+        int colon = Math.max(value.lastIndexOf(':'), value.lastIndexOf('：'));
+        if (colon >= 0 && colon < value.length() - 1 && value.contains("昵称")) {
+            return cleanNickname(value.substring(colon + 1));
+        }
+        return "";
+    }
+
+    private String cleanNickname(String value) {
+        if (value == null) {
+            return "";
+        }
+        String clean = value.strip();
+        while (!clean.isBlank() && "，。,.!！?？：:；;".indexOf(clean.charAt(clean.length() - 1)) >= 0) {
+            clean = clean.substring(0, clean.length() - 1).strip();
+        }
+        return clean.length() > 32 ? clean.substring(0, 32) : clean;
     }
 
     private String traceId() {

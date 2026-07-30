@@ -468,6 +468,12 @@ public class WechatConversationService {
         String action = directCareAction(text);
         if (!action.isBlank()) {
             arguments.put("action", action);
+            if ("rename".equals(action)) {
+                String nickname = extractNickname(text);
+                if (!nickname.isBlank()) {
+                    arguments.put("nickname", nickname);
+                }
+            }
         }
         WechatToolRequest request = new WechatToolRequest(
                 sessionKey,
@@ -496,36 +502,100 @@ public class WechatConversationService {
             return false;
         }
         String value = text.strip();
+        if (looksLikeRenameRequest(value)) {
+            return true;
+        }
         return containsAny(value,
-                "患者编号", "我的编号", "用户编号", "医疗身份", "当前身份",
-                "绑定患者", "新增患者", "添加患者",
-                "患者状态", "查看患者", "患者情况", "照护状态", "打卡", "安全确认",
-                "联系医生", "通知医生", "告诉医生",
-                "医生工作台", "切换患者",
-                "制定方案", "照护方案", "确认发送给患者", "发送给患者");
+                "\u60a3\u8005\u7f16\u53f7", "\u6211\u7684\u7f16\u53f7", "\u7528\u6237\u7f16\u53f7", "\u533b\u7597\u8eab\u4efd", "\u5f53\u524d\u8eab\u4efd",
+                "\u7ed1\u5b9a\u60a3\u8005", "\u65b0\u589e\u60a3\u8005", "\u6dfb\u52a0\u60a3\u8005",
+                "\u60a3\u8005\u72b6\u6001", "\u67e5\u770b\u60a3\u8005", "\u60a3\u8005\u60c5\u51b5", "\u7167\u62a4\u72b6\u6001", "\u6253\u5361", "\u5b89\u5168\u786e\u8ba4",
+                "\u8054\u7cfb\u533b\u751f", "\u901a\u77e5\u533b\u751f", "\u544a\u8bc9\u533b\u751f",
+                "\u533b\u751f\u5de5\u4f5c\u53f0", "\u5207\u6362\u60a3\u8005",
+                "\u5236\u5b9a\u65b9\u6848", "\u7167\u62a4\u65b9\u6848", "\u786e\u8ba4\u53d1\u9001\u7ed9\u60a3\u8005", "\u53d1\u9001\u7ed9\u60a3\u8005");
     }
 
     private String directCareAction(String text) {
         String value = text == null ? "" : text.strip();
-        if (containsAny(value, "患者编号", "我的编号", "用户编号", "医疗身份", "当前身份")) {
+        if (looksLikeRenameRequest(value)) {
+            return "rename";
+        }
+        if (containsAny(value, "\u60a3\u8005\u7f16\u53f7", "\u6211\u7684\u7f16\u53f7", "\u7528\u6237\u7f16\u53f7", "\u533b\u7597\u8eab\u4efd", "\u5f53\u524d\u8eab\u4efd")) {
             return "whoami";
         }
-        if (containsAny(value, "绑定患者", "新增患者", "添加患者")) {
+        if (containsAny(value, "\u7ed1\u5b9a\u60a3\u8005", "\u65b0\u589e\u60a3\u8005", "\u6dfb\u52a0\u60a3\u8005")) {
             return "bind";
         }
-        if (containsAny(value, "联系医生", "通知医生", "告诉医生")) {
+        if (containsAny(value, "\u8054\u7cfb\u533b\u751f", "\u901a\u77e5\u533b\u751f", "\u544a\u8bc9\u533b\u751f")) {
             return "contact_doctor";
         }
-        if (containsAny(value, "确认发送给患者", "发送给患者", "发给患者", "确认并发送")) {
+        if (containsAny(value, "\u786e\u8ba4\u53d1\u9001\u7ed9\u60a3\u8005", "\u53d1\u9001\u7ed9\u60a3\u8005", "\u53d1\u7ed9\u60a3\u8005", "\u786e\u8ba4\u5e76\u53d1\u9001")) {
             return "plan_confirm";
         }
-        if (containsAny(value, "制定方案", "照护方案", "发布方案")) {
+        if (containsAny(value, "\u5236\u5b9a\u65b9\u6848", "\u7167\u62a4\u65b9\u6848", "\u53d1\u5e03\u65b9\u6848")) {
             return "plan_draft";
         }
-        if (containsAny(value, "医生工作台", "切换患者")) {
+        if (containsAny(value, "\u533b\u751f\u5de5\u4f5c\u53f0", "\u5207\u6362\u60a3\u8005")) {
             return "doctor_workspace";
         }
         return "status";
+    }
+
+    private String extractNickname(String text) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+        String value = text.strip();
+        String[] prefixes = {"\u53eb\u6211", "\u8bf7\u53eb\u6211", "\u4ee5\u540e\u53eb\u6211"};
+        for (String prefix : prefixes) {
+            int index = value.indexOf(prefix);
+            if (index >= 0) {
+                return cleanNickname(value.substring(index + prefix.length()));
+            }
+        }
+        int renameIndex = Math.max(value.lastIndexOf("\u6635\u79f0\u6539\u6210"), value.lastIndexOf("\u6635\u79f0\u6539\u4e3a"));
+        if (renameIndex >= 0) {
+            return cleanNickname(value.substring(renameIndex + 4));
+        }
+        int callIndex = value.lastIndexOf("\u53eb");
+        if (callIndex >= 0) {
+            return cleanNickname(value.substring(callIndex + 1));
+        }
+        int colon = Math.max(value.lastIndexOf(58), value.lastIndexOf(65306));
+        if (colon >= 0 && value.contains("\u6635\u79f0")) {
+            return cleanNickname(value.substring(colon + 1));
+        }
+        if (value.contains("\u6635\u79f0") && value.contains("\u6539")) {
+            return cleanNickname(value);
+        }
+        return "";
+    }
+
+    private String cleanNickname(String value) {
+        if (value == null) {
+            return "";
+        }
+        String clean = value.strip();
+        while (!clean.isBlank() && "\uff0c\u3002,!.!\uff01?\uff1f:\uff1a;\uff1b".contains(clean.substring(clean.length() - 1))) {
+            clean = clean.substring(0, clean.length() - 1).strip();
+        }
+        if (clean.startsWith("\u53eb")) {
+            clean = clean.substring(1).strip();
+        }
+        if (clean.length() > 32) {
+            clean = clean.substring(0, 32);
+        }
+        return clean;
+    }
+    private boolean looksLikeRenameRequest(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String value = text.strip();
+        if (containsAny(value, "\u6539\u6635\u79f0", "\u4fee\u6539\u6635\u79f0", "\u6635\u79f0\u6539\u6210", "\u53eb\u6211", "\u4ee5\u540e\u53eb\u6211", "\u8bf7\u53eb\u6211")) {
+            return true;
+        }
+        return value.contains("\u6635\u79f0")
+                && (value.contains("\u6539") || value.contains("\u4fee\u6539") || value.contains("\u53eb") || value.contains("\u79f0\u547c"));
     }
 
     private boolean containsAny(String text, String... needles) {
@@ -539,7 +609,6 @@ public class WechatConversationService {
         }
         return false;
     }
-
     public void handleStreaming(String input, ReplyEmitter emitter) {
         handleStreaming(null, input, emitter);
     }

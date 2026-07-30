@@ -55,9 +55,9 @@ public class MedicalIdentityRepository {
         if (existing.isPresent()) {
             MedicalUser user = existing.get();
             jdbc.update("""
-                    UPDATE medical_users SET display_name=?, last_active_at=?, updated_at=?, version=version+1
+                    UPDATE medical_users SET last_active_at=?, updated_at=?, version=version+1
                     WHERE id=?
-                    """, displayName, timestamp(now), timestamp(now), user.id());
+                    """, timestamp(now), timestamp(now), user.id());
             jdbc.update("""
                     UPDATE medical_user_wechat_bindings
                     SET latest_session_key=?, status='ACTIVE', last_seen_at=?, updated_at=?
@@ -78,9 +78,9 @@ public class MedicalIdentityRepository {
         if (sameWechatUser.isPresent()) {
             MedicalUser user = sameWechatUser.get();
             jdbc.update("""
-                    UPDATE medical_users SET display_name=?, last_active_at=?, updated_at=?, version=version+1
+                    UPDATE medical_users SET last_active_at=?, updated_at=?, version=version+1
                     WHERE id=?
-                    """, displayName, timestamp(now), timestamp(now), user.id());
+                    """, timestamp(now), timestamp(now), user.id());
             jdbc.update("""
                     INSERT INTO medical_user_wechat_bindings
                     (user_id,connection_id,from_user_id,latest_session_key,status,first_seen_at,last_seen_at,created_at,updated_at)
@@ -119,6 +119,23 @@ public class MedicalIdentityRepository {
                 timestamp(now), timestamp(now), timestamp(now), timestamp(now));
         ensureRole(userId, role, now);
         return findUserById(userId).orElseThrow();
+    }
+
+    @Transactional
+    public Optional<MedicalUser> updateDisplayName(long userId, String displayName, Instant now) {
+        String clean = clean(displayName);
+        if (clean.isBlank()) {
+            return Optional.empty();
+        }
+        int updated = jdbc.update("""
+                UPDATE medical_users
+                SET display_name=?, last_active_at=?, updated_at=?, version=version+1
+                WHERE id=? AND status='ACTIVE'
+                """, clean, timestamp(now), timestamp(now), userId);
+        if (updated <= 0) {
+            return Optional.empty();
+        }
+        return findUserById(userId);
     }
 
     public Optional<MedicalUser> findUserById(long userId) {

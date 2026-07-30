@@ -28,6 +28,17 @@ public class XhsDailyReportService {
                 Math.max(1, Math.min(topIncidentLimit <= 0 ? 5 : topIncidentLimit, 10)));
     }
 
+    public XhsDailyReport reportPeriod(
+            String projectKey, LocalDate labelDate, Instant periodStart, Instant periodEnd, int topIncidentLimit) {
+        String key = required(projectKey);
+        if (periodStart == null || periodEnd == null || !periodStart.isBefore(periodEnd)) {
+            throw new IllegalArgumentException("报告统计周期无效");
+        }
+        LocalDate date = labelDate == null ? periodEnd.atZone(REPORT_ZONE).toLocalDate() : labelDate;
+        return repository.loadDailyReport(key, date, periodStart, periodEnd,
+                Math.max(1, Math.min(topIncidentLimit <= 0 ? 10 : topIncidentLimit, 100)));
+    }
+
     private LocalDate parseDate(String value) {
         if (value == null || value.isBlank()) {
             return LocalDate.now(REPORT_ZONE);

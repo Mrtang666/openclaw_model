@@ -1,7 +1,11 @@
 package com.example.spring.wechat.email.client;
 
 import com.example.spring.wechat.email.config.EmailProperties;
+import com.example.spring.wechat.email.model.EmailAttachment;
 import com.example.spring.wechat.email.model.EmailMessage;
+import jakarta.mail.Multipart;
+import jakarta.mail.Session;
+import jakarta.mail.internet.MimeMessage;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.mail.MailSendException;
@@ -16,6 +20,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class SmtpEmailClientTests {
 
@@ -52,6 +57,27 @@ class SmtpEmailClientTests {
         assertThatThrownBy(() -> client.send(new EmailMessage(List.of("to@example.com"), "Subject", "Body", List.of(), List.of())))
                 .isInstanceOf(EmailClientException.class)
                 .hasMessageContaining("SMTP");
+    }
+
+    @Test
+    void sendsMimeMessageWithAttachment() throws Exception {
+        JavaMailSender sender = mock(JavaMailSender.class);
+        MimeMessage mimeMessage = new MimeMessage(Session.getInstance(new java.util.Properties()));
+        when(sender.createMimeMessage()).thenReturn(mimeMessage);
+        SmtpEmailClient client = new SmtpEmailClient(sender, properties());
+
+        client.sendWithAttachments(
+                new EmailMessage(List.of("to@example.com"), "Report", "See attachment", List.of(), List.of()),
+                List.of(new EmailAttachment("xlsx".getBytes(), "report.xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")));
+
+        verify(sender).send(mimeMessage);
+        mimeMessage.saveChanges();
+        assertThat(mimeMessage.getSubject()).isEqualTo("Report");
+        assertThat(mimeMessage.getContent()).isInstanceOf(Multipart.class);
+        Multipart content = (Multipart) mimeMessage.getContent();
+        assertThat(content.getCount()).isEqualTo(2);
+        assertThat(content.getBodyPart(1).getFileName()).isEqualTo("report.xlsx");
     }
 
     private static EmailProperties properties() {

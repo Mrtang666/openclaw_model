@@ -8,6 +8,8 @@ import org.apache.poi.xwpf.usermodel.XWPFHyperlinkRun;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -35,13 +37,16 @@ class XhsDailyReportDocxServiceTests {
         XhsDailyReportDocxService.ReportDocument generated =
                 new XhsDailyReportDocxService().generate(report, urls);
 
-        assertThat(generated.fileName()).isEqualTo("品牌_A-小红书舆情日报-2026-07-29.docx");
+        assertThat(generated.fileName()).isEqualTo("品牌 A-小红书舆情分析报告-2026-07-29.docx");
         assertThat(generated.contentType()).isEqualTo(XhsDailyReportDocxService.DOCX_CONTENT_TYPE);
         assertThat(generated.bytes()).startsWith((byte) 'P', (byte) 'K');
         try (XWPFDocument document = new XWPFDocument(new ByteArrayInputStream(generated.bytes()));
              XWPFWordExtractor extractor = new XWPFWordExtractor(document)) {
             assertThat(extractor.getText())
-                    .contains("品牌 A 小红书舆情日报", "核心指标", "产品质量", "过敏反馈", "使用后发红");
+                    .contains("品牌 A 小红书舆情分析报告", "核心指标", "产品质量", "过敏反馈", "使用后发红");
+            assertThat(document.getDocument().getBody().isSetSectPr()).isTrue();
+            assertThat(document.getTables()).allSatisfy(table ->
+                    assertThat(table.getCTTbl().getTblPr().getTblW().getW().toString()).isEqualTo("9360"));
             assertThat(document.getTables().stream()
                     .flatMap(table -> table.getRows().stream())
                     .flatMap(row -> row.getTableCells().stream())
@@ -54,5 +59,8 @@ class XhsDailyReportDocxServiceTests {
                     .map(link -> link.getURL()))
                     .contains("http://127.0.0.1:8080/api/xhs-console/posts/42/open");
         }
+        Path output = Path.of("target", "docx-qa", generated.fileName());
+        Files.createDirectories(output.getParent());
+        Files.write(output, generated.bytes());
     }
 }

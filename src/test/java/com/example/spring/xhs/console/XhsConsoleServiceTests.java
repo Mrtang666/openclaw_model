@@ -2,6 +2,7 @@ package com.example.spring.xhs.console;
 
 import com.example.spring.xhs.ingestion.XhsCollectionCoordinator;
 import com.example.spring.xhs.report.XhsDailyReportService;
+import com.example.spring.xhs.report.XhsReportArtifactStorage;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -19,7 +20,8 @@ class XhsConsoleServiceTests {
                 jdbcTemplate,
                 new ObjectMapper(),
                 mock(XhsCollectionCoordinator.class),
-                mock(XhsDailyReportService.class));
+                mock(XhsDailyReportService.class),
+                mock(XhsReportArtifactStorage.class));
 
         assertThatThrownBy(() -> service.deleteProject("company-x", "other-project"))
                 .isInstanceOf(IllegalArgumentException.class)

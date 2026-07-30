@@ -5,12 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <title>微信 iLink 登录</title>
-  <link rel="stylesheet" href="./styles.css?v=medical-role-bg-5">
+  <link rel="stylesheet" href="./styles.css?v=medical-role-ui-7">
 </head>
 <body>
   <main class="login-scene" aria-live="polite">
     <canvas id="particle-canvas" aria-label="可拖动的三维粒子背景"></canvas>
     <div class="scene-vignette"></div>
+    <div class="role-ambient" aria-hidden="true">
+      <span class="ambient-core"></span>
+      <span class="ambient-track"></span>
+      <span class="ambient-signal"></span>
+    </div>
     <div id="floating-message-layer" class="floating-message-layer" aria-hidden="true"></div>
     <section class="login-overlay">
       <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -54,7 +59,7 @@
       <div class="dialog-qr-shell"><canvas id="dialog-qr-canvas"></canvas></div>
     </dialog>
   </main>
-  <script type="module" src="./app.js?v=medical-role-bg-6"></script>
+  <script type="module" src="./app.js?v=medical-role-ui-8"></script>
 </body>
 </html>
 

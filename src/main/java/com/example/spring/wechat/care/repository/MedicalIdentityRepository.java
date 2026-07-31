@@ -64,6 +64,7 @@ public class MedicalIdentityRepository {
                         status='ACTIVE', last_seen_at=VALUES(last_seen_at), updated_at=VALUES(updated_at)
                     """, user.id(), connectionId, fromUserId, sessionKey,
                     timestamp(now), timestamp(now), timestamp(now), timestamp(now));
+            deactivateOlderRoleBindings(user.id(), connectionId, role, now);
             ensureRole(user.id(), role, now);
             return findUserById(user.id()).orElseThrow();
         }
@@ -361,6 +362,11 @@ public class MedicalIdentityRepository {
                 JOIN medical_user_wechat_bindings b ON b.user_id=r.viewer_user_id AND b.status='ACTIVE'
                 WHERE r.patient_user_id=? AND r.status='ACTIVE' AND p.permission_code=?
                   AND (p.expires_at IS NULL OR p.expires_at>?)
+                  AND b.id=(
+                      SELECT b2.id FROM medical_user_wechat_bindings b2
+                      WHERE b2.user_id=r.viewer_user_id AND b2.status='ACTIVE'
+                      ORDER BY b2.last_seen_at DESC,b2.id DESC LIMIT 1
+                  )
                 """, (rs, rowNum) -> new NotificationTarget(
                         rs.getLong("viewer_user_id"), rs.getString("connection_id"), rs.getString("from_user_id")),
                 patientUserId, permission, timestamp(now));
@@ -380,10 +386,18 @@ public class MedicalIdentityRepository {
                 JOIN medical_user_wechat_bindings b ON b.user_id=r.viewer_user_id AND b.status='ACTIVE'
                 WHERE r.patient_user_id=? AND r.status='ACTIVE' AND p.permission_code=?
                   AND (p.expires_at IS NULL OR p.expires_at>?)
+                  AND b.id=(
+                      SELECT b2.id
+                      FROM medical_user_wechat_bindings b2
+                      JOIN medical_login_sessions s2 ON s2.connection_id=b2.connection_id
+                          AND s2.bound_user_id=b2.user_id AND s2.requested_role=? AND s2.status='BOUND'
+                      WHERE b2.user_id=r.viewer_user_id AND b2.status='ACTIVE'
+                      ORDER BY b2.last_seen_at DESC,b2.id DESC LIMIT 1
+                  )
                 ORDER BY b.last_seen_at DESC,b.id DESC
                 """, (rs, rowNum) -> new NotificationTarget(
                         rs.getLong("viewer_user_id"), rs.getString("connection_id"), rs.getString("from_user_id")),
-                role.name(), patientUserId, permission, timestamp(now));
+                role.name(), patientUserId, permission, timestamp(now), role.name());
     }
 
     public List<NotificationTarget> listUserNotificationTargets(long userId) {
@@ -403,11 +417,27 @@ public class MedicalIdentityRepository {
                 SELECT b.user_id,b.connection_id,b.from_user_id
                 FROM medical_user_wechat_bindings b
                 JOIN medical_user_roles r ON r.user_id=b.user_id AND r.role_code=? AND r.status='ACTIVE'
+                JOIN medical_login_sessions s ON s.connection_id=b.connection_id
+                    AND s.bound_user_id=b.user_id AND s.requested_role=? AND s.status='BOUND'
                 WHERE b.user_id=? AND b.status='ACTIVE'
                 ORDER BY b.last_seen_at DESC,b.id DESC
+                LIMIT 1
                 """, (rs, rowNum) -> new NotificationTarget(
                         rs.getLong("user_id"), rs.getString("connection_id"), rs.getString("from_user_id")),
-                role.name(), userId);
+                role.name(), role.name(), userId);
+    }
+
+    private void deactivateOlderRoleBindings(long userId, String currentConnectionId, MedicalRole role, Instant now) {
+        jdbc.update("""
+                UPDATE medical_user_wechat_bindings b
+                SET b.status='INACTIVE',b.updated_at=?
+                WHERE b.user_id=? AND b.status='ACTIVE' AND b.connection_id<>?
+                  AND EXISTS (
+                      SELECT 1 FROM medical_login_sessions s
+                      WHERE s.connection_id=b.connection_id AND s.bound_user_id=b.user_id
+                        AND s.requested_role=? AND s.status='BOUND'
+                  )
+                """, timestamp(now), userId, clean(currentConnectionId), role.name());
     }
 
     private Optional<PatientRelation> findRelation(long relationId) {

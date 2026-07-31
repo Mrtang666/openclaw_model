@@ -300,6 +300,32 @@ public class MedicalIdentityRepository {
                 """, USER_MAPPER, actorUserId, permission, timestamp(now));
     }
 
+    public List<MedicalUser> listRelatedViewersByRole(long patientUserId, MedicalRole role) {
+        return jdbc.query("""
+                SELECT DISTINCT u.*
+                FROM medical_patient_relations r
+                JOIN medical_users u ON u.id=r.viewer_user_id AND u.status='ACTIVE'
+                WHERE r.patient_user_id=? AND r.relation_role=? AND r.status='ACTIVE'
+                ORDER BY u.display_name,u.id
+                """, USER_MAPPER, patientUserId, role.name());
+    }
+
+    public List<MedicalUser> listRelatedViewersByRoleAndPermission(
+            long patientUserId,
+            MedicalRole role,
+            String permission,
+            Instant now) {
+        return jdbc.query("""
+                SELECT DISTINCT u.*
+                FROM medical_patient_relations r
+                JOIN medical_relation_permissions p ON p.relation_id=r.id
+                JOIN medical_users u ON u.id=r.viewer_user_id AND u.status='ACTIVE'
+                WHERE r.patient_user_id=? AND r.relation_role=? AND r.status='ACTIVE'
+                  AND p.permission_code=? AND (p.expires_at IS NULL OR p.expires_at>?)
+                ORDER BY u.display_name,u.id
+                """, USER_MAPPER, patientUserId, role.name(), permission, timestamp(now));
+    }
+
     public List<NotificationTarget> listNotificationTargets(long patientUserId, String permission, Instant now) {
         return jdbc.query("""
                 SELECT DISTINCT r.viewer_user_id,b.connection_id,b.from_user_id

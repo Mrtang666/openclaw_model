@@ -194,27 +194,31 @@ function apiPrefix(kind) {
 
 async function loadPatients(kind) {
     const users = await careApi(`${apiPrefix(kind)}/patients`);
-    livePatients = (users || []).map((user) => ({
-        id: String(user.id),
-        code: user.userCode,
-        name: user.displayName,
-        age: "-",
-        gender: "-",
-        doctor: "已绑定医生",
-        family: "已绑定家属",
-        risk: "NORMAL",
-        riskLabel: "状态待同步",
-        lastUpdate: "刚刚",
-        taskDone: 0,
-        taskTotal: 0,
-        water: "查看任务详情",
-        safety: "查看状态详情",
-        summary: "后端已返回患者绑定关系，点击患者可查看最新状态、任务和告警。",
-        tasks: [],
-        alerts: [],
-        checkins: [],
-        plan: "请打开计划详情查看。"
-    }));
+    livePatients = (users || []).map((user) => {
+        const doctors = Array.isArray(user.doctors) ? user.doctors : [];
+        return {
+            id: String(user.id),
+            code: user.userCode,
+            name: user.displayName,
+            doctors,
+            age: "-",
+            gender: "-",
+            doctor: doctors.length ? doctors.map((doctor) => doctor.displayName || doctor.userCode).join("、") : "未绑定医生",
+            family: "已绑定家属",
+            risk: "NORMAL",
+            riskLabel: "状态待同步",
+            lastUpdate: "刚刚",
+            taskDone: 0,
+            taskTotal: 0,
+            water: "查看任务详情",
+            safety: "查看状态详情",
+            summary: "后端已返回患者绑定关系，点击患者可查看最新状态、任务和告警。",
+            tasks: [],
+            alerts: [],
+            checkins: [],
+            plan: "请打开计划详情查看。"
+        };
+    });
     if (livePatients.length && !livePatients.some((patient) => patient.id === selectedPatientId)) {
         selectedPatientId = livePatients[0].id;
     }
@@ -384,7 +388,9 @@ function renderBindPage(config) {
             </form>
             <div class="card">
                 <h2 class="card-title">患者预览</h2>
-                ${patientPreview(patients[0])}
+                <div data-patient-preview>
+                    <div class="empty-state">绑定患者后，这里会显示真实患者信息、绑定医生和最近状态。</div>
+                </div>
                 <div class="message info" data-bind-result>提交后由后端确认 token、身份和关系白名单。</div>
             </div>
         </section>
@@ -393,6 +399,7 @@ function renderBindPage(config) {
         event.preventDefault();
         submitBinding(config);
     });
+    refreshBindPreview(bindKind(config));
 }
 
 async function submitBinding(config) {
@@ -405,7 +412,7 @@ async function submitBinding(config) {
             return;
         }
         try {
-            const kind = config.role === "医生" ? "clinical" : "family";
+            const kind = bindKind(config);
             await careApi(`${apiPrefix(kind)}/bindings`, {
                 method: "POST",
                 body: JSON.stringify({
@@ -415,10 +422,36 @@ async function submitBinding(config) {
             });
             result.className = "message success";
             result.textContent = `${config.role}绑定成功：患者 ${code}，关系为 ${relation}。`;
+            await refreshBindPreview(kind, code);
         } catch (error) {
             result.className = "message info";
             result.textContent = error.message;
         }
+}
+
+function bindKind(config) {
+    return config.role === "医生" ? "clinical" : "family";
+}
+
+async function refreshBindPreview(kind, preferredPatientCode = "") {
+    const preview = document.querySelector("[data-patient-preview]");
+    if (!preview || !token()) return;
+    try {
+        await loadPatients(kind);
+        let patient = selectedPatient();
+        if (preferredPatientCode) {
+            patient = livePatients.find((item) => item.code === preferredPatientCode) || patient;
+            if (patient) selectedPatientId = patient.id;
+        }
+        if (!patient) {
+            preview.innerHTML = `<div class="empty-state">当前还没有绑定患者。</div>`;
+            return;
+        }
+        await hydratePatientStatus(patient, kind).catch(() => patient);
+        preview.innerHTML = patientPreview(patient);
+    } catch (error) {
+        preview.innerHTML = `<div class="message info">暂时无法同步患者预览：${escapeHtml(error.message)}</div>`;
+    }
 }
 
 async function renderCaregiverStatus() {
@@ -705,17 +738,115 @@ function patientTabs() {
 }
 
 async function contactDoctor(patient) {
-    const message = window.prompt("请输入要发送给医生的内容：", `${patient.name}当前状态需要医生关注。`);
-    if (!message || !message.trim()) return;
+    const resultPayload = await showDoctorContactDialog(patient);
+    if (!resultPayload) return;
     try {
         const result = await careApi(`/api/care/v1/family/patients/${patient.id}/doctor-messages`, {
             method: "POST",
-            body: JSON.stringify({ message })
+            body: JSON.stringify({
+                doctorUserIds: resultPayload.doctorUserIds,
+                message: resultPayload.message
+            })
         });
-        window.alert(`已提交给医生。即时送达 ${result.deliveredCount || 0} 位，排队 ${result.queuedCount || 0} 位。`);
+        window.alert(`已提交给 ${resultPayload.doctorNames.join("、")}。即时送达 ${result.deliveredCount || 0} 位，排队 ${result.queuedCount || 0} 位。`);
     } catch (error) {
         window.alert(error.message);
     }
+}
+
+async function loadContactDoctors(patient) {
+    let doctors = Array.isArray(patient.doctors) ? patient.doctors : [];
+    try {
+        doctors = await careApi(`/api/care/v1/family/patients/${patient.id}/doctors`);
+        patient.doctors = doctors;
+        patient.doctor = doctors.length ? doctors.map((doctor) => doctor.displayName || doctor.userCode).join("、") : "未绑定医生";
+    } catch (error) {
+        if (!doctors.length) {
+            window.alert(error.message);
+            return null;
+        }
+    }
+    if (!doctors.length) {
+        window.alert("当前患者还没有绑定可联系的医生。");
+        return null;
+    }
+    return doctors;
+}
+
+async function showDoctorContactDialog(patient) {
+    const doctors = await loadContactDoctors(patient);
+    if (!doctors) return null;
+    return new Promise((resolve) => {
+        const overlay = document.createElement("div");
+        overlay.className = "modal-backdrop";
+        overlay.innerHTML = `
+            <div class="modal" role="dialog" aria-modal="true" aria-labelledby="doctor-contact-title">
+                <div class="modal-header">
+                    <div>
+                        <div class="eyebrow">联系医生</div>
+                        <h2 id="doctor-contact-title">选择接收医生</h2>
+                    </div>
+                    <button class="button icon-button" type="button" data-modal-close aria-label="关闭">×</button>
+                </div>
+                <div class="field">
+                    <label>已绑定当前患者的医生</label>
+                    <div class="doctor-picker">
+                        ${doctors.map((doctor, index) => `
+                            <label class="doctor-option">
+                                <input type="checkbox" value="${doctor.id}" ${doctors.length === 1 || index === 0 ? "checked" : ""}>
+                                <span>
+                                    <strong>${escapeHtml(doctor.displayName || "医生")}</strong>
+                                    <small>${escapeHtml(doctor.userCode || `#${doctor.id}`)}</small>
+                                </span>
+                            </label>
+                        `).join("")}
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="doctor-contact-message">发送内容</label>
+                    <textarea id="doctor-contact-message" rows="5">${escapeHtml(`${patient.name}当前状态需要医生关注。`)}</textarea>
+                </div>
+                <div class="toolbar modal-actions">
+                    <button class="button" type="button" data-modal-close>取消</button>
+                    <button class="button primary" type="button" data-modal-send>发送</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        const close = (value) => {
+            overlay.remove();
+            resolve(value);
+        };
+        overlay.querySelectorAll("[data-modal-close]").forEach((button) => {
+            button.addEventListener("click", () => close(null));
+        });
+        overlay.addEventListener("click", (event) => {
+            if (event.target === overlay) {
+                close(null);
+            }
+        });
+        overlay.querySelector("[data-modal-send]").addEventListener("click", () => {
+            const selectedIds = Array.from(overlay.querySelectorAll(".doctor-option input:checked"))
+                .map((input) => Number(input.value))
+                .filter((value) => Number.isFinite(value));
+            const message = overlay.querySelector("#doctor-contact-message").value.trim();
+            if (!selectedIds.length) {
+                window.alert("请至少选择一位医生。");
+                return;
+            }
+            if (!message) {
+                window.alert("请填写要发送给医生的内容。");
+                return;
+            }
+            const selectedDoctors = doctors.filter((doctor) => selectedIds.includes(Number(doctor.id)));
+            close({
+                doctorUserIds: selectedIds,
+                doctorNames: selectedDoctors.map((doctor) => doctor.displayName || doctor.userCode || "医生"),
+                message
+            });
+        });
+        overlay.querySelector("#doctor-contact-message").focus();
+    });
 }
 
 function bindPatientTabs(callback) {
@@ -803,13 +934,17 @@ function patientProfile(patient) {
 }
 
 function patientPreview(patient) {
+    const patientCode = patient.code || patient.id;
+    const meta = [patientCode, patient.age && patient.age !== "-" ? `${patient.age} 岁` : "", patient.doctor]
+        .filter(Boolean)
+        .join(" · ");
     return `
         <div class="list" style="margin-bottom: 14px;">
             <div class="list-item">
                 <div class="list-row">
                     <div>
                         <div class="item-title">${patient.name}</div>
-                        <div class="item-meta">${patient.id} · ${patient.age} 岁 · ${patient.doctor}</div>
+                        <div class="item-meta">${meta}</div>
                     </div>
                     <span class="badge ${riskClass(patient.risk)}">${patient.riskLabel}</span>
                 </div>

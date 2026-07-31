@@ -1,5 +1,7 @@
 package com.example.spring.wechat.care.service;
 
+import com.example.spring.wechat.care.exception.CareErrorCode;
+import com.example.spring.wechat.care.exception.CareException;
 import com.example.spring.wechat.care.model.CareActor;
 import com.example.spring.wechat.care.model.MedicalNotification;
 import com.example.spring.wechat.care.model.MedicalRole;
@@ -15,8 +17,10 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Set;
 
 @Service
 public class CareDoctorContactService {
@@ -40,16 +44,34 @@ public class CareDoctorContactService {
         this.clock = clock;
     }
 
-    public ContactResult contactDoctor(CareActor sender, long patientUserId, String message) {
+    public ContactResult contactDoctor(CareActor sender, long patientUserId, List<Long> doctorUserIds, String message) {
         authorizationService.require(sender, patientUserId, CarePermissions.STATUS_READ,
                 "CONTACT_DOCTOR", "PATIENT", Long.toString(patientUserId), java.util.UUID.randomUUID().toString());
         MedicalUser patient = identityRepository.findUserById(patientUserId)
-                .orElseThrow(() -> new com.example.spring.wechat.care.exception.CareException(
-                        com.example.spring.wechat.care.exception.CareErrorCode.NOT_FOUND, "患者账号不存在"));
+                .orElseThrow(() -> new CareException(CareErrorCode.NOT_FOUND, "患者账号不存在"));
         List<NotificationTarget> doctors = identityRepository.listNotificationTargetsByRole(
                 patientUserId, MedicalRole.DOCTOR, CarePermissions.PLAN_MANAGE, clock.instant());
         if (doctors.isEmpty()) {
             return new ContactResult(0, 0, "当前患者还没有绑定可联系的医生。");
+        }
+        Set<Long> contactableDoctorIds = new LinkedHashSet<>();
+        for (NotificationTarget doctor : doctors) {
+            contactableDoctorIds.add(doctor.userId());
+        }
+        Set<Long> selectedIds = doctorUserIds == null ? new LinkedHashSet<>() : new LinkedHashSet<>(doctorUserIds);
+        selectedIds.remove(null);
+        if (selectedIds.isEmpty() && contactableDoctorIds.size() > 1) {
+            throw new CareException(CareErrorCode.INVALID_ARGUMENT, "当前患者绑定了多个医生，请选择具体医生。");
+        }
+        List<NotificationTarget> targets = selectedIds.isEmpty()
+                ? doctors
+                : doctors.stream().filter(doctor -> selectedIds.contains(doctor.userId())).toList();
+        Set<Long> targetDoctorIds = new LinkedHashSet<>();
+        for (NotificationTarget target : targets) {
+            targetDoctorIds.add(target.userId());
+        }
+        if (targets.isEmpty() || (!selectedIds.isEmpty() && !targetDoctorIds.containsAll(selectedIds))) {
+            throw new CareException(CareErrorCode.FORBIDDEN, "选择的医生没有绑定该患者，或当前不可联系。");
         }
         String content = """
                 【家属联系医生】
@@ -60,7 +82,7 @@ public class CareDoctorContactService {
                 clean(message, "请医生关注患者当前情况。")).strip();
         int delivered = 0;
         int queued = 0;
-        for (NotificationTarget doctor : doctors) {
+        for (NotificationTarget doctor : targets) {
             if (trySendNow(doctor, content)) {
                 delivered++;
             } else {

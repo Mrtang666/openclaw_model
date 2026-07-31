@@ -419,6 +419,93 @@ h1 {
     color: var(--muted);
 }
 
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: grid;
+    place-items: center;
+    padding: 18px;
+    background: rgba(24, 36, 43, .42);
+}
+
+.modal {
+    width: min(100%, 560px);
+    max-height: calc(100vh - 36px);
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    box-shadow: 0 24px 70px rgba(24, 36, 43, .22);
+    padding: 18px;
+}
+
+.modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 16px;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 22px;
+}
+
+.icon-button {
+    min-width: 40px;
+    padding: 6px 10px;
+    font-size: 22px;
+    line-height: 1;
+}
+
+.doctor-picker {
+    display: grid;
+    gap: 8px;
+    max-height: 220px;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-soft);
+    padding: 8px;
+}
+
+.doctor-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: #ffffff;
+    cursor: pointer;
+    padding: 10px;
+}
+
+.doctor-option:has(input:checked) {
+    border-color: var(--primary);
+    background: var(--green-soft);
+}
+
+.doctor-option input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--primary);
+}
+
+.doctor-option span {
+    display: grid;
+    gap: 3px;
+}
+
+.doctor-option small {
+    color: var(--muted);
+}
+
+.modal-actions {
+    margin-top: 14px;
+}
+
 .single-message {
     min-height: calc(100vh - 68px);
     display: grid;

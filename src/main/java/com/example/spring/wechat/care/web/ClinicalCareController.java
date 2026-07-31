@@ -73,7 +73,7 @@ public class ClinicalCareController {
     public CareApiResponse<?> patients(@RequestHeader("Authorization") String authorization,
             @RequestHeader(value = "X-Request-Id", required = false) String requestId) {
         Context context = context(authorization, requestId);
-        return CareApiResponse.success(reportService.listPatients(context.actor()), context.traceId());
+        return CareApiResponse.success(reportService.listPatientOverviews(context.actor()), context.traceId());
     }
 
     @GetMapping("/patients/{patientId}/status")

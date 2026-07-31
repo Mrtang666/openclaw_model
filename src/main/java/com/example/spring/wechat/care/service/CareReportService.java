@@ -4,6 +4,7 @@ import com.example.spring.wechat.care.exception.CareErrorCode;
 import com.example.spring.wechat.care.exception.CareException;
 import com.example.spring.wechat.care.model.CareActor;
 import com.example.spring.wechat.care.model.DailyCheckIn;
+import com.example.spring.wechat.care.model.MedicalRole;
 import com.example.spring.wechat.care.model.MedicalUser;
 import com.example.spring.wechat.care.model.PatientStatusSummary;
 import com.example.spring.wechat.care.repository.CareRecordRepository;
@@ -13,6 +14,7 @@ import com.example.spring.wechat.reminder.config.ReminderProperties;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -45,6 +47,34 @@ public class CareReportService {
         return authorizationService.listAccessiblePatients(actor, CarePermissions.STATUS_READ);
     }
 
+    public List<PatientOverview> listPatientOverviews(CareActor actor) {
+        Instant now = clock.instant();
+        return listPatients(actor).stream()
+                .map(patient -> new PatientOverview(
+                        patient.id(),
+                        patient.userCode(),
+                        patient.displayName(),
+                        patient.status(),
+                        patient.version(),
+                        patient.lastActiveAt(),
+                        identityRepository.listRelatedViewersByRoleAndPermission(
+                                        patient.id(), MedicalRole.DOCTOR, CarePermissions.PLAN_MANAGE, now)
+                                .stream()
+                                .map(RelatedUserOverview::from)
+                                .toList()))
+                .toList();
+    }
+
+    public List<RelatedUserOverview> listContactableDoctors(CareActor actor, long patientUserId, String requestId) {
+        authorizationService.require(actor, patientUserId, CarePermissions.STATUS_READ,
+                "LIST_CONTACTABLE_DOCTORS", "PATIENT", Long.toString(patientUserId), requestId);
+        return identityRepository.listRelatedViewersByRoleAndPermission(
+                        patientUserId, MedicalRole.DOCTOR, CarePermissions.PLAN_MANAGE, clock.instant())
+                .stream()
+                .map(RelatedUserOverview::from)
+                .toList();
+    }
+
     public PatientStatusSummary status(CareActor actor, long patientUserId, String requestId) {
         authorizationService.require(actor, patientUserId, CarePermissions.STATUS_READ,
                 "READ_STATUS", "PATIENT_STATUS", null, requestId);
@@ -58,5 +88,25 @@ public class CareReportService {
                 recordRepository.countPendingMemories(patientUserId),
                 checkIns.stream().map(DailyCheckIn::submittedAt).max(java.time.Instant::compareTo).orElse(null),
                 clock.instant());
+    }
+
+    public record PatientOverview(
+            long id,
+            String userCode,
+            String displayName,
+            String status,
+            long version,
+            Instant lastActiveAt,
+            List<RelatedUserOverview> doctors) {
+    }
+
+    public record RelatedUserOverview(
+            long id,
+            String userCode,
+            String displayName) {
+
+        private static RelatedUserOverview from(MedicalUser user) {
+            return new RelatedUserOverview(user.id(), user.userCode(), user.displayName());
+        }
     }
 }

@@ -21,6 +21,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
 import java.time.Instant;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 @RestController
@@ -65,7 +67,17 @@ public class FamilyCareController {
             @RequestBody DoctorMessageRequest request) {
         Context context = context(authorization, requestId);
         return CareApiResponse.success(
-                doctorContactService.contactDoctor(context.actor(), patientId, request.message()),
+                doctorContactService.contactDoctor(context.actor(), patientId, request.selectedDoctorUserIds(), request.message()),
+                context.traceId());
+    }
+
+    @GetMapping("/patients/{patientId}/doctors")
+    public CareApiResponse<?> doctors(@RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable long patientId) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(
+                reportService.listContactableDoctors(context.actor(), patientId, context.traceId()),
                 context.traceId());
     }
 
@@ -84,7 +96,7 @@ public class FamilyCareController {
     public CareApiResponse<?> patients(@RequestHeader("Authorization") String authorization,
             @RequestHeader(value = "X-Request-Id", required = false) String requestId) {
         Context context = context(authorization, requestId);
-        return CareApiResponse.success(reportService.listPatients(context.actor()), context.traceId());
+        return CareApiResponse.success(reportService.listPatientOverviews(context.actor()), context.traceId());
     }
 
     @GetMapping("/patients/{patientId}/status")
@@ -264,6 +276,16 @@ public class FamilyCareController {
             Instant expiresAt) {
     }
 
-    public record DoctorMessageRequest(String message) {
+    public record DoctorMessageRequest(Long doctorUserId, List<Long> doctorUserIds, String message) {
+        List<Long> selectedDoctorUserIds() {
+            LinkedHashSet<Long> ids = new LinkedHashSet<>();
+            if (doctorUserId != null) {
+                ids.add(doctorUserId);
+            }
+            if (doctorUserIds != null) {
+                ids.addAll(doctorUserIds);
+            }
+            return List.copyOf(ids);
+        }
     }
 }

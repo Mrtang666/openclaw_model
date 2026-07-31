@@ -43,6 +43,7 @@ public class XhsConsoleController {
     private final XhsReportScheduleService reportScheduleService;
     private final XhsScheduledReportDeliveryService reportDeliveryService;
     private final XhsReportArtifactService reportArtifactService;
+    private final XhsAuthorizationService authorizationService;
 
     public XhsConsoleController(
             XhsConsoleService service,
@@ -52,7 +53,8 @@ public class XhsConsoleController {
             XhsConsoleUrlService consoleUrlService,
             XhsReportScheduleService reportScheduleService,
             XhsScheduledReportDeliveryService reportDeliveryService,
-            XhsReportArtifactService reportArtifactService) {
+            XhsReportArtifactService reportArtifactService,
+            XhsAuthorizationService authorizationService) {
         this.service = service;
         this.healthService = healthService;
         this.postLinkService = postLinkService;
@@ -61,11 +63,45 @@ public class XhsConsoleController {
         this.reportScheduleService = reportScheduleService;
         this.reportDeliveryService = reportDeliveryService;
         this.reportArtifactService = reportArtifactService;
+        this.authorizationService = authorizationService;
     }
 
     @GetMapping("/health")
     public XhsConsoleHealth health() {
         return healthService.health();
+    }
+
+    @GetMapping("/authorization")
+    public XhsAuthorizationService.AuthorizationStatus authorization() {
+        return authorizationService.status();
+    }
+
+    @PostMapping("/authorization/validate")
+    public XhsAuthorizationService.AuthorizationStatus validateAuthorization() {
+        return authorizationService.validate();
+    }
+
+    @PostMapping("/authorization/cookie")
+    public XhsAuthorizationService.AuthorizationStatus updateAuthorizationCookie(
+            @RequestBody AuthorizationCookieRequest request) {
+        return authorizationService.updateCookie(request.cookie());
+    }
+
+    @PostMapping("/authorization/qr")
+    @ResponseStatus(HttpStatus.CREATED)
+    public XhsAuthorizationService.QrAuthorization startAuthorizationQr() {
+        return authorizationService.startQr();
+    }
+
+    @GetMapping("/authorization/qr/{sessionId}")
+    public XhsAuthorizationService.QrAuthorization pollAuthorizationQr(@PathVariable String sessionId) {
+        return authorizationService.pollQr(sessionId);
+    }
+
+    @DeleteMapping("/authorization")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void clearAuthorization() {
+        authorizationService.clear();
     }
 
     @GetMapping("/overview")
@@ -283,6 +319,9 @@ public class XhsConsoleController {
 
     public record AlertRuleRequest(String projectKey, String name, int minimumRiskScore,
                                    int cooldownMinutes, boolean enabled) {
+    }
+
+    public record AuthorizationCookieRequest(String cookie) {
     }
 
     private ResponseEntity<String> linkError(HttpStatus status, String message) {

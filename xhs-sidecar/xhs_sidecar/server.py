@@ -4,6 +4,7 @@ import argparse
 import hmac
 import json
 import logging
+import os
 import signal
 import threading
 from http import HTTPStatus
@@ -11,10 +12,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from .authorization import (
+    AuthorizationManager,
+    AuthorizationUnavailableError,
+    EncryptedAuthorizationStore,
+)
 from .config import SidecarConfig
 from .jobs import JobCapacityError, JobManager
 from .models import LinkResolveRequest, SearchRequest
 from .runner import CollectionRunner, SubprocessSpiderRunner
+from .security import redact
 from .store import FileJobStore
 
 
@@ -28,8 +35,9 @@ def create_server(
     manager: JobManager,
     api_key: str = "",
     link_resolver: CollectionRunner | None = None,
+    authorization: AuthorizationManager | None = None,
 ) -> ThreadingHTTPServer:
-    handler = _handler(manager, api_key, link_resolver)
+    handler = _handler(manager, api_key, link_resolver, authorization)
     server = ThreadingHTTPServer((host, port), handler)
     server.daemon_threads = True
     return server
@@ -39,6 +47,7 @@ def _handler(
     manager: JobManager,
     api_key: str,
     link_resolver: CollectionRunner | None,
+    authorization: AuthorizationManager | None,
 ) -> type[BaseHTTPRequestHandler]:
     class SidecarHandler(BaseHTTPRequestHandler):
         server_version = "OpenClawXhsSidecar/0.1"
@@ -50,6 +59,24 @@ def _handler(
                 self._json(HTTPStatus.OK, {"status": "UP"})
                 return
             if not self._authorized(api_key):
+                return
+            if path == "/internal/v1/auth/status":
+                if authorization is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, _error("UNAVAILABLE", "authorization manager is unavailable"))
+                else:
+                    self._json(HTTPStatus.OK, authorization.status())
+                return
+            qr_prefix = "/internal/v1/auth/qr/"
+            if path.startswith(qr_prefix):
+                if authorization is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, _error("UNAVAILABLE", "authorization manager is unavailable"))
+                    return
+                try:
+                    self._json(HTTPStatus.OK, authorization.poll_qr(unquote(path[len(qr_prefix):]).strip()))
+                except ValueError as exception:
+                    self._json(HTTPStatus.NOT_FOUND, _error("QR_SESSION_NOT_FOUND", str(exception)))
+                except RuntimeError as exception:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, _error("QR_LOGIN_FAILED", redact(exception)))
                 return
             if not path.startswith(JOB_PATH_PREFIX):
                 self._json(HTTPStatus.NOT_FOUND, _error("NOT_FOUND", "endpoint not found"))
@@ -65,15 +92,53 @@ def _handler(
             path = urlsplit(self.path).path
             if not self._authorized(api_key):
                 return
+            if path == "/internal/v1/auth/cookie":
+                if authorization is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, _error("UNAVAILABLE", "authorization manager is unavailable"))
+                    return
+                try:
+                    body = self._request_json()
+                    if not isinstance(body, dict):
+                        raise ValueError("request body must be a JSON object")
+                    self._json(HTTPStatus.OK, authorization.update_cookie(str(body.get("cookie", ""))))
+                except (ValueError, json.JSONDecodeError) as exception:
+                    self._json(HTTPStatus.BAD_REQUEST, _error("INVALID_COOKIE", str(exception)))
+                except RuntimeError as exception:
+                    self._json(HTTPStatus.UNPROCESSABLE_ENTITY, _error("AUTH_INVALID", redact(exception)))
+                return
+            if path == "/internal/v1/auth/validate":
+                if authorization is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, _error("UNAVAILABLE", "authorization manager is unavailable"))
+                    return
+                try:
+                    self._json(HTTPStatus.OK, authorization.validate())
+                except AuthorizationUnavailableError as exception:
+                    self._json(HTTPStatus.LOCKED, _error("AUTH_MISSING", str(exception)))
+                except RuntimeError as exception:
+                    self._json(HTTPStatus.UNPROCESSABLE_ENTITY, _error("AUTH_INVALID", redact(exception)))
+                return
+            if path == "/internal/v1/auth/qr":
+                if authorization is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, _error("UNAVAILABLE", "authorization manager is unavailable"))
+                    return
+                try:
+                    self._json(HTTPStatus.CREATED, authorization.start_qr())
+                except RuntimeError as exception:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, _error("QR_START_FAILED", redact(exception)))
+                return
             if path == "/internal/v1/links/resolve":
                 if link_resolver is None:
                     self._json(HTTPStatus.SERVICE_UNAVAILABLE, _error("UNAVAILABLE", "link resolver is unavailable"))
                     return
                 try:
+                    if authorization is not None:
+                        authorization.cookie_for_worker()
                     request = LinkResolveRequest.parse(self._request_json())
                     self._json(HTTPStatus.OK, link_resolver.resolve_link(request))
                 except (ValueError, json.JSONDecodeError) as exception:
                     self._json(HTTPStatus.BAD_REQUEST, _error("INVALID_REQUEST", str(exception)))
+                except AuthorizationUnavailableError as exception:
+                    self._json(HTTPStatus.LOCKED, _error("AUTH_REQUIRED", str(exception)))
                 except RuntimeError as exception:
                     self._json(HTTPStatus.SERVICE_UNAVAILABLE, _error("UNAVAILABLE", str(exception)))
                 return
@@ -81,6 +146,8 @@ def _handler(
                 self._json(HTTPStatus.NOT_FOUND, _error("NOT_FOUND", "endpoint not found"))
                 return
             try:
+                if authorization is not None:
+                    authorization.cookie_for_worker()
                 request = SearchRequest.parse(self._request_json())
                 job = manager.submit(request)
             except JobCapacityError as exception:
@@ -89,10 +156,28 @@ def _handler(
             except (ValueError, json.JSONDecodeError) as exception:
                 self._json(HTTPStatus.BAD_REQUEST, _error("INVALID_REQUEST", str(exception)))
                 return
+            except AuthorizationUnavailableError as exception:
+                self._json(HTTPStatus.LOCKED, _error("AUTH_REQUIRED", str(exception)))
+                return
             except RuntimeError as exception:
                 self._json(HTTPStatus.SERVICE_UNAVAILABLE, _error("UNAVAILABLE", str(exception)))
                 return
             self._json(HTTPStatus.ACCEPTED, {"jobId": job.job_id, "status": "SUBMITTED"})
+
+        def do_DELETE(self) -> None:
+            path = urlsplit(self.path).path
+            if not self._authorized(api_key):
+                return
+            if path != "/internal/v1/auth":
+                self._json(HTTPStatus.NOT_FOUND, _error("NOT_FOUND", "endpoint not found"))
+                return
+            if authorization is None:
+                self._json(HTTPStatus.SERVICE_UNAVAILABLE, _error("UNAVAILABLE", "authorization manager is unavailable"))
+                return
+            authorization.clear()
+            self.send_response(HTTPStatus.NO_CONTENT.value)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
 
         def _request_json(self) -> Any:
             try:
@@ -149,14 +234,21 @@ def main() -> int:
         return 0
 
     store = FileJobStore(config.data_dir, config.job_retention_hours)
-    runner = SubprocessSpiderRunner(config)
+    authorization = AuthorizationManager(
+        EncryptedAuthorizationStore(config.auth_state_file, config.auth_encryption_key),
+        config.spider_root,
+        config.auth_failure_threshold,
+        config.auth_qr_ttl_seconds,
+        os.getenv("XHS_COOKIES", "") or os.getenv("COOKIES", ""),
+    )
+    runner = SubprocessSpiderRunner(config, authorization)
     manager = JobManager(
         store,
         runner,
         config.worker_threads,
         config.max_queued_jobs,
     )
-    server = create_server(config.host, config.port, manager, config.api_key, runner)
+    server = create_server(config.host, config.port, manager, config.api_key, runner, authorization)
     stop = threading.Event()
 
     def request_shutdown(*_: object) -> None:

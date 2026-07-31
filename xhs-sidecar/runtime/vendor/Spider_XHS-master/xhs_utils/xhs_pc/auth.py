@@ -200,6 +200,7 @@ class XHSPcAuth(XHSAuth):
         self.login_source = self._bind_platform(self.login_source)
         if self.http_client is None:
             self.http_client = PcHttpClient(proxies=self.proxies)
+        self.http_client.cookie_sink = self.update_cookies
         cookie_map = parse_cookie_kv(self.cookies)
         self._cookie_store = (
             HostCookieStore.from_state(self.host_cookie_state)

@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 from typing import Any, Protocol
 
+from .authorization import AuthorizationManager
 from .config import SidecarConfig
 from .models import LinkResolveRequest, SearchRequest
 from .security import redact
@@ -20,8 +21,9 @@ class CollectionRunner(Protocol):
 
 
 class SubprocessSpiderRunner:
-    def __init__(self, config: SidecarConfig):
+    def __init__(self, config: SidecarConfig, authorization: AuthorizationManager | None = None):
         self._config = config
+        self._authorization = authorization
         self._module_root = Path(__file__).resolve().parents[1]
         self._lock = threading.Lock()
         self._processes: set[subprocess.Popen[str]] = set()
@@ -97,6 +99,8 @@ class SubprocessSpiderRunner:
             value = json.loads(output_path.read_text(encoding="utf-8"))
             if not isinstance(value, dict):
                 raise RuntimeError("Spider_XHS worker result must be a JSON object")
+            if self._authorization is not None:
+                self._authorization.record_result(value)
             return value
 
     def close(self) -> None:
@@ -128,6 +132,11 @@ class SubprocessSpiderRunner:
             "XHS_AUTHOR_HASH_KEY",
         }
         environment = {key: value for key, value in os.environ.items() if key.upper() in allowed}
+        if self._authorization is not None:
+            environment["XHS_COOKIES"] = self._authorization.cookie_for_worker()
+            environment.pop("COOKIES", None)
+            environment["XHS_AUTH_STATE_FILE"] = str(self._config.auth_state_file)
+            environment["XHS_AUTH_ENCRYPTION_KEY"] = self._config.auth_encryption_key
         environment["XHS_AUTHOR_HASH_KEY"] = self._config.author_hash_key
         existing_python_path = os.getenv("PYTHONPATH", "").strip()
         environment["PYTHONPATH"] = str(self._module_root) + (

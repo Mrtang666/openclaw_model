@@ -617,8 +617,16 @@ public class FunctionCallingAgentLoop {
 
     private String rootMessage(Throwable exception) {
         Throwable current = exception;
+        String firstMeaningfulMessage = null;
         while (current.getCause() != null) {
+            String message = current.getMessage();
+            if (firstMeaningfulMessage == null && message != null && !message.isBlank()) {
+                firstMeaningfulMessage = message;
+            }
             current = current.getCause();
+        }
+        if (firstMeaningfulMessage != null) {
+            return firstMeaningfulMessage;
         }
         return current.getMessage() == null ? current.getClass().getSimpleName() : current.getMessage();
     }

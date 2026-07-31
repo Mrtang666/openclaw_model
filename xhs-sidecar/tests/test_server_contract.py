@@ -35,13 +35,43 @@ class FakeRunner:
         }
 
 
+class FakeAuthorization:
+    def __init__(self) -> None:
+        self.cleared = False
+
+    def status(self) -> dict:
+        return {"status": "VALID", "collectAllowed": True, "accountNickname": "测试账号"}
+
+    def cookie_for_worker(self) -> str:
+        return "a1=test; web_session=test"
+
+    def update_cookie(self, cookie: str) -> dict:
+        if "web_session=" not in cookie:
+            raise ValueError("Cookie 缺少必要字段：web_session")
+        return self.status()
+
+    def validate(self) -> dict:
+        return self.status()
+
+    def start_qr(self) -> dict:
+        return {"sessionId": "qr-1", "status": "SCAN_REQUIRED", "qrImage": "data:image/svg+xml;base64,test"}
+
+    def poll_qr(self, session_id: str) -> dict:
+        return {"sessionId": session_id, "status": "CONFIRM_REQUIRED", "message": "请确认登录"}
+
+    def clear(self) -> None:
+        self.cleared = True
+
 class ServerContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         store = FileJobStore(Path(self.temporary.name))
         self.manager = JobManager(store, FakeRunner(), worker_threads=1, max_queued_jobs=2)
         self.runner = FakeRunner()
-        self.server = create_server("127.0.0.1", 0, self.manager, "test-api-key", self.runner)
+        self.authorization = FakeAuthorization()
+        self.server = create_server(
+            "127.0.0.1", 0, self.manager, "test-api-key", self.runner, self.authorization
+        )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base_url = f"http://127.0.0.1:{self.server.server_port}"
@@ -98,6 +128,16 @@ class ServerContractTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "FOUND")
         self.assertIn("xsec_token=test", result["accessUrl"])
+
+    def test_exposes_sanitized_authorization_management_contract(self) -> None:
+        status = self._request("/internal/v1/auth/status")
+        qr = self._request("/internal/v1/auth/qr", method="POST")
+        polled = self._request("/internal/v1/auth/qr/qr-1")
+
+        self.assertEqual(status["status"], "VALID")
+        self.assertNotIn("cookie", json.dumps(status).lower())
+        self.assertEqual(qr["status"], "SCAN_REQUIRED")
+        self.assertEqual(polled["status"], "CONFIRM_REQUIRED")
 
     def _request(self, path: str, method: str = "GET", body: dict | None = None) -> dict:
         data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")

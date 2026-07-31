@@ -58,7 +58,9 @@ public class StreamableHttpMcpToolClient implements McpToolClient {
             log.info("MCP Streamable HTTP tools/call 完成，tool={}", toolName);
             return new McpCallResult(toolResponse.result(), firstNonBlank(toolResponse.sessionId(), sessionId));
         } catch (RestClientException exception) {
-            throw new WebToolException("MCP Streamable HTTP 调用失败", exception);
+            throw new WebToolException(
+                    "MCP endpoint 连接失败：" + endpoint + "。请确认 MCP 服务已启动并可访问。",
+                    exception);
         }
     }
 

@@ -1,5 +1,6 @@
 package com.example.spring.wechat.care.service;
 
+import com.example.spring.wechat.care.config.CareTaskProperties;
 import com.example.spring.wechat.care.exception.CareErrorCode;
 import com.example.spring.wechat.care.exception.CareException;
 import com.example.spring.wechat.care.model.CareActor;
@@ -125,7 +126,8 @@ class CarePlanServiceTests {
             CareTaskRepository tasks,
             CareAuthorizationService authorization) {
         return new CarePlanService(
-                plans, tasks, authorization, new ReminderProperties(null, null, "Asia/Shanghai"),
+                plans, tasks, new CareTaskProperties(true, 60_000, 100, 1, 1_440),
+                authorization, new ReminderProperties(null, null, "Asia/Shanghai"),
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }
 

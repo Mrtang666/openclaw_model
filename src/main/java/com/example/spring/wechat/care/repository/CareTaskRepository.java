@@ -51,13 +51,14 @@ public class CareTaskRepository {
             LocalDate scheduledFor,
             Instant dueAt,
             Instant now) {
+        Instant effectiveDueAt = dueAt.isBefore(now) ? now : dueAt;
         jdbc.update("""
                 INSERT IGNORE INTO medical_care_task_instances
                 (plan_id,plan_version_id,task_template_id,patient_user_id,scheduled_for,due_at,status,
                  idempotency_key,version,created_at,updated_at)
                 VALUES (?,?,?,?,?,?,'PENDING',?,0,?,?)
                 """, template.planId(), template.planVersionId(), template.id(), template.patientUserId(),
-                Date.valueOf(scheduledFor), timestamp(dueAt), instanceKey(template.id(), scheduledFor),
+                Date.valueOf(scheduledFor), timestamp(effectiveDueAt), instanceKey(template.id(), scheduledFor),
                 timestamp(now), timestamp(now));
     }
 

@@ -1,5 +1,6 @@
 package com.example.spring.wechat.care.service;
 
+import com.example.spring.wechat.care.config.CareTaskProperties;
 import com.example.spring.wechat.care.exception.CareErrorCode;
 import com.example.spring.wechat.care.exception.CareException;
 import com.example.spring.wechat.care.model.CareActor;
@@ -19,10 +20,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -32,6 +35,7 @@ public class CarePlanService {
 
     private final CarePlanRepository planRepository;
     private final CareTaskRepository taskRepository;
+    private final CareTaskProperties taskProperties;
     private final CareAuthorizationService authorizationService;
     private final ReminderProperties reminderProperties;
     private final Clock clock;
@@ -39,11 +43,13 @@ public class CarePlanService {
     public CarePlanService(
             CarePlanRepository planRepository,
             CareTaskRepository taskRepository,
+            CareTaskProperties taskProperties,
             CareAuthorizationService authorizationService,
             ReminderProperties reminderProperties,
             Clock clock) {
         this.planRepository = planRepository;
         this.taskRepository = taskRepository;
+        this.taskProperties = taskProperties;
         this.authorizationService = authorizationService;
         this.reminderProperties = reminderProperties;
         this.clock = clock;
@@ -135,10 +141,42 @@ public class CarePlanService {
         authorizationService.require(actor, plan.patientUserId(), CarePermissions.PLAN_REVIEW,
                 "ACTIVATE_CARE_PLAN", "CARE_PLAN", Long.toString(planId), requestId(command));
         requireCommand(command);
-        if (!planRepository.activate(planId, command.version(), clock.instant())) {
+        Instant now = clock.instant();
+        if (!planRepository.activate(planId, command.version(), now)) {
             throw conflict("计划尚未批准，或版本已经变化");
         }
-        return findPlan(planId);
+        CarePlanDetails activated = planRepository.findDetails(planId).orElseThrow();
+        materializeTasks(activated.tasks(), now);
+        return activated.plan();
+    }
+
+    private void materializeTasks(List<CareTaskTemplate> templates, Instant now) {
+        for (CareTaskTemplate template : templates) {
+            ZoneId zone = ZoneId.of(template.timezone());
+            LocalDate localToday = ZonedDateTime.ofInstant(now, zone).toLocalDate();
+            for (int day = 0; day <= taskProperties.generationHorizonDays(); day++) {
+                LocalDate date = localToday.plusDays(day);
+                if (!isScheduledFor(template, date)) {
+                    continue;
+                }
+                Instant dueAt = date.atTime(template.localTime()).atZone(zone).toInstant();
+                taskRepository.createInstanceIfAbsent(template, date, dueAt, now);
+            }
+        }
+    }
+
+    private boolean isScheduledFor(CareTaskTemplate template, LocalDate date) {
+        if (date.isBefore(template.startDate())
+                || (template.endDate() != null && date.isAfter(template.endDate()))) {
+            return false;
+        }
+        if (template.scheduleType() == CareTaskScheduleType.ONCE) {
+            return date.equals(template.scheduledDate());
+        }
+        if (template.scheduleType() == CareTaskScheduleType.WEEKLY) {
+            return DayOfWeek.of(template.dayOfWeek()) == date.getDayOfWeek();
+        }
+        return template.scheduleType() == CareTaskScheduleType.DAILY;
     }
 
     @Transactional

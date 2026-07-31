@@ -239,6 +239,23 @@ public class MedicalIdentityRepository {
     }
 
     @Transactional
+    public boolean revokeRelation(long patientUserId, long viewerUserId, MedicalRole role, Instant now) {
+        int changed = jdbc.update("""
+                UPDATE medical_patient_relations
+                SET status='REVOKED',version=version+1,updated_at=?
+                WHERE patient_user_id=? AND viewer_user_id=? AND relation_role=? AND status='ACTIVE'
+                """, timestamp(now), patientUserId, viewerUserId, role.name());
+        if (changed > 0) {
+            jdbc.update("""
+                    UPDATE medical_consents
+                    SET status='REVOKED',revoked_at=?,version=version+1,updated_at=?
+                    WHERE patient_user_id=? AND grantee_type='USER' AND grantee_id=? AND status='ACTIVE'
+                    """, timestamp(now), timestamp(now), patientUserId, viewerUserId);
+        }
+        return changed > 0;
+    }
+
+    @Transactional
     public PatientRelation grantRelation(
             long patientUserId,
             long viewerUserId,

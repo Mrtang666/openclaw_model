@@ -172,6 +172,15 @@ h1 {
     color: #ffffff;
 }
 
+.button.danger {
+    border-color: var(--red);
+    color: var(--red);
+}
+
+.button.danger:hover {
+    background: var(--red-soft);
+}
+
 .button.primary:hover { background: var(--primary-dark); }
 .button:hover { border-color: #b9c7ce; }
 
@@ -451,6 +460,11 @@ h1 {
 .modal-header h2 {
     margin: 0;
     font-size: 22px;
+}
+
+.modal .field,
+.modal .message {
+    margin-top: 14px;
 }
 
 .icon-button {

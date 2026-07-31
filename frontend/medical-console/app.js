@@ -489,15 +489,29 @@ async function renderCaregiverStatus() {
 
 async function renderDoctorSwitcher() {
     let notice = "";
+    let loadedRealPatients = false;
     try {
         await loadPatients("clinical");
+        loadedRealPatients = true;
+        if (!livePatients.length) {
+            root().innerHTML = `
+                ${header("医生工作台", "患者切换", "医生可以在多个患者之间快速切换，先看状态，再进入详情或处理告警。")}
+                <div class="empty-state">当前没有绑定患者。你可以通过医生绑定患者页面添加新的患者。</div>
+            `;
+            return;
+        }
         await hydratePatientStatus(selectedPatient(), "clinical");
     } catch (error) {
         notice = backendUnavailableMessage(error);
     }
+    if (loadedRealPatients && !livePatients.length) return;
     const patient = selectedPatient();
     root().innerHTML = `
-        ${header("医生工作台", "患者切换", "医生可以在多个患者之间快速切换，先看状态，再进入详情或处理告警。", `<a class="button primary" href="#/doctor/detail">查看详情</a>`)}
+        ${header("医生工作台", "患者切换", "医生可以在多个患者之间快速切换，先看状态，再进入详情或处理告警。", `
+            <button class="button" type="button" data-transfer-doctor>切换医生</button>
+            <button class="button danger" type="button" data-unbind-patient>解除绑定</button>
+            <a class="button primary" href="#/doctor/detail">查看详情</a>
+        `)}
         ${notice}
         ${patientTabs()}
         ${summaryGrid(patient)}
@@ -514,6 +528,7 @@ async function renderDoctorSwitcher() {
     `;
     bindSummaryJumps();
     bindPatientTabs(renderDoctorSwitcher);
+    bindDoctorPatientActions(patient);
 }
 
 async function renderDoctorDetail() {
@@ -846,6 +861,143 @@ async function showDoctorContactDialog(patient) {
             });
         });
         overlay.querySelector("#doctor-contact-message").focus();
+    });
+}
+
+function bindDoctorPatientActions(patient) {
+    const transferButton = document.querySelector("[data-transfer-doctor]");
+    const unbindButton = document.querySelector("[data-unbind-patient]");
+    if (transferButton) {
+        transferButton.addEventListener("click", () => transferPatientDoctor(patient));
+    }
+    if (unbindButton) {
+        unbindButton.addEventListener("click", () => unbindSelectedPatient(patient));
+    }
+}
+
+async function transferPatientDoctor(patient) {
+    const payload = await showDoctorTransferDialog(patient);
+    if (!payload) return;
+    try {
+        const result = await careApi(`/api/care/v1/clinical/patients/${patient.id}/doctor-transfer`, {
+            method: "POST",
+            body: JSON.stringify(payload)
+        });
+        window.alert(`已将患者 ${result.patientDisplayName || patient.name} 转移给 ${result.toDoctorName || payload.targetDoctorUserCode}。`);
+        selectedPatientId = "";
+        await renderDoctorSwitcher();
+    } catch (error) {
+        window.alert(error.message);
+    }
+}
+
+function showDoctorTransferDialog(patient) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement("div");
+        overlay.className = "modal-backdrop";
+        overlay.innerHTML = `
+            <div class="modal" role="dialog" aria-modal="true" aria-labelledby="doctor-transfer-title">
+                <div class="modal-header">
+                    <div>
+                        <div class="eyebrow">切换医生</div>
+                        <h2 id="doctor-transfer-title">转移 ${escapeHtml(patient.name)} 的负责医生</h2>
+                    </div>
+                    <button class="button icon-button" type="button" data-modal-close aria-label="关闭">×</button>
+                </div>
+                <div class="message warn">
+                    确认后，当前医生将解除与该患者的绑定；新医生会获得该患者的信息访问和方案管理权限。
+                </div>
+                <div class="field">
+                    <label for="target-doctor-code">新医生编号</label>
+                    <input id="target-doctor-code" placeholder="例如 DOC-12345678" autocomplete="off">
+                </div>
+                <div class="field">
+                    <label for="target-doctor-relation">关系说明</label>
+                    <input id="target-doctor-relation" value="转入医生" autocomplete="off">
+                </div>
+                <div class="toolbar modal-actions">
+                    <button class="button" type="button" data-modal-close>取消</button>
+                    <button class="button primary" type="button" data-modal-submit>确认转移</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        const close = (value) => {
+            overlay.remove();
+            resolve(value);
+        };
+        overlay.querySelectorAll("[data-modal-close]").forEach((button) => {
+            button.addEventListener("click", () => close(null));
+        });
+        overlay.addEventListener("click", (event) => {
+            if (event.target === overlay) close(null);
+        });
+        overlay.querySelector("[data-modal-submit]").addEventListener("click", () => {
+            const targetDoctorUserCode = overlay.querySelector("#target-doctor-code").value.trim();
+            const relationLabel = overlay.querySelector("#target-doctor-relation").value.trim();
+            if (!targetDoctorUserCode) {
+                window.alert("请填写新医生编号。");
+                return;
+            }
+            close({
+                targetDoctorUserCode,
+                relationLabel: relationLabel || "转入医生"
+            });
+        });
+        overlay.querySelector("#target-doctor-code").focus();
+    });
+}
+
+async function unbindSelectedPatient(patient) {
+    const confirmed = await showUnbindPatientDialog(patient);
+    if (!confirmed) return;
+    try {
+        await careApi(`/api/care/v1/clinical/patients/${patient.id}/unbind`, {
+            method: "POST"
+        });
+        window.alert(`已解除与患者 ${patient.name} 的绑定。`);
+        selectedPatientId = "";
+        await renderDoctorSwitcher();
+    } catch (error) {
+        window.alert(error.message);
+    }
+}
+
+function showUnbindPatientDialog(patient) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement("div");
+        overlay.className = "modal-backdrop";
+        overlay.innerHTML = `
+            <div class="modal" role="dialog" aria-modal="true" aria-labelledby="unbind-patient-title">
+                <div class="modal-header">
+                    <div>
+                        <div class="eyebrow">解除绑定</div>
+                        <h2 id="unbind-patient-title">确认解除患者绑定</h2>
+                    </div>
+                    <button class="button icon-button" type="button" data-modal-close aria-label="关闭">×</button>
+                </div>
+                <div class="message warn">
+                    你将解除与患者 ${escapeHtml(patient.name)}（${escapeHtml(patient.code || patient.id)}）的绑定。
+                    解除后，当前医生将不能继续查看该患者信息、处理告警或调整方案。
+                </div>
+                <div class="toolbar modal-actions">
+                    <button class="button" type="button" data-modal-close>取消</button>
+                    <button class="button danger" type="button" data-modal-confirm>确认解除</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        const close = (value) => {
+            overlay.remove();
+            resolve(value);
+        };
+        overlay.querySelectorAll("[data-modal-close]").forEach((button) => {
+            button.addEventListener("click", () => close(false));
+        });
+        overlay.addEventListener("click", (event) => {
+            if (event.target === overlay) close(false);
+        });
+        overlay.querySelector("[data-modal-confirm]").addEventListener("click", () => close(true));
     });
 }
 

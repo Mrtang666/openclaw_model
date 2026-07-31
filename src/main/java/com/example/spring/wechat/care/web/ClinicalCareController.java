@@ -69,6 +69,28 @@ public class ClinicalCareController {
                         request.expiresAt(), context.traceId())), context.traceId());
     }
 
+    @PostMapping("/patients/{patientId}/doctor-transfer")
+    public CareApiResponse<?> transferDoctor(@RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable long patientId,
+            @RequestBody DoctorTransferRequest request) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(authorizationService.transferDoctor(context.actor(), patientId,
+                new CareAuthorizationService.DoctorTransferCommand(
+                        request.targetDoctorUserCode(), request.relationLabel(), request.expiresAt(),
+                        context.traceId())), context.traceId());
+    }
+
+    @PostMapping("/patients/{patientId}/unbind")
+    public CareApiResponse<?> unbindPatient(@RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable long patientId) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(
+                authorizationService.unbindPatientForViewer(context.actor(), patientId, context.traceId()),
+                context.traceId());
+    }
+
     @GetMapping("/patients")
     public CareApiResponse<?> patients(@RequestHeader("Authorization") String authorization,
             @RequestHeader(value = "X-Request-Id", required = false) String requestId) {
@@ -337,6 +359,12 @@ public class ClinicalCareController {
             String patientUserCode,
             String relationLabel,
             Set<String> permissions,
+            Instant expiresAt) {
+    }
+
+    public record DoctorTransferRequest(
+            String targetDoctorUserCode,
+            String relationLabel,
             Instant expiresAt) {
     }
 

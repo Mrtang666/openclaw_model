@@ -128,6 +128,69 @@ public class CareAuthorizationService {
         return relation;
     }
 
+    @Transactional
+    public DoctorTransferResult transferDoctor(CareActor actor, long patientUserId, DoctorTransferCommand command) {
+        requireClinicalActor(actor);
+        if (command == null) {
+            throw new CareException(CareErrorCode.INVALID_ARGUMENT, "缺少医生转移参数");
+        }
+        require(actor, patientUserId, CarePermissions.PLAN_MANAGE,
+                "TRANSFER_DOCTOR", "PATIENT_RELATION", Long.toString(patientUserId), requestId(command.requestId()));
+        MedicalUser patient = identityRepository.findUserById(patientUserId)
+                .orElseThrow(() -> new CareException(CareErrorCode.NOT_FOUND, "患者账号不存在"));
+        MedicalUser targetDoctor = identityRepository.findUserByCode(clean(command.targetDoctorUserCode()))
+                .orElseThrow(() -> new CareException(CareErrorCode.NOT_FOUND, "没有找到目标医生账号"));
+        if (targetDoctor.id() == actor.userId()) {
+            throw new CareException(CareErrorCode.INVALID_ARGUMENT, "不能把患者转移给当前医生自己");
+        }
+        if (!identityRepository.hasActiveRole(targetDoctor.id(), MedicalRole.DOCTOR)) {
+            throw new CareException(CareErrorCode.INVALID_ARGUMENT, "目标账号不是有效医生身份");
+        }
+        Instant now = clock.instant();
+        PatientRelation newRelation = identityRepository.grantRelation(
+                patientUserId,
+                targetDoctor.id(),
+                MedicalRole.DOCTOR,
+                clean(command.relationLabel()).isBlank() ? "转入医生" : clean(command.relationLabel()),
+                defaultPermissions(MedicalRole.DOCTOR),
+                command.expiresAt(),
+                now);
+        boolean revoked = identityRepository.revokeRelation(patientUserId, actor.userId(), actor.role(), now);
+        if (!revoked) {
+            throw new CareException(CareErrorCode.CONFLICT, "当前医生与该患者没有可解除的绑定关系");
+        }
+        auditRepository.record(actor, patientUserId, "TRANSFER_DOCTOR", CarePermissions.PLAN_MANAGE,
+                "PATIENT_RELATION", Long.toString(newRelation.id()), "ALLOWED",
+                "患者从当前医生转移给目标医生", requestId(command.requestId()), now);
+        return new DoctorTransferResult(patient.id(), patient.userCode(), patient.displayName(),
+                actor.userId(), actor.displayName(), targetDoctor.id(), targetDoctor.userCode(),
+                targetDoctor.displayName(), newRelation.id());
+    }
+
+    @Transactional
+    public RelationUnbindResult unbindPatientForViewer(CareActor actor, long patientUserId, String requestId) {
+        requireClinicalActor(actor);
+        require(actor, patientUserId, CarePermissions.PLAN_MANAGE,
+                "UNBIND_PATIENT", "PATIENT_RELATION", Long.toString(patientUserId), requestId(requestId));
+        MedicalUser patient = identityRepository.findUserById(patientUserId)
+                .orElseThrow(() -> new CareException(CareErrorCode.NOT_FOUND, "患者账号不存在"));
+        Instant now = clock.instant();
+        boolean revoked = identityRepository.revokeRelation(patientUserId, actor.userId(), actor.role(), now);
+        if (!revoked) {
+            throw new CareException(CareErrorCode.CONFLICT, "当前医生与该患者没有可解除的绑定关系");
+        }
+        auditRepository.record(actor, patientUserId, "UNBIND_PATIENT", CarePermissions.PLAN_MANAGE,
+                "PATIENT_RELATION", Long.toString(patientUserId), "ALLOWED",
+                "医生主动解除患者绑定", requestId(requestId), now);
+        return new RelationUnbindResult(patient.id(), patient.userCode(), patient.displayName(), actor.userId());
+    }
+
+    private void requireClinicalActor(CareActor actor) {
+        if (actor == null || !actor.role().isClinical()) {
+            throw new CareException(CareErrorCode.FORBIDDEN, "只有医生/医护身份可以执行该操作");
+        }
+    }
+
     private Set<String> defaultPermissions(MedicalRole role) {
         if (role.isClinical()) return CarePermissions.ALL;
         if (role.isFamily()) return Set.of(
@@ -169,5 +232,31 @@ public class CareAuthorizationService {
             Set<String> permissions,
             Instant expiresAt,
             String requestId) {
+    }
+
+    public record DoctorTransferCommand(
+            String targetDoctorUserCode,
+            String relationLabel,
+            Instant expiresAt,
+            String requestId) {
+    }
+
+    public record DoctorTransferResult(
+            long patientUserId,
+            String patientUserCode,
+            String patientDisplayName,
+            long fromDoctorUserId,
+            String fromDoctorName,
+            long toDoctorUserId,
+            String toDoctorUserCode,
+            String toDoctorName,
+            long relationId) {
+    }
+
+    public record RelationUnbindResult(
+            long patientUserId,
+            String patientUserCode,
+            String patientDisplayName,
+            long unboundUserId) {
     }
 }

@@ -41,7 +41,7 @@ class CareTaskSchedulerTests {
     }
 
     @Test
-    void dueNotificationDoesNotExposeTaskTitleOrInstructions() {
+    void dueNotificationGoesOnlyToThePatientAndProvidesTextReplyActions() {
         CarePlanRepository plans = mock(CarePlanRepository.class);
         CareTaskRepository tasks = mock(CareTaskRepository.class);
         MedicalIdentityRepository identities = mock(MedicalIdentityRepository.class);
@@ -66,10 +66,47 @@ class CareTaskSchedulerTests {
         ArgumentCaptor<MedicalNotification> captor = ArgumentCaptor.forClass(MedicalNotification.class);
         verify(notifications).enqueue(captor.capture());
         assertThat(captor.getValue().content())
-                .doesNotContain("晚间服药")
-                .doesNotContain("某药物详细内容")
-                .contains("任务编号 #9");
+                .contains("晚间服药")
+                .contains("某药物详细内容")
+                .contains("完成 #9", "未完成 #9");
+        assertThat(captor.getValue().toUserId()).isEqualTo(1L);
         verify(tasks).markReminderEnqueued(9L, NOW);
+    }
+
+    @Test
+    void overdueTaskNotifiesFamilyAndCaregiverButNotAllTaskReaders() {
+        CarePlanRepository plans = mock(CarePlanRepository.class);
+        CareTaskRepository tasks = mock(CareTaskRepository.class);
+        MedicalIdentityRepository identities = mock(MedicalIdentityRepository.class);
+        CareNotificationRepository notifications = mock(CareNotificationRepository.class);
+        CareTaskInstance task = new CareTaskInstance(
+                9L, 8L, 7L, 6L, 1L, "晚间服药", "某药物详细内容", CareTaskType.MEDICATION_CONFIRMATION,
+                LocalDate.of(2026, 7, 29), NOW, CareTaskStatus.OVERDUE, null, null, "", 0,
+                NOW, null, "task-9", 0L, 30, 30, NOW, NOW);
+        when(plans.listActiveTemplates()).thenReturn(List.of());
+        when(tasks.findReadyForReminder(NOW, 100)).thenReturn(List.of());
+        when(tasks.findReadyToMarkOverdue(NOW, 100)).thenReturn(List.of());
+        when(tasks.findReadyForOverdueNotification(NOW, 100)).thenReturn(List.of(task));
+        when(identities.listNotificationTargetsByRole(
+                1L, com.example.spring.wechat.care.model.MedicalRole.FAMILY,
+                com.example.spring.wechat.care.service.CarePermissions.TASK_READ, NOW))
+                .thenReturn(List.of(new NotificationTarget(2L, "family", "family-user")));
+        when(identities.listNotificationTargetsByRole(
+                1L, com.example.spring.wechat.care.model.MedicalRole.CAREGIVER,
+                com.example.spring.wechat.care.service.CarePermissions.TASK_READ, NOW))
+                .thenReturn(List.of(new NotificationTarget(3L, "caregiver", "caregiver-user")));
+        CareTaskScheduler scheduler = new CareTaskScheduler(
+                plans, tasks, identities, notifications,
+                new CareTaskProperties(true, 60_000, 100, 1, 1_440),
+                new CareProperties("", 12, null), Clock.fixed(NOW, ZoneOffset.UTC));
+
+        scheduler.process(NOW);
+
+        ArgumentCaptor<MedicalNotification> captor = ArgumentCaptor.forClass(MedicalNotification.class);
+        verify(notifications, org.mockito.Mockito.times(2)).enqueue(captor.capture());
+        assertThat(captor.getAllValues()).extracting(MedicalNotification::toUserId).containsExactlyInAnyOrder(2L, 3L);
+        assertThat(captor.getAllValues()).allSatisfy(notification -> assertThat(notification.content()).contains("任务异常提醒"));
+        verify(tasks).markOverdueNotified(9L, NOW);
     }
 
     private CareTaskTemplate template(

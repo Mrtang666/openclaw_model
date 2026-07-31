@@ -8,13 +8,12 @@ import com.example.spring.wechat.care.model.MedicalNotification;
 import com.example.spring.wechat.care.model.MedicalRole;
 import com.example.spring.wechat.care.model.MedicalUser;
 import com.example.spring.wechat.care.model.NotificationTarget;
-import com.example.spring.wechat.care.model.PatientStatusSummary;
 import com.example.spring.wechat.care.repository.CareNotificationRepository;
 import com.example.spring.wechat.care.repository.MedicalIdentityRepository;
 import com.example.spring.wechat.care.service.CareAuthorizationService;
 import com.example.spring.wechat.care.service.CarePermissions;
 import com.example.spring.wechat.care.service.CarePlanDraftService;
-import com.example.spring.wechat.care.service.CareReportService;
+import com.example.spring.wechat.care.service.CareTaskInteractionService;
 import com.example.spring.wechat.care.service.CareWebLinkService;
 import com.example.spring.wechat.reminder.service.ReminderNotificationSender;
 import org.springframework.beans.factory.ObjectProvider;
@@ -36,9 +35,9 @@ public class CareAgentWechatTool implements WechatTool {
 
     private final MedicalIdentityRepository identityRepository;
     private final CareAuthorizationService authorizationService;
-    private final CareReportService reportService;
     private final CareWebLinkService linkService;
     private final CarePlanDraftService draftService;
+    private final CareTaskInteractionService taskInteractionService;
     private final CareNotificationRepository notificationRepository;
     private final ObjectProvider<ReminderNotificationSender> notificationSenderProvider;
     private final ChatService chatService;
@@ -48,18 +47,18 @@ public class CareAgentWechatTool implements WechatTool {
     public CareAgentWechatTool(
             MedicalIdentityRepository identityRepository,
             CareAuthorizationService authorizationService,
-            CareReportService reportService,
             CareWebLinkService linkService,
             CarePlanDraftService draftService,
+            CareTaskInteractionService taskInteractionService,
             CareNotificationRepository notificationRepository,
             ObjectProvider<ReminderNotificationSender> notificationSenderProvider,
             ChatService chatService,
             Clock clock) {
         this.identityRepository = identityRepository;
         this.authorizationService = authorizationService;
-        this.reportService = reportService;
         this.linkService = linkService;
         this.draftService = draftService;
+        this.taskInteractionService = taskInteractionService;
         this.notificationRepository = notificationRepository;
         this.notificationSenderProvider = notificationSenderProvider;
         this.chatService = chatService;
@@ -85,7 +84,7 @@ public class CareAgentWechatTool implements WechatTool {
     public List<WechatToolParameter> parameters() {
         return List.of(
                 WechatToolParameter.optionalEnum("action", "操作类型", List.of(
-                        "status", "bind", "contact_doctor", "doctor_workspace", "plan_draft", "plan_confirm", "whoami", "rename"), "status"),
+                        "status", "bind", "contact_doctor", "doctor_workspace", "plan_draft", "plan_confirm", "task_response", "whoami", "rename"), "status"),
                 WechatToolParameter.optionalString("patient_code", "患者编号，例如 PAT-12345678；绑定或指定患者时填写", "PAT-12345678"),
                 WechatToolParameter.optionalString("message", "联系医生时要发送的消息", "患者今天头晕，请医生关注。"),
                 WechatToolParameter.optionalString("plan_text", "医生输入的原始照护方案要求", "每天提醒患者喝水三次，晚上确认安全。"),
@@ -127,6 +126,7 @@ public class CareAgentWechatTool implements WechatTool {
                 case "doctor_workspace" -> WechatReply.text(doctorWorkspace(actor, request.sessionKey()));
                 case "plan_draft" -> WechatReply.text(planDraft(actor, request));
                 case "plan_confirm" -> WechatReply.text(confirmPlanDraft(actor, request.sessionKey()));
+                case "task_response" -> WechatReply.text(taskResponse(actor, request));
                 case "rename" -> WechatReply.text(renameNickname(actor, request));
                 default -> WechatReply.text(status(actor, request));
             };
@@ -169,19 +169,16 @@ public class CareAgentWechatTool implements WechatTool {
         if (actor.role() == MedicalRole.PATIENT) {
             CareWebLinkService.CareWebSessionLink link = linkService.createForWechatSession(
                     request.sessionKey(), "/caregiver/status");
-            PatientStatusSummary summary = reportService.status(actor, actor.userId(), traceId());
-            return statusText("你的今日照护状态", summary, link.url());
+            return link.url();
         }
 
         List<MedicalUser> patients = authorizationService.listAccessiblePatients(actor, CarePermissions.STATUS_READ);
         if (patients.isEmpty()) {
             return noBindingText(actor, request.sessionKey());
         }
-        MedicalUser patient = choosePatient(patients, request.argument("patient_code"), request.userText());
         String route = actor.role().isClinical() ? "/doctor/patients" : "/caregiver/status";
         CareWebLinkService.CareWebSessionLink link = linkService.createForWechatSession(request.sessionKey(), route);
-        PatientStatusSummary summary = reportService.status(actor, patient.id(), traceId());
-        return statusText(patient.displayName() + "的今日照护状态", summary, link.url());
+        return link.url();
     }
 
     private String bindLink(CareActor actor, String sessionKey) {
@@ -304,6 +301,10 @@ public class CareAgentWechatTool implements WechatTool {
                 + " 个微信通道已即时送达，其余会在通知通道可用后继续发送。";
     }
 
+    private String taskResponse(CareActor actor, WechatToolRequest request) {
+        return taskInteractionService.processReply(actor, request.userText(), traceId()).message();
+    }
+
     private String refinePlan(MedicalUser patient, String rawPlan) {
         String text = rawPlan == null ? "" : rawPlan.strip();
         if (text.isBlank()) {
@@ -343,19 +344,6 @@ public class CareAgentWechatTool implements WechatTool {
                 3, "", null, idempotency(type, patientUserId, target.userId(), content), now, now));
     }
 
-    private String statusText(String title, PatientStatusSummary summary, String url) {
-        return """
-                %s
-                打卡记录：近7天 %d 次
-                未处理告警：%d 个，紧急 %d 个
-                待确认记忆：%d 条
-
-                查看完整页面：
-                %s
-                """.formatted(title, summary.checkInCount(), summary.openAlertCount(), summary.urgentAlertCount(),
-                summary.pendingMemoryCount(), url).strip();
-    }
-
     private MedicalUser choosePatient(List<MedicalUser> patients, String patientCode, String userText) {
         String code = firstNonBlank(patientCode, extractPatientCode(userText));
         if (!code.isBlank()) {
@@ -374,6 +362,7 @@ public class CareAgentWechatTool implements WechatTool {
         if (!action.isBlank() && !"status".equals(action)) {
             return action;
         }
+        if (CareTaskInteractionService.looksLikeTaskReply(text)) return "task_response";
         if (containsAny(text, "我是谁", "当前身份", "身份")) return "whoami";
         if (containsAny(text, "绑定", "新增患者", "添加患者")) return "bind";
         if (containsAny(text, "联系医生", "通知医生", "告诉医生", "紧急", "发给医生")) return "contact_doctor";

@@ -134,6 +134,24 @@ public class CareTaskRepository {
         return changed == 1;
     }
 
+    /**
+     * A patient can explicitly report a task as incomplete before the automatic
+     * grace window expires. It is represented as OVERDUE so all existing task
+     * views and escalation queries show the same abnormal state.
+     */
+    @Transactional
+    public boolean reportIncomplete(long taskId, long actorUserId, long expectedVersion, String note, Instant now) {
+        int changed = jdbc.update("""
+                UPDATE medical_care_task_instances
+                SET status='OVERDUE',version=version+1,updated_at=?
+                WHERE id=? AND version=? AND status IN ('PENDING','OVERDUE')
+                """, timestamp(now), taskId, expectedVersion);
+        if (changed == 1) {
+            recordEvent(taskId, actorUserId, "REPORTED_INCOMPLETE", note, null, null, now);
+        }
+        return changed == 1;
+    }
+
     @Transactional
     public boolean postpone(
             long taskId,

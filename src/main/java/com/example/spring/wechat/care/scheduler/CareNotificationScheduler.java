@@ -1,6 +1,7 @@
 package com.example.spring.wechat.care.scheduler;
 
 import com.example.spring.wechat.care.config.CareProperties;
+import com.example.spring.wechat.care.model.MedicalRole;
 import com.example.spring.wechat.care.model.MedicalNotification;
 import com.example.spring.wechat.care.model.NotificationTarget;
 import com.example.spring.wechat.care.repository.CareNotificationRepository;
@@ -94,13 +95,29 @@ public class CareNotificationScheduler {
         LinkedHashMap<String, NotificationTarget> targets = new LinkedHashMap<>();
         addTarget(targets, new NotificationTarget(
                 notification.toUserId(), notification.connectionId(), notification.recipientId()));
-        List<NotificationTarget> latestTargets = identityRepository.listUserNotificationTargets(notification.toUserId());
+        List<NotificationTarget> latestTargets = latestTargets(notification);
         if (latestTargets != null) {
             for (NotificationTarget target : latestTargets) {
                 addTarget(targets, target);
             }
         }
         return List.copyOf(targets.values());
+    }
+
+    private List<NotificationTarget> latestTargets(MedicalNotification notification) {
+        if ("CARE_PLAN_TO_PATIENT".equals(notification.notificationType())
+                || "CARE_TASK_DUE".equals(notification.notificationType())) {
+            return identityRepository.listUserNotificationTargetsByRole(notification.toUserId(), MedicalRole.PATIENT);
+        }
+        if ("CARE_PLAN_TO_FAMILY".equals(notification.notificationType())) {
+            List<NotificationTarget> caregiverTargets = identityRepository.listUserNotificationTargetsByRole(
+                    notification.toUserId(), MedicalRole.CAREGIVER);
+            if (!caregiverTargets.isEmpty()) {
+                return caregiverTargets;
+            }
+            return identityRepository.listUserNotificationTargetsByRole(notification.toUserId(), MedicalRole.FAMILY);
+        }
+        return identityRepository.listUserNotificationTargets(notification.toUserId());
     }
 
     private void addTarget(LinkedHashMap<String, NotificationTarget> targets, NotificationTarget target) {

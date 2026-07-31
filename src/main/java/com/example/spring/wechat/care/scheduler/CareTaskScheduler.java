@@ -86,7 +86,8 @@ public class CareTaskScheduler {
 
     void enqueueDueReminders(Instant now) {
         for (CareTaskInstance task : taskRepository.findReadyForReminder(now, taskProperties.batchSize())) {
-            List<NotificationTarget> targets = identityRepository.listUserNotificationTargets(task.patientUserId());
+            List<NotificationTarget> targets = identityRepository.listUserNotificationTargetsByRole(
+                    task.patientUserId(), MedicalRole.PATIENT);
             for (NotificationTarget target : targets) {
                 enqueue(task, target, "CARE_TASK_DUE",
                         dueReminderContent(task), now);

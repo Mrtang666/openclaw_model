@@ -51,6 +51,8 @@ public class CarePlanDraftService {
     private final CarePlanTimeParser timeParser;
     private final CareNotificationRepository notificationRepository;
     private final ObjectProvider<ReminderNotificationSender> notificationSenderProvider;
+    private final CareSessionService sessionService;
+    private final CareWebLinkService linkService;
     private final Clock clock;
     private final Map<String, DraftRecord> drafts = new ConcurrentHashMap<>();
 
@@ -63,6 +65,8 @@ public class CarePlanDraftService {
             CarePlanTimeParser timeParser,
             CareNotificationRepository notificationRepository,
             ObjectProvider<ReminderNotificationSender> notificationSenderProvider,
+            CareSessionService sessionService,
+            CareWebLinkService linkService,
             Clock clock) {
         this.identityRepository = identityRepository;
         this.authorizationService = authorizationService;
@@ -72,6 +76,8 @@ public class CarePlanDraftService {
         this.timeParser = timeParser;
         this.notificationRepository = notificationRepository;
         this.notificationSenderProvider = notificationSenderProvider;
+        this.sessionService = sessionService;
+        this.linkService = linkService;
         this.clock = clock;
     }
 
@@ -124,11 +130,11 @@ public class CarePlanDraftService {
 
     public CarePlanDraftDetails update(CareActor actor, String draftId, DraftUpdateCommand command) {
         if (command == null) {
-            throw new CareException(CareErrorCode.INVALID_ARGUMENT, "缂哄皯鐓ф姢鑽夌淇敼鍙傛暟");
+            throw new CareException(CareErrorCode.INVALID_ARGUMENT, "缺少照护草稿修改参数");
         }
         DraftRecord record = requireDraft(actor, draftId, command.requestId());
         if (record.confirmedAt() != null) {
-            throw new CareException(CareErrorCode.CONFLICT, "鏂规宸茶繑鍥炴垨宸叉彁浜わ紝涓嶈兘鍐嶄慨鏀?");
+            throw new CareException(CareErrorCode.CONFLICT, "方案已经确认发送，不能再修改");
         }
         DraftRecord updated = record.withEdit(command.title(), command.editedPlan(), clock.instant());
         drafts.put(draftId, updated);
@@ -144,30 +150,36 @@ public class CarePlanDraftService {
         authorizationService.require(actor, record.patientUserId(), CarePermissions.PLAN_MANAGE,
                 "CONFIRM_PLAN_DRAFT", "CARE_PLAN_DRAFT", draftId, requestId);
         String finalText = firstNonBlank(record.editedPlan(), record.refinedPlan());
-        List<NotificationTarget> targets = identityRepository.listUserNotificationTargets(record.patientUserId());
-        if (targets.isEmpty()) {
-            throw new CareException(CareErrorCode.CONFLICT, "鎮ｈ€呭綋鍓嶆病鏈夊彲鐢ㄧ殑寰俊鎺ユ敹閫氶亾锛岃璁╂偅鑰呭厛閫氳繃 /patient 鐧诲綍銆?");
+        List<NotificationTarget> patientTargets = identityRepository.listUserNotificationTargetsByRole(
+                record.patientUserId(), MedicalRole.PATIENT);
+        if (patientTargets.isEmpty()) {
+            throw new CareException(CareErrorCode.CONFLICT, "患者本人还没有可用的微信登录通道，请先让患者使用 /patient 扫码登录");
         }
         CarePlan activePlan = publishPlan(actor, record, finalText, requestId);
-        String content = """
+        String patientContent = """
                 【新的照护方案】
                 医生：%s
                 患者：%s（%s）
-                计划编号：#%d
+                计划编号：%d
 
                 %s
                 """.formatted(actor.displayName(), record.patientName(), record.patientCode(), activePlan.id(), finalText).strip();
         int delivered = 0;
-        for (NotificationTarget target : targets) {
-            if (trySendNow(target, content)) {
+        int queued = 0;
+        for (NotificationTarget target : patientTargets) {
+            if (trySendNow(target, patientContent)) {
                 delivered++;
             } else {
-                enqueue(record.patientUserId(), target, "CARE_PLAN_TO_PATIENT", content);
+                enqueue(record.patientUserId(), target, "CARE_PLAN_TO_PATIENT", patientContent);
+                queued++;
             }
         }
+        NotifyCount familyNotifyCount = notifyFamilies(actor, record, activePlan, finalText);
+        delivered += familyNotifyCount.delivered();
+        queued += familyNotifyCount.queued();
         DraftRecord confirmed = record.confirmed(clock.instant(), finalText);
         drafts.put(draftId, confirmed);
-        return new DraftSendResult(toDetails(confirmed), delivered, Math.max(0, targets.size() - delivered));
+        return new DraftSendResult(toDetails(confirmed), delivered, queued);
     }
 
     private CarePlan publishPlan(CareActor actor, DraftRecord record, String finalText, String requestId) {
@@ -199,6 +211,74 @@ public class CarePlanDraftService {
             materializeTasks(details.tasks());
         }
         return plan;
+    }
+
+    private NotifyCount notifyFamilies(CareActor actor, DraftRecord record, CarePlan plan, String finalText) {
+        Instant now = clock.instant();
+        List<NotificationTarget> familyTargets = new ArrayList<>();
+        for (MedicalRole role : List.of(MedicalRole.CAREGIVER, MedicalRole.FAMILY)) {
+            familyTargets.addAll(identityRepository.listNotificationTargetsByRole(
+                    record.patientUserId(), role, CarePermissions.STATUS_READ, now));
+        }
+        familyTargets = deduplicateTargets(familyTargets);
+        int delivered = 0;
+        int queued = 0;
+        for (NotificationTarget target : familyTargets) {
+            String content = familyContent(actor, record, plan, finalText, target);
+            if (trySendNow(target, content)) {
+                delivered++;
+            } else {
+                enqueue(record.patientUserId(), target, "CARE_PLAN_TO_FAMILY", content);
+                queued++;
+            }
+        }
+        return new NotifyCount(delivered, queued);
+    }
+
+    private List<NotificationTarget> deduplicateTargets(List<NotificationTarget> targets) {
+        Set<String> seen = new LinkedHashSet<>();
+        List<NotificationTarget> unique = new ArrayList<>();
+        for (NotificationTarget target : targets) {
+            if (target == null) {
+                continue;
+            }
+            String key = target.userId() + "|" + target.connectionId() + "|" + target.recipientId();
+            if (seen.add(key)) {
+                unique.add(target);
+            }
+        }
+        return unique;
+    }
+
+    private String familyContent(
+            CareActor actor,
+            DraftRecord record,
+            CarePlan plan,
+            String finalText,
+            NotificationTarget target) {
+        String statusUrl = familyStatusUrl(target.userId(), record.id());
+        String preview = limit(finalText, 180);
+        return """
+                【患者照护方案已更新】
+                医生：%s
+                患者：%s（%s）
+                计划编号：%d
+
+                摘要：%s
+
+                查看患者今日任务和状态：
+                %s
+                """.formatted(actor.displayName(), record.patientName(), record.patientCode(),
+                plan.id(), preview, statusUrl).strip();
+    }
+
+    private String familyStatusUrl(long familyUserId, String draftId) {
+        MedicalRole role = identityRepository.hasActiveRole(familyUserId, MedicalRole.CAREGIVER)
+                ? MedicalRole.CAREGIVER : MedicalRole.FAMILY;
+        MedicalUser family = identityRepository.findUserById(familyUserId)
+                .orElseThrow(() -> new CareException(CareErrorCode.NOT_FOUND, "家属用户不存在"));
+        CareSessionService.IssuedSession session = sessionService.issue(family, role, clock.instant());
+        return linkService.url("/caregiver/status", session.accessToken(), role, Map.of("sourceDraftId", draftId));
     }
 
     private void materializeTasks(List<CareTaskTemplate> templates) {
@@ -492,6 +572,11 @@ public class CarePlanDraftService {
         return value == null ? "" : value.strip();
     }
 
+    private String limit(String value, int max) {
+        String text = clean(value);
+        return text.length() <= max ? text : text.substring(0, max) + "...";
+    }
+
     private boolean containsAny(String text, String... needles) {
         if (text == null || text.isBlank()) {
             return false;
@@ -574,5 +659,8 @@ public class CarePlanDraftService {
     }
 
     public record DraftSendResult(CarePlanDraftDetails draft, int deliveredCount, int queuedCount) {
+    }
+
+    private record NotifyCount(int delivered, int queued) {
     }
 }

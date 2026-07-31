@@ -178,6 +178,16 @@ public class MedicalIdentityRepository {
                 """, USER_MAPPER, clean(sessionKey)).stream().findFirst();
     }
 
+    public Optional<MedicalUser> findUserBySessionKeyAndRole(String sessionKey, MedicalRole role) {
+        return jdbc.query("""
+                SELECT u.* FROM medical_users u
+                JOIN medical_user_wechat_bindings b ON b.user_id = u.id
+                JOIN medical_user_roles r ON r.user_id = u.id AND r.role_code = ? AND r.status = 'ACTIVE'
+                WHERE b.latest_session_key = ? AND b.status = 'ACTIVE' AND u.status = 'ACTIVE'
+                ORDER BY b.last_seen_at DESC, b.id DESC
+                """, USER_MAPPER, role.name(), clean(sessionKey)).stream().findFirst();
+    }
+
     public Optional<MedicalRole> findCurrentRoleBySessionKey(String sessionKey) {
         return jdbc.query("""
                 SELECT s.requested_role
@@ -385,6 +395,18 @@ public class MedicalIdentityRepository {
                 """, (rs, rowNum) -> new NotificationTarget(
                         rs.getLong("user_id"), rs.getString("connection_id"), rs.getString("from_user_id")),
                 userId);
+    }
+
+    public List<NotificationTarget> listUserNotificationTargetsByRole(long userId, MedicalRole role) {
+        return jdbc.query("""
+                SELECT b.user_id,b.connection_id,b.from_user_id
+                FROM medical_user_wechat_bindings b
+                JOIN medical_user_roles r ON r.user_id=b.user_id AND r.role_code=? AND r.status='ACTIVE'
+                WHERE b.user_id=? AND b.status='ACTIVE'
+                ORDER BY b.last_seen_at DESC,b.id DESC
+                """, (rs, rowNum) -> new NotificationTarget(
+                        rs.getLong("user_id"), rs.getString("connection_id"), rs.getString("from_user_id")),
+                role.name(), userId);
     }
 
     private Optional<PatientRelation> findRelation(long relationId) {

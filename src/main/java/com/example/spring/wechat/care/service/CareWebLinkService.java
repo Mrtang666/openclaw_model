@@ -49,10 +49,17 @@ public class CareWebLinkService {
     }
 
     public CareWebSessionLink createForWechatSession(String sessionKey, String route, Map<String, String> extraParams) {
-        MedicalUser user = identityRepository.findUserBySessionKey(sessionKey)
-                .orElseThrow(() -> new CareException(CareErrorCode.UNAUTHORIZED, "当前微信账号尚未完成医疗身份登录"));
-        MedicalRole role = identityRepository.findCurrentRoleBySessionKey(sessionKey)
-                .orElseGet(() -> firstActiveRole(user.id()));
+        MedicalRole role = identityRepository.findCurrentRoleBySessionKey(sessionKey).orElse(null);
+        MedicalUser user = role == null
+                ? identityRepository.findUserBySessionKey(sessionKey)
+                        .orElseThrow(() -> new CareException(
+                                CareErrorCode.UNAUTHORIZED, "当前微信账号尚未完成医疗身份登录"))
+                : identityRepository.findUserBySessionKeyAndRole(sessionKey, role)
+                        .orElseThrow(() -> new CareException(
+                                CareErrorCode.UNAUTHORIZED, "当前微信账号尚未完成医疗身份登录"));
+        if (role == null) {
+            role = firstActiveRole(user.id());
+        }
         CareSessionService.IssuedSession session = sessionService.issue(user, role, clock.instant());
         return new CareWebSessionLink(url(route, session.accessToken(), role, extraParams), session.actor());
     }

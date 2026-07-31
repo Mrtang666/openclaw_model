@@ -12,6 +12,8 @@ import org.springframework.stereotype.Service;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 @Service
@@ -47,11 +49,11 @@ public class CareTaskService {
         LocalDate today = LocalDate.now(clock.withZone(
                 java.time.ZoneId.of(reminderProperties.defaultTimezone())));
         LocalDate start = from == null ? today : from;
-        LocalDate end = to == null ? start.plusDays(6) : to;
+        LocalDate end = to == null ? start : to;
         if (start.isAfter(end) || end.isAfter(start.plusDays(31))) {
             throw new CareException(CareErrorCode.INVALID_ARGUMENT, "任务查询范围无效或超过 31 天");
         }
-        return repository.listByPatient(patientUserId, start, end);
+        return deduplicate(repository.listByPatient(patientUserId, start, end));
     }
 
     public CareTaskInstance complete(CareActor actor, long taskId, ActionCommand command) {
@@ -100,6 +102,39 @@ public class CareTaskService {
 
     private CareException conflict() {
         return new CareException(CareErrorCode.CONFLICT, "任务状态已经变化，请刷新后重试");
+    }
+
+    private List<CareTaskInstance> deduplicate(List<CareTaskInstance> tasks) {
+        LinkedHashMap<String, CareTaskInstance> selected = new LinkedHashMap<>();
+        for (CareTaskInstance task : tasks) {
+            String key = task.scheduledFor() + "|"
+                    + dueMinute(task.dueAt()) + "|"
+                    + task.taskType() + "|"
+                    + cleanKey(task.title());
+            CareTaskInstance existing = selected.get(key);
+            if (existing == null || taskPriority(task) < taskPriority(existing)) {
+                selected.put(key, task);
+            }
+        }
+        return List.copyOf(selected.values());
+    }
+
+    private int taskPriority(CareTaskInstance task) {
+        return switch (task.status()) {
+            case OVERDUE -> 0;
+            case PENDING -> 1;
+            case COMPLETED -> 2;
+            case SKIPPED -> 3;
+            case CANCELLED -> 4;
+        };
+    }
+
+    private String cleanKey(String value) {
+        return value == null ? "" : value.strip().replaceAll("\\s+", " ");
+    }
+
+    private String dueMinute(Instant value) {
+        return value == null ? "" : value.truncatedTo(ChronoUnit.MINUTES).toString();
     }
 
     public record ActionCommand(long version, String note, String requestId) {

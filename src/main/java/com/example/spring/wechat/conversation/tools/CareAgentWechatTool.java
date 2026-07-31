@@ -108,15 +108,19 @@ public class CareAgentWechatTool implements WechatTool {
     @Override
     public WechatReply execute(WechatToolRequest request) {
         try {
-            MedicalUser user = identityRepository.findUserBySessionKey(request.sessionKey()).orElse(null);
+            MedicalRole role = identityRepository.findCurrentRoleBySessionKey(request.sessionKey()).orElse(null);
+            MedicalUser user = role == null
+                    ? identityRepository.findUserBySessionKey(request.sessionKey()).orElse(null)
+                    : identityRepository.findUserBySessionKeyAndRole(request.sessionKey(), role).orElse(null);
             if (user == null) {
                 return WechatReply.text("""
                         当前微信账号还没有医疗身份。
                         请先在命令行使用 /patient、/caregiver 或 /doctor 生成二维码并扫码登录，然后再发送一条消息完成身份绑定。
                         """.strip());
             }
-            MedicalRole role = identityRepository.findCurrentRoleBySessionKey(request.sessionKey())
-                    .orElseGet(() -> firstRole(user.id()));
+            if (role == null) {
+                role = firstRole(user.id());
+            }
             CareActor actor = new CareActor(user.id(), user.userCode(), user.displayName(), role);
             String action = resolveAction(request, role);
             return switch (action) {

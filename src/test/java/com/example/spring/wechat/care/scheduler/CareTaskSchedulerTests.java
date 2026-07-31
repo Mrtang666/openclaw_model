@@ -8,6 +8,7 @@ import com.example.spring.wechat.care.model.CareTaskStatus;
 import com.example.spring.wechat.care.model.CareTaskTemplate;
 import com.example.spring.wechat.care.model.CareTaskType;
 import com.example.spring.wechat.care.model.MedicalNotification;
+import com.example.spring.wechat.care.model.MedicalRole;
 import com.example.spring.wechat.care.model.NotificationTarget;
 import com.example.spring.wechat.care.repository.CareNotificationRepository;
 import com.example.spring.wechat.care.repository.CarePlanRepository;
@@ -53,7 +54,7 @@ class CareTaskSchedulerTests {
                 null, null, "task-9", 0L, 30, 90, NOW, NOW);
         when(plans.listActiveTemplates()).thenReturn(List.of());
         when(tasks.findReadyForReminder(NOW, 100)).thenReturn(List.of(task));
-        when(identities.listUserNotificationTargets(1L))
+        when(identities.listUserNotificationTargetsByRole(1L, MedicalRole.PATIENT))
                 .thenReturn(List.of(new NotificationTarget(1L, "connection", "recipient")));
         when(tasks.findReadyToMarkOverdue(NOW, 100)).thenReturn(List.of());
         when(tasks.findReadyForOverdueNotification(NOW, 100)).thenReturn(List.of());
@@ -86,7 +87,7 @@ class CareTaskSchedulerTests {
                 null, null, "task-9", 0L, 30, 90, NOW, NOW);
         when(plans.listActiveTemplates()).thenReturn(List.of());
         when(tasks.findReadyForReminder(NOW, 100)).thenReturn(List.of(task));
-        when(identities.listUserNotificationTargets(1L)).thenReturn(List.of());
+        when(identities.listUserNotificationTargetsByRole(1L, MedicalRole.PATIENT)).thenReturn(List.of());
         when(tasks.findReadyToMarkOverdue(NOW, 100)).thenReturn(List.of());
         when(tasks.findReadyForOverdueNotification(NOW, 100)).thenReturn(List.of());
         CareTaskScheduler scheduler = new CareTaskScheduler(

@@ -119,9 +119,12 @@ function root() {
 }
 
 function currentRouteInfo() {
-    const hash = location.hash.replace(/^#/, "") || "/bind/caregiver";
-    const [path, query = ""] = hash.split("?");
-    const params = new URLSearchParams(query);
+    const params = new URLSearchParams(location.search);
+    const hash = location.hash.replace(/^#/, "");
+    const [hashPath = "", hashQuery = ""] = hash.split("?");
+    const hashParams = new URLSearchParams(hashQuery);
+    hashParams.forEach((value, key) => params.set(key, value));
+    const path = hashPath || params.get("view") || "/bind/caregiver";
     const token = params.get("token");
     const role = params.get("role");
     if (token) localStorage.setItem("care_access_token", token);
@@ -554,7 +557,7 @@ async function renderCaregiverStatus() {
         <section class="grid two">
             <div class="card">
                 <h2 class="card-title">任务与打卡</h2>
-                ${taskList(patient, { interactive: true })}
+                ${taskList(patient, { interactive: true, showTime: true })}
             </div>
             <div class="card">
                 <h2 class="card-title">异常与建议</h2>
@@ -1225,7 +1228,7 @@ function patientPreview(patient) {
     `;
 }
 
-function taskList(patient, { interactive = false, showDetail = !interactive } = {}) {
+function taskList(patient, { interactive = false, showDetail = !interactive, showTime = false } = {}) {
     if (!patient.tasks.length) return `<div class="empty-state">当前没有任务。</div>`;
     return `
         <div class="task-list">
@@ -1235,6 +1238,8 @@ function taskList(patient, { interactive = false, showDetail = !interactive } = 
                 const inactive = ["CANCELLED", "SKIPPED"].includes(statusCode);
                 const canComplete = interactive && task.id && !completed && !inactive;
                 const badgeClass = completed ? "green" : inactive ? "blue" : "amber";
+                const dueAt = task.dueAt ? new Date(task.dueAt) : null;
+                const dueLabel = dueAt && !Number.isNaN(dueAt.getTime()) ? dueAt.toLocaleString() : "";
                 return `
                 <article class="task-item ${taskStatusClass(statusCode)}">
                     <div class="task-leading">
@@ -1252,6 +1257,7 @@ function taskList(patient, { interactive = false, showDetail = !interactive } = 
                             <h3 class="task-heading">${escapeHtml(task.title)}</h3>
                             <span class="badge ${badgeClass}">${escapeHtml(task.status)}</span>
                         </div>
+                        ${showTime && dueLabel ? `<div class="item-meta">执行时间：${escapeHtml(dueLabel)}</div>` : ""}
                         ${showDetail ? `<div class="item-meta">${escapeHtml(task.detail)}</div>` : ""}
                     </div>
                 </article>

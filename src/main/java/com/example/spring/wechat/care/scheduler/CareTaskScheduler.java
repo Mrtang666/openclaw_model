@@ -92,7 +92,8 @@ public class CareTaskScheduler {
 
     void enqueueDueReminders(Instant now) {
         for (CareTaskInstance task : taskRepository.findReadyForReminder(now, taskProperties.batchSize())) {
-            List<NotificationTarget> targets = identityRepository.listUserNotificationTargets(task.patientUserId());
+            List<NotificationTarget> targets = identityRepository.listUserNotificationTargetsByRole(
+                    task.patientUserId(), MedicalRole.PATIENT);
             if (targets.isEmpty()) {
                 log.warn("照护任务暂未入队：患者没有可用微信通道，taskId={}, patientUserId={}",
                         task.id(), task.patientUserId());

@@ -3,6 +3,7 @@ package com.example.spring.wechat.care.scheduler;
 import com.example.spring.wechat.care.config.CareProperties;
 import com.example.spring.wechat.care.model.MedicalNotification;
 import com.example.spring.wechat.care.repository.CareNotificationRepository;
+import com.example.spring.wechat.care.repository.MedicalIdentityRepository;
 import com.example.spring.wechat.reminder.service.ReminderNotificationSender;
 import org.junit.jupiter.api.Test;
 
@@ -22,6 +23,7 @@ class CareNotificationSchedulerTests {
     @Test
     void failedDeliveryReturnsNotificationToPendingForRetry() {
         CareNotificationRepository repository = mock(CareNotificationRepository.class);
+        MedicalIdentityRepository identityRepository = mock(MedicalIdentityRepository.class);
         ReminderNotificationSender sender = mock(ReminderNotificationSender.class);
         Instant now = Instant.parse("2026-07-29T10:00:00Z");
         MedicalNotification notification = new MedicalNotification(
@@ -30,12 +32,13 @@ class CareNotificationSchedulerTests {
         when(repository.findDueIds(now, 20)).thenReturn(List.of(7L));
         when(repository.claim(7L, now)).thenReturn(true);
         when(repository.findById(7L)).thenReturn(Optional.of(notification));
+        when(identityRepository.listUserNotificationTargets(2L)).thenReturn(List.of());
         doThrow(new IllegalStateException("send failed"))
                 .when(sender).sendText("connection", "recipient", "请查看告警");
         CareProperties properties = new CareProperties("", 12,
                 new CareProperties.Notification(true, 15_000, 20, 3, 60, 300));
         CareNotificationScheduler scheduler = new CareNotificationScheduler(
-                repository, sender, properties, Clock.fixed(now, ZoneOffset.UTC));
+                repository, identityRepository, sender, properties, Clock.fixed(now, ZoneOffset.UTC));
 
         scheduler.processDue(now);
 

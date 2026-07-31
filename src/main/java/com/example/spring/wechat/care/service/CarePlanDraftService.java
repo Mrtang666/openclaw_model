@@ -48,6 +48,7 @@ public class CarePlanDraftService {
     private final CarePlanService planService;
     private final CareTaskRepository taskRepository;
     private final CareTaskProperties taskProperties;
+    private final CarePlanTimeParser timeParser;
     private final CareNotificationRepository notificationRepository;
     private final ObjectProvider<ReminderNotificationSender> notificationSenderProvider;
     private final Clock clock;
@@ -59,6 +60,7 @@ public class CarePlanDraftService {
             CarePlanService planService,
             CareTaskRepository taskRepository,
             CareTaskProperties taskProperties,
+            CarePlanTimeParser timeParser,
             CareNotificationRepository notificationRepository,
             ObjectProvider<ReminderNotificationSender> notificationSenderProvider,
             Clock clock) {
@@ -67,6 +69,7 @@ public class CarePlanDraftService {
         this.planService = planService;
         this.taskRepository = taskRepository;
         this.taskProperties = taskProperties;
+        this.timeParser = timeParser;
         this.notificationRepository = notificationRepository;
         this.notificationSenderProvider = notificationSenderProvider;
         this.clock = clock;
@@ -253,54 +256,110 @@ public class CarePlanDraftService {
         if (containsAny(source, "安全确认", "确认安全", "安全打卡", "打卡")) {
             addSafetyTasks(tasks, source);
         }
-        if (containsAny(source, "散步")) {
-            addDailyTask(tasks, "REHABILITATION", "散步提醒", "按医生确认方案完成散步或活动。", LocalTime.of(16, 0), 60, 180);
+        if (containsAny(source, "散步", "康复", "训练", "锻炼", "活动")) {
+            addRehabilitationTasks(tasks, source);
+        }
+        if (containsAny(source, "早餐", "午餐", "晚餐", "饮食", "进食")) {
+            addMealTasks(tasks, source);
+        }
+        if (containsAny(source, "认知训练", "记忆训练", "益智")) {
+            addCognitiveTasks(tasks, source);
+        }
+        if (containsAny(source, "睡眠", "入睡", "起床")) {
+            addSleepTasks(tasks, source);
         }
         if (tasks.isEmpty()) {
-            addDailyTask(tasks, "CUSTOM", "照护任务", source, LocalTime.of(9, 0), 60, 180);
+            for (LocalTime time : timeParser.resolveDailyTimes(source, LocalTime.of(9, 0))) {
+                addDailyTask(tasks, "CUSTOM", "照护任务 " + time, source, time, 30, 30);
+            }
         }
         return List.copyOf(tasks);
     }
 
     private void addHydrationTasks(List<CarePlanService.TaskCommand> tasks, String source) {
-        String instructions = "喝水提醒。医生方案要求：" + frequencyText(source, "喝水", "饮水");
-        if (containsAny(source, "每半小时", "每 30", "每30", "半小时")) {
+        String scoped = relevantText(source, "喝水", "饮水");
+        String instructions = "喝水提醒。医生方案要求：" + frequencyText(scoped, "喝水", "饮水");
+        List<LocalTime> explicit = timeParser.extractTimePoints(scoped);
+        if (explicit.isEmpty() && containsAny(scoped, "每半小时", "每 30", "每30", "半小时")) {
             for (LocalTime time : List.of(
                     LocalTime.of(8, 0), LocalTime.of(8, 30), LocalTime.of(10, 0),
                     LocalTime.of(12, 0), LocalTime.of(14, 0), LocalTime.of(16, 0),
                     LocalTime.of(18, 0), LocalTime.of(20, 0))) {
-                addDailyTask(tasks, "HYDRATION", "喝水提醒 " + time, instructions, time, 30, 120);
+                addDailyTask(tasks, "HYDRATION", "喝水提醒 " + time, instructions, time, 30, 30);
             }
             return;
         }
-        addDailyTask(tasks, "HYDRATION", "喝水提醒", instructions, LocalTime.of(10, 0), 60, 180);
+        for (LocalTime time : timeParser.resolveDailyTimes(scoped, LocalTime.of(10, 0))) {
+            addDailyTask(tasks, "HYDRATION", "喝水提醒 " + time, instructions, time, 30, 30);
+        }
     }
 
     private void addMedicationTasks(List<CarePlanService.TaskCommand> tasks, String source) {
-        String instructions = "服药确认。请按医生确认的药物、剂量和注意事项执行。医生方案要求：" + frequencyText(source, "服药", "吃药");
-        boolean morning = containsAny(source, "早上", "早晨", "上午");
-        boolean noon = containsAny(source, "中午", "午间");
-        boolean evening = containsAny(source, "晚上", "晚间", "睡前");
-        if (!morning && !noon && !evening) {
-            morning = true;
-        }
-        if (morning) addDailyTask(tasks, "MEDICATION_CONFIRMATION", "早间服药确认", instructions, LocalTime.of(8, 0), 60, 180);
-        if (noon) addDailyTask(tasks, "MEDICATION_CONFIRMATION", "午间服药确认", instructions, LocalTime.of(12, 0), 60, 180);
-        if (evening) addDailyTask(tasks, "MEDICATION_CONFIRMATION", "晚间服药确认", instructions, LocalTime.of(20, 0), 60, 180);
-    }
-
-    private void addSafetyTasks(List<CarePlanService.TaskCommand> tasks, String source) {
-        String instructions = "安全确认打卡。医生方案要求：" + frequencyText(source, "安全确认", "确认安全", "打卡");
-        if (containsAny(source, "每2个小时", "每两个小时", "每 2 个小时", "每2小时", "每 2 小时")) {
-            for (LocalTime time : List.of(
-                    LocalTime.of(8, 0), LocalTime.of(10, 0), LocalTime.of(12, 0),
-                    LocalTime.of(14, 0), LocalTime.of(16, 0), LocalTime.of(18, 0),
-                    LocalTime.of(20, 0))) {
-                addDailyTask(tasks, "DAILY_CHECKIN", "安全确认 " + time, instructions, time, 30, 90);
+        String scoped = relevantText(source, "服药", "吃药");
+        String instructions = "服药确认。请按医生确认的药物、剂量和注意事项执行。医生方案要求："
+                + frequencyText(scoped, "服药", "吃药");
+        List<LocalTime> explicit = timeParser.extractTimePoints(scoped);
+        if (!explicit.isEmpty()) {
+            for (LocalTime time : explicit) {
+                addDailyTask(tasks, "MEDICATION_CONFIRMATION", "服药确认 " + time, instructions, time, 30, 30);
             }
             return;
         }
-        addDailyTask(tasks, "DAILY_CHECKIN", "安全确认", instructions, LocalTime.of(9, 0), 60, 120);
+        boolean morning = containsAny(scoped, "早上", "早晨", "上午");
+        boolean noon = containsAny(scoped, "中午", "午间");
+        boolean evening = containsAny(scoped, "晚上", "晚间", "睡前");
+        if (!morning && !noon && !evening) {
+            morning = true;
+        }
+        if (morning) addDailyTask(tasks, "MEDICATION_CONFIRMATION", "早间服药确认", instructions, LocalTime.of(8, 0), 30, 30);
+        if (noon) addDailyTask(tasks, "MEDICATION_CONFIRMATION", "午间服药确认", instructions, LocalTime.of(12, 0), 30, 30);
+        if (evening) addDailyTask(tasks, "MEDICATION_CONFIRMATION", "晚间服药确认", instructions, LocalTime.of(20, 0), 30, 30);
+    }
+
+    private void addSafetyTasks(List<CarePlanService.TaskCommand> tasks, String source) {
+        String scoped = relevantText(source, "安全确认", "确认安全", "安全打卡", "打卡");
+        String instructions = "安全确认打卡。医生方案要求：" + frequencyText(scoped, "安全确认", "确认安全", "打卡");
+        for (LocalTime time : timeParser.resolveDailyTimes(scoped, LocalTime.of(9, 0))) {
+            addDailyTask(tasks, "DAILY_CHECKIN", "安全确认 " + time, instructions, time, 30, 30);
+        }
+    }
+
+    private void addRehabilitationTasks(List<CarePlanService.TaskCommand> tasks, String source) {
+        String scoped = relevantText(source, "散步", "康复", "训练", "锻炼", "活动");
+        String instructions = "康复或活动任务。医生方案要求：" + clean(scoped);
+        for (LocalTime time : timeParser.resolveDailyTimes(scoped, LocalTime.of(16, 0))) {
+            addDailyTask(tasks, "REHABILITATION", "康复训练 " + time, instructions, time, 30, 30);
+        }
+    }
+
+    private void addMealTasks(List<CarePlanService.TaskCommand> tasks, String source) {
+        String scoped = relevantText(source, "早餐", "午餐", "晚餐", "饮食", "进食");
+        String instructions = "饮食执行确认。医生方案要求：" + clean(scoped);
+        List<LocalTime> explicit = timeParser.extractTimePoints(scoped);
+        if (explicit.isEmpty()) {
+            if (containsAny(scoped, "早餐")) explicit = List.of(LocalTime.of(8, 0));
+            else if (containsAny(scoped, "晚餐")) explicit = List.of(LocalTime.of(18, 0));
+            else explicit = List.of(LocalTime.of(12, 0));
+        }
+        for (LocalTime time : explicit) {
+            addDailyTask(tasks, "MEAL", "饮食确认 " + time, instructions, time, 30, 30);
+        }
+    }
+
+    private void addCognitiveTasks(List<CarePlanService.TaskCommand> tasks, String source) {
+        String scoped = relevantText(source, "认知训练", "记忆训练", "益智");
+        for (LocalTime time : timeParser.resolveDailyTimes(scoped, LocalTime.of(10, 0))) {
+            addDailyTask(tasks, "COGNITIVE_TRAINING", "认知训练 " + time,
+                    "认知训练任务。医生方案要求：" + clean(scoped), time, 30, 30);
+        }
+    }
+
+    private void addSleepTasks(List<CarePlanService.TaskCommand> tasks, String source) {
+        String scoped = relevantText(source, "睡眠", "入睡", "起床");
+        for (LocalTime time : timeParser.resolveDailyTimes(scoped, LocalTime.of(21, 0))) {
+            addDailyTask(tasks, "SLEEP", "睡眠任务 " + time,
+                    "睡眠作息任务。医生方案要求：" + clean(scoped), time, 30, 30);
+        }
     }
 
     private void addDailyTask(
@@ -326,6 +385,18 @@ public class CarePlanDraftService {
                 null,
                 gracePeriodMinutes,
                 escalationAfterMinutes));
+    }
+
+    private String relevantText(String source, String... anchors) {
+        String cleanSource = clean(source);
+        String[] clauses = cleanSource.split("[\\r\\n。；;]");
+        List<String> matches = new ArrayList<>();
+        for (String clause : clauses) {
+            if (containsAny(clause, anchors)) {
+                matches.add(clean(clause));
+            }
+        }
+        return matches.isEmpty() ? cleanSource : String.join("\n", matches);
     }
 
     private String frequencyText(String text, String... anchors) {

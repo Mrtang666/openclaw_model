@@ -6,6 +6,7 @@ import com.example.spring.wechat.care.model.CareTaskInstance;
 import com.example.spring.wechat.care.model.CareTaskScheduleType;
 import com.example.spring.wechat.care.model.CareTaskTemplate;
 import com.example.spring.wechat.care.model.MedicalNotification;
+import com.example.spring.wechat.care.model.MedicalRole;
 import com.example.spring.wechat.care.model.NotificationTarget;
 import com.example.spring.wechat.care.repository.CareNotificationRepository;
 import com.example.spring.wechat.care.repository.CarePlanRepository;
@@ -25,7 +26,9 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Component
 @ConditionalOnProperty(name = "care.task.enabled", havingValue = "true")
@@ -56,7 +59,7 @@ public class CareTaskScheduler {
         this.clock = clock;
     }
 
-    @Scheduled(fixedDelayString = "${care.task.poll-interval-ms:60000}")
+    @Scheduled(fixedDelayString = "${care.task.poll-interval-ms:15000}")
     public void poll() {
         process(clock.instant());
     }
@@ -86,7 +89,7 @@ public class CareTaskScheduler {
             List<NotificationTarget> targets = identityRepository.listUserNotificationTargets(task.patientUserId());
             for (NotificationTarget target : targets) {
                 enqueue(task, target, "CARE_TASK_DUE",
-                        "您有一项照护任务需要处理，请打开患者端查看。任务编号 #" + task.id(), now);
+                        dueReminderContent(task), now);
             }
             taskRepository.markReminderEnqueued(task.id(), now);
         }
@@ -101,11 +104,10 @@ public class CareTaskScheduler {
     void enqueueOverdueNotifications(Instant now) {
         for (CareTaskInstance task : taskRepository.findReadyForOverdueNotification(
                 now, taskProperties.batchSize())) {
-            List<NotificationTarget> targets = identityRepository.listNotificationTargets(
-                    task.patientUserId(), CarePermissions.TASK_READ, now);
+            List<NotificationTarget> targets = familyTargets(task.patientUserId(), now);
             for (NotificationTarget target : targets) {
                 enqueue(task, target, "CARE_TASK_OVERDUE",
-                        "患者有一项照护任务长时间未确认，请登录照护端查看。任务编号 #" + task.id(), now);
+                        overdueNotificationContent(task), now);
             }
             taskRepository.markOverdueNotified(task.id(), now);
         }
@@ -136,6 +138,37 @@ public class CareTaskScheduler {
                 0L, target.userId(), task.patientUserId(), target.connectionId(), target.recipientId(),
                 type, "WECHAT", content, "PENDING", now, null, 0,
                 careProperties.notification().maxRetryCount(), "", null, idempotencyKey, now, now));
+    }
+
+    private String dueReminderContent(CareTaskInstance task) {
+        return """
+                【任务打卡提醒】
+                任务：%s
+                %s
+
+                请直接回复：
+                完成 #%d
+                或
+                未完成 #%d
+
+                未完成会标记为异常，并通知已授权家属协助关注。
+                """.formatted(task.title(), task.instructions(), task.id(), task.id()).strip();
+    }
+
+    private String overdueNotificationContent(CareTaskInstance task) {
+        return "【任务异常提醒】\n患者有一项照护任务未在计划时间内确认，请及时关注。\n任务："
+                + task.title() + "（#" + task.id() + "）";
+    }
+
+    private List<NotificationTarget> familyTargets(long patientUserId, Instant now) {
+        Map<String, NotificationTarget> distinct = new LinkedHashMap<>();
+        for (MedicalRole role : List.of(MedicalRole.FAMILY, MedicalRole.CAREGIVER)) {
+            for (NotificationTarget target : identityRepository.listNotificationTargetsByRole(
+                    patientUserId, role, CarePermissions.TASK_READ, now)) {
+                distinct.put(target.userId() + ":" + target.connectionId() + ":" + target.recipientId(), target);
+            }
+        }
+        return List.copyOf(distinct.values());
     }
 
     private String targetHash(NotificationTarget target) {

@@ -15,6 +15,7 @@ import com.example.spring.wechat.care.service.CareAuthorizationService;
 import com.example.spring.wechat.care.service.CarePermissions;
 import com.example.spring.wechat.care.service.CarePlanDraftService;
 import com.example.spring.wechat.care.service.CareReportService;
+import com.example.spring.wechat.care.service.CareTaskInteractionService;
 import com.example.spring.wechat.care.service.CareWebLinkService;
 import com.example.spring.wechat.reminder.service.ReminderNotificationSender;
 import org.springframework.beans.factory.ObjectProvider;
@@ -39,6 +40,7 @@ public class CareAgentWechatTool implements WechatTool {
     private final CareReportService reportService;
     private final CareWebLinkService linkService;
     private final CarePlanDraftService draftService;
+    private final CareTaskInteractionService taskInteractionService;
     private final CareNotificationRepository notificationRepository;
     private final ObjectProvider<ReminderNotificationSender> notificationSenderProvider;
     private final ChatService chatService;
@@ -51,6 +53,7 @@ public class CareAgentWechatTool implements WechatTool {
             CareReportService reportService,
             CareWebLinkService linkService,
             CarePlanDraftService draftService,
+            CareTaskInteractionService taskInteractionService,
             CareNotificationRepository notificationRepository,
             ObjectProvider<ReminderNotificationSender> notificationSenderProvider,
             ChatService chatService,
@@ -60,6 +63,7 @@ public class CareAgentWechatTool implements WechatTool {
         this.reportService = reportService;
         this.linkService = linkService;
         this.draftService = draftService;
+        this.taskInteractionService = taskInteractionService;
         this.notificationRepository = notificationRepository;
         this.notificationSenderProvider = notificationSenderProvider;
         this.chatService = chatService;
@@ -85,7 +89,7 @@ public class CareAgentWechatTool implements WechatTool {
     public List<WechatToolParameter> parameters() {
         return List.of(
                 WechatToolParameter.optionalEnum("action", "操作类型", List.of(
-                        "status", "bind", "contact_doctor", "doctor_workspace", "plan_draft", "plan_confirm", "whoami", "rename"), "status"),
+                        "status", "bind", "contact_doctor", "doctor_workspace", "plan_draft", "plan_confirm", "task_response", "whoami", "rename"), "status"),
                 WechatToolParameter.optionalString("patient_code", "患者编号，例如 PAT-12345678；绑定或指定患者时填写", "PAT-12345678"),
                 WechatToolParameter.optionalString("message", "联系医生时要发送的消息", "患者今天头晕，请医生关注。"),
                 WechatToolParameter.optionalString("plan_text", "医生输入的原始照护方案要求", "每天提醒患者喝水三次，晚上确认安全。"),
@@ -127,6 +131,7 @@ public class CareAgentWechatTool implements WechatTool {
                 case "doctor_workspace" -> WechatReply.text(doctorWorkspace(actor, request.sessionKey()));
                 case "plan_draft" -> WechatReply.text(planDraft(actor, request));
                 case "plan_confirm" -> WechatReply.text(confirmPlanDraft(actor, request.sessionKey()));
+                case "task_response" -> WechatReply.text(taskResponse(actor, request));
                 case "rename" -> WechatReply.text(renameNickname(actor, request));
                 default -> WechatReply.text(status(actor, request));
             };
@@ -304,6 +309,10 @@ public class CareAgentWechatTool implements WechatTool {
                 + " 个微信通道已即时送达，其余会在通知通道可用后继续发送。";
     }
 
+    private String taskResponse(CareActor actor, WechatToolRequest request) {
+        return taskInteractionService.processReply(actor, request.userText(), traceId()).message();
+    }
+
     private String refinePlan(MedicalUser patient, String rawPlan) {
         String text = rawPlan == null ? "" : rawPlan.strip();
         if (text.isBlank()) {
@@ -374,6 +383,7 @@ public class CareAgentWechatTool implements WechatTool {
         if (!action.isBlank() && !"status".equals(action)) {
             return action;
         }
+        if (CareTaskInteractionService.looksLikeTaskReply(text)) return "task_response";
         if (containsAny(text, "我是谁", "当前身份", "身份")) return "whoami";
         if (containsAny(text, "绑定", "新增患者", "添加患者")) return "bind";
         if (containsAny(text, "联系医生", "通知医生", "告诉医生", "紧急", "发给医生")) return "contact_doctor";

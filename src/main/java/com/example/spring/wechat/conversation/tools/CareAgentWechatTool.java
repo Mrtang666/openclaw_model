@@ -8,13 +8,11 @@ import com.example.spring.wechat.care.model.MedicalNotification;
 import com.example.spring.wechat.care.model.MedicalRole;
 import com.example.spring.wechat.care.model.MedicalUser;
 import com.example.spring.wechat.care.model.NotificationTarget;
-import com.example.spring.wechat.care.model.PatientStatusSummary;
 import com.example.spring.wechat.care.repository.CareNotificationRepository;
 import com.example.spring.wechat.care.repository.MedicalIdentityRepository;
 import com.example.spring.wechat.care.service.CareAuthorizationService;
 import com.example.spring.wechat.care.service.CarePermissions;
 import com.example.spring.wechat.care.service.CarePlanDraftService;
-import com.example.spring.wechat.care.service.CareReportService;
 import com.example.spring.wechat.care.service.CareTaskInteractionService;
 import com.example.spring.wechat.care.service.CareWebLinkService;
 import com.example.spring.wechat.reminder.service.ReminderNotificationSender;
@@ -37,7 +35,6 @@ public class CareAgentWechatTool implements WechatTool {
 
     private final MedicalIdentityRepository identityRepository;
     private final CareAuthorizationService authorizationService;
-    private final CareReportService reportService;
     private final CareWebLinkService linkService;
     private final CarePlanDraftService draftService;
     private final CareTaskInteractionService taskInteractionService;
@@ -50,7 +47,6 @@ public class CareAgentWechatTool implements WechatTool {
     public CareAgentWechatTool(
             MedicalIdentityRepository identityRepository,
             CareAuthorizationService authorizationService,
-            CareReportService reportService,
             CareWebLinkService linkService,
             CarePlanDraftService draftService,
             CareTaskInteractionService taskInteractionService,
@@ -60,7 +56,6 @@ public class CareAgentWechatTool implements WechatTool {
             Clock clock) {
         this.identityRepository = identityRepository;
         this.authorizationService = authorizationService;
-        this.reportService = reportService;
         this.linkService = linkService;
         this.draftService = draftService;
         this.taskInteractionService = taskInteractionService;
@@ -174,19 +169,16 @@ public class CareAgentWechatTool implements WechatTool {
         if (actor.role() == MedicalRole.PATIENT) {
             CareWebLinkService.CareWebSessionLink link = linkService.createForWechatSession(
                     request.sessionKey(), "/caregiver/status");
-            PatientStatusSummary summary = reportService.status(actor, actor.userId(), traceId());
-            return statusText("你的今日照护状态", summary, link.url());
+            return link.url();
         }
 
         List<MedicalUser> patients = authorizationService.listAccessiblePatients(actor, CarePermissions.STATUS_READ);
         if (patients.isEmpty()) {
             return noBindingText(actor, request.sessionKey());
         }
-        MedicalUser patient = choosePatient(patients, request.argument("patient_code"), request.userText());
         String route = actor.role().isClinical() ? "/doctor/patients" : "/caregiver/status";
         CareWebLinkService.CareWebSessionLink link = linkService.createForWechatSession(request.sessionKey(), route);
-        PatientStatusSummary summary = reportService.status(actor, patient.id(), traceId());
-        return statusText(patient.displayName() + "的今日照护状态", summary, link.url());
+        return link.url();
     }
 
     private String bindLink(CareActor actor, String sessionKey) {
@@ -350,19 +342,6 @@ public class CareAgentWechatTool implements WechatTool {
                 0L, target.userId(), patientUserId, target.connectionId(), target.recipientId(),
                 type, "WECHAT", content, "PENDING", now, null, 0,
                 3, "", null, idempotency(type, patientUserId, target.userId(), content), now, now));
-    }
-
-    private String statusText(String title, PatientStatusSummary summary, String url) {
-        return """
-                %s
-                打卡记录：近7天 %d 次
-                未处理告警：%d 个，紧急 %d 个
-                待确认记忆：%d 条
-
-                查看完整页面：
-                %s
-                """.formatted(title, summary.checkInCount(), summary.openAlertCount(), summary.urgentAlertCount(),
-                summary.pendingMemoryCount(), url).strip();
     }
 
     private MedicalUser choosePatient(List<MedicalUser> patients, String patientCode, String userText) {

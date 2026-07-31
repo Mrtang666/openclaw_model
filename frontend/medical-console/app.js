@@ -634,10 +634,7 @@ function bindDraftActions(draft) {
             try {
                 await careApi(`${apiPrefix("clinical")}/plan-drafts/${draft.id}`, {
                     method: "PATCH",
-                    body: JSON.stringify({
-                        title: document.querySelector("#draft-title")?.value || "",
-                        editedPlan: document.querySelector("#draft-final-plan")?.value || ""
-                    })
+                    body: JSON.stringify(draftFormPayload())
                 });
                 await renderAlertsAndReview();
             } catch (error) {
@@ -648,6 +645,12 @@ function bindDraftActions(draft) {
     if (confirmButton) {
         confirmButton.addEventListener("click", async () => {
             try {
+                if (draft.editable) {
+                    await careApi(`${apiPrefix("clinical")}/plan-drafts/${draft.id}`, {
+                        method: "PATCH",
+                        body: JSON.stringify(draftFormPayload())
+                    });
+                }
                 await careApi(`${apiPrefix("clinical")}/plan-drafts/${draft.id}/confirm`, {
                     method: "POST"
                 });
@@ -657,6 +660,13 @@ function bindDraftActions(draft) {
             }
         });
     }
+}
+
+function draftFormPayload() {
+    return {
+        title: document.querySelector("#draft-title")?.value || "",
+        editedPlan: document.querySelector("#draft-final-plan")?.value || ""
+    };
 }
 
 function selectDraft(draftId) {

@@ -16,8 +16,11 @@ const views = {
   reports: ["舆情日报", "按项目和日期查看舆情摘要"],
   "scheduled-reports": ["定时报告", "定期采集分析并通过邮件或微信发送报告文件"],
   alerts: ["告警管理", "配置风险告警规则并查看告警事件"],
+  authorization: ["账号授权", "管理小红书采集账号会话和重新授权"],
   system: ["系统状态", "检查数据库、采集 Sidecar 和运行任务"],
 };
+
+let authorizationPollTimer;
 
 const content = document.querySelector("#content");
 const notice = document.querySelector("#notice");
@@ -105,6 +108,7 @@ async function loadHealth() {
 }
 
 async function renderCurrent() {
+  clearTimeout(authorizationPollTimer);
   loading();
   notice.hidden = true;
   try {
@@ -125,6 +129,7 @@ const renderers = {
   reports: renderReports,
   "scheduled-reports": renderScheduledReports,
   alerts: renderAlerts,
+  authorization: renderAuthorization,
   system: renderSystem,
 };
 
@@ -585,6 +590,128 @@ async function renderSystem() {
   const health = await api("/health");
   content.innerHTML = `<section class="panel"><div class="panel-header"><h2>服务检查</h2><span class="tag ${health.status === "UP" ? "normal" : "warning"}">${health.status}</span></div><div class="panel-body"><div class="detail-meta"><div><span>管理接口</span><strong>正常</strong></div><div><span>数据库</span><strong>${health.databaseUp ? "正常" : "异常"}</strong></div><div><span>采集配置</span><strong>${health.collectorEnabled ? "已启用" : "未启用"}</strong></div><div><span>采集 Sidecar</span><strong>${health.collectorUp ? "正常" : "异常"}</strong></div><div><span>运行中任务</span><strong>${health.runningJobs}</strong></div><div><span>检查时间</span><strong>${formatDate(health.checkedAt)}</strong></div></div><p class="muted">${escapeHtml(health.collectorMessage)}</p></div></section>`;
 }
+
+async function renderAuthorization() {
+  const auth = await api("/authorization");
+  const statusClass = auth.collectAllowed ? "normal" : auth.status === "EXPIRED" ? "failed" : "warning";
+  content.innerHTML = `<div class="auth-layout">
+    <section class="panel">
+      <div class="panel-header"><h2>授权状态</h2><span class="tag ${statusClass}">${authorizationStatus(auth.status)}</span></div>
+      <div class="panel-body">
+        <div class="detail-meta">
+          <div><span>采集权限</span><strong>${auth.collectAllowed ? "可用" : "已暂停"}</strong></div>
+          <div><span>授权账号</span><strong>${escapeHtml(auth.accountNickname || "-")}</strong></div>
+          <div><span>小红书号</span><strong>${escapeHtml(auth.accountRedId || "-")}</strong></div>
+          <div><span>授权方式</span><strong>${authorizationSource(auth.source)}</strong></div>
+          <div><span>最近验证</span><strong>${formatDate(auth.lastVerifiedAt)}</strong></div>
+          <div><span>连续失败</span><strong>${auth.consecutiveAuthFailures || 0}</strong></div>
+        </div>
+        ${auth.lastError ? `<p class="auth-error">${escapeHtml(auth.lastError)}</p>` : ""}
+        <div class="form-actions">
+          <button id="auth-validate" class="button secondary">验证授权</button>
+          <button id="auth-qr-start" class="button primary">扫码重新授权</button>
+          <button id="auth-clear" class="button danger">清除授权</button>
+        </div>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panel-header"><h2>手动更新 Cookie</h2><span class="tag">备用</span></div>
+      <div class="panel-body">
+        <form id="auth-cookie-form">
+          <label class="auth-cookie-field">完整 Request Cookie
+            <input id="auth-cookie" type="password" autocomplete="off" required placeholder="a1=...; web_session=...">
+          </label>
+          <div class="option-row auth-cookie-options">
+            <label><input id="auth-cookie-visible" type="checkbox">显示内容</label>
+            <button class="button secondary" type="submit">验证并保存</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  </div><section id="auth-qr-panel" class="panel" hidden></section>`;
+  document.querySelector("#auth-validate").addEventListener("click", validateAuthorization);
+  document.querySelector("#auth-qr-start").addEventListener("click", startAuthorizationQr);
+  document.querySelector("#auth-clear").addEventListener("click", clearAuthorization);
+  document.querySelector("#auth-cookie-form").addEventListener("submit", updateAuthorizationCookie);
+  document.querySelector("#auth-cookie-visible").addEventListener("change", event => {
+    document.querySelector("#auth-cookie").type = event.target.checked ? "text" : "password";
+  });
+}
+
+async function validateAuthorization(event) {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await api("/authorization/validate", { method: "POST" });
+    showNotice("账号授权验证成功", true);
+    await renderAuthorization();
+  } catch (error) { showNotice(error.message); } finally { button.disabled = false; }
+}
+
+async function updateAuthorizationCookie(event) {
+  event.preventDefault();
+  const button = event.submitter;
+  button.disabled = true;
+  try {
+    await api("/authorization/cookie", {
+      method: "POST",
+      body: JSON.stringify({ cookie: document.querySelector("#auth-cookie").value }),
+    });
+    event.target.reset();
+    showNotice("Cookie 已验证并加密保存", true);
+    await renderAuthorization();
+  } catch (error) { showNotice(error.message); } finally { button.disabled = false; }
+}
+
+async function startAuthorizationQr(event) {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const qr = await api("/authorization/qr", { method: "POST" });
+    const panel = document.querySelector("#auth-qr-panel");
+    panel.hidden = false;
+    panel.innerHTML = `<div class="panel-header"><h2>小红书扫码授权</h2><span id="auth-qr-status" class="tag watch">等待扫码</span></div>
+      <div class="panel-body qr-login"><img src="${escapeAttr(qr.qrImage)}" alt="小红书登录二维码">
+      <div><strong id="auth-qr-message">${escapeHtml(qr.message)}</strong><p class="muted">二维码有效期至 ${formatDate(qr.expiresAt)}</p></div></div>`;
+    authorizationPollTimer = setTimeout(() => pollAuthorizationQr(qr.sessionId), 1800);
+  } catch (error) { showNotice(error.message); } finally { button.disabled = false; }
+}
+
+async function pollAuthorizationQr(sessionId) {
+  if (state.view !== "authorization") return;
+  try {
+    const result = await api(`/authorization/qr/${encodeURIComponent(sessionId)}`);
+    const label = document.querySelector("#auth-qr-status");
+    const message = document.querySelector("#auth-qr-message");
+    if (label) label.textContent = qrAuthorizationStatus(result.status);
+    if (message) message.textContent = result.message;
+    if (result.status === "AUTHORIZED") {
+      showNotice("小红书扫码授权成功", true);
+      await renderAuthorization();
+      return;
+    }
+    if (result.status === "EXPIRED") {
+      showNotice("登录二维码已过期，请重新生成");
+      return;
+    }
+    authorizationPollTimer = setTimeout(() => pollAuthorizationQr(sessionId), 1800);
+  } catch (error) { showNotice(error.message); }
+}
+
+async function clearAuthorization(event) {
+  if (!window.confirm("确认清除当前小红书账号授权？清除后采集任务将暂停。")) return;
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await api("/authorization", { method: "DELETE" });
+    showNotice("账号授权已清除", true);
+    await renderAuthorization();
+  } catch (error) { showNotice(error.message); } finally { button.disabled = false; }
+}
+
+function authorizationStatus(value) { return ({ MISSING: "未授权", CONFIGURED: "待验证", VALID: "有效", EXPIRED: "已失效" })[value] || value; }
+function authorizationSource(value) { return ({ ENV: "环境变量导入", MANUAL: "手动更新", QR: "扫码授权" })[value] || "-"; }
+function qrAuthorizationStatus(value) { return ({ SCAN_REQUIRED: "等待扫码", CONFIRM_REQUIRED: "等待确认", AUTHORIZED: "授权成功", EXPIRED: "已过期" })[value] || value; }
 
 function splitTerms(value) { return String(value || "").split(/[,，\n]/).map(item => item.trim()).filter(Boolean); }
 function nextStatuses(status) { return ({ OPEN: ["ACKNOWLEDGED", "INVESTIGATING"], ACKNOWLEDGED: ["INVESTIGATING"], INVESTIGATING: ["RESOLVED"], RESOLVED: [] })[status] || []; }

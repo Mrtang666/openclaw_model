@@ -88,6 +88,7 @@ def collect(
         return _result("FAILED", False, [], "BOOTSTRAP_FAILED", message, "")
     success, message, search_items = api.search_some_note(query, offset + limit)
     if not success:
+        _persist_api_cookie(api)
         return _result("FAILED", False, [], "SEARCH_FAILED", redact(message), "")
 
     candidates = [
@@ -123,9 +124,12 @@ def collect(
         records.append(normalize_note(items[0], source_url, comments, author_hash_key, request_url))
 
     if failures and records:
+        _persist_api_cookie(api)
         return _result("PARTIAL", False, records, "PARTIAL_COLLECTION", "; ".join(failures), "")
     if failures and not records:
+        _persist_api_cookie(api)
         return _result("FAILED", False, [], "DETAIL_COLLECTION_FAILED", "; ".join(failures), "")
+    _persist_api_cookie(api)
     return _result("SUCCEEDED", True, records, "", "", "")
 
 
@@ -164,6 +168,7 @@ def resolve_link(spider_root: Path, note_id: str, query: str, limit: int) -> dic
         return _link_result("FAILED", "", code, message)
     success, message, search_items = api.search_some_note(query, limit)
     if not success:
+        _persist_api_cookie(api)
         return _link_result("FAILED", "", "SEARCH_FAILED", redact(message))
     for candidate in search_items or []:
         if not isinstance(candidate, dict) or candidate.get("model_type") != "note":
@@ -179,7 +184,9 @@ def resolve_link(spider_root: Path, note_id: str, query: str, limit: int) -> dic
         )
         from .security import access_xhs_url
 
+        _persist_api_cookie(api)
         return _link_result("FOUND", access_xhs_url(access_url, note_id), "", "")
+    _persist_api_cookie(api)
     return _link_result("NOT_FOUND", "", "LINK_NOT_FOUND", "note was not present in refreshed search results")
 
 
@@ -208,6 +215,16 @@ def _is_auth_expired(message: str) -> bool:
         "unauthorized",
     )
     return any(indicator in normalized for indicator in indicators)
+
+
+def _persist_api_cookie(api: Any) -> None:
+    try:
+        from .authorization import persist_worker_cookie
+        cookie = str(getattr(getattr(api, "auth", None), "cookies", ""))
+        persist_worker_cookie(cookie)
+    except Exception:
+        # Collection results must not fail because local session persistence failed.
+        return
 
 
 def _detail_items(value: object) -> list[dict[str, Any]]:

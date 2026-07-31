@@ -119,9 +119,9 @@ A real search requires a valid authorized Cookie, Spider_XHS Python dependencies
 
 ### Refresh an expired Cookie
 
-When a job returns `AUTH_EXPIRED`, the configured Xiaohongshu browser session is no longer valid. Sign in to Xiaohongshu again in a browser, copy the complete Cookie from an authenticated `www.xiaohongshu.com` request, and replace only the `XHS_COOKIES` value in the ignored `xhs-sidecar/.env` file. Do not paste the Cookie into logs, source files, screenshots, or chat messages.
+When a job returns `AUTH_EXPIRED`, open **账号授权** in the management console and use QR authorization. Manual Cookie replacement remains available there as a fallback. Do not paste the Cookie into logs, source files, screenshots, or chat messages.
 
-Recreate the Sidecar so Docker loads the updated environment value:
+`XHS_COOKIES` is now a first-start import fallback. Replacing it does not overwrite an existing managed authorization snapshot. Clear the managed authorization from the console before intentionally importing a new `.env` value, then recreate the Sidecar:
 
 ```powershell
 docker compose --project-directory .\xhs-sidecar -f .\xhs-sidecar\compose.yaml up -d --force-recreate sidecar
@@ -129,6 +129,21 @@ Invoke-RestMethod http://127.0.0.1:18081/health
 ```
 
 Submit a new collection job after the health check succeeds. Existing failed jobs retain their original `AUTH_EXPIRED` result for troubleshooting.
+
+### Managed authorization
+
+The management console supports QR login, online validation, manual Cookie replacement and authorization removal. The Sidecar stores the current session in `XHS_AUTH_STATE_FILE` using encrypted, integrity-protected local storage. `XHS_AUTH_ENCRYPTION_KEY` must be a separate long random secret and must not be committed.
+
+After `XHS_AUTH_FAILURE_THRESHOLD` consecutive `AUTH_EXPIRED` results, the authorization circuit opens and new collection requests return HTTP 423 until QR or manual authorization succeeds. `XHS_COOKIES` is imported only when no managed authorization snapshot exists.
+
+```dotenv
+XHS_AUTH_ENCRYPTION_KEY=use-a-random-secret-of-at-least-32-characters
+XHS_AUTH_STATE_FILE=/data/jobs/_auth/session.enc
+XHS_AUTH_FAILURE_THRESHOLD=2
+XHS_AUTH_QR_TTL_SECONDS=180
+```
+
+Never expose the encrypted state file together with its encryption key. Rotating the key requires clearing the old state and authorizing again.
 
 ## Docker deployment
 

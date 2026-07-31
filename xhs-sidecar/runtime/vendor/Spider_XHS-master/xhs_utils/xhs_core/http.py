@@ -91,6 +91,7 @@ class BrowserHttpClient:
         self.impersonate = str(impersonate)
         self.accept_encoding = str(accept_encoding)
         self.http_version = str(http_version)
+        self.cookie_sink = None
         self.session = curl_requests.Session(
             proxies=proxies,
             impersonate=self.impersonate,
@@ -147,7 +148,7 @@ class BrowserHttpClient:
             wire_headers['content-type'] = None
 
         request_proxies = self.proxies if proxies is None else proxies
-        return self.session.request(
+        response = self.session.request(
             str(method).upper(),
             str(url),
             headers=wire_headers,
@@ -159,6 +160,12 @@ class BrowserHttpClient:
             accept_encoding=self.accept_encoding,
             **kwargs,
         )
+        if callable(self.cookie_sink):
+            response_cookies = getattr(response, 'cookies', None)
+            values = response_cookies.get_dict() if response_cookies is not None else {}
+            if values:
+                self.cookie_sink(values, source_url=str(url))
+        return response
 
     def get(self, url: str, **kwargs):
         return self.request('GET', url, **kwargs)

@@ -2,6 +2,8 @@ ARG BASE_REGISTRY=dockerproxy.net/library
 
 FROM ${BASE_REGISTRY}/node:22-bookworm-slim
 
+ARG DEBIAN_MIRROR=mirrors.tuna.tsinghua.edu.cn
+
 ENV NODE_ENV=production \
     BROWSER_MCP_HOST=0.0.0.0 \
     BROWSER_MCP_PORT=3333 \
@@ -11,8 +13,9 @@ ENV NODE_ENV=production \
     CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS=1 \
     CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS=1
 
-RUN apt-get update \
-    && apt-get install --no-install-recommends -y chromium ca-certificates tini fonts-liberation \
+RUN sed -i "s|deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install --no-install-recommends --fix-missing -y chromium ca-certificates tini fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

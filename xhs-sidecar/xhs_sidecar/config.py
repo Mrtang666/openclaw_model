@@ -22,6 +22,10 @@ class SidecarConfig:
     comment_limit: int
     detail_max_attempts: int
     detail_retry_delay_ms: int
+    auth_state_file: Path
+    auth_encryption_key: str
+    auth_failure_threshold: int
+    auth_qr_ttl_seconds: int
 
     @classmethod
     def from_env(cls) -> "SidecarConfig":
@@ -45,6 +49,15 @@ class SidecarConfig:
             comment_limit=_integer("XHS_COMMENT_LIMIT", 100, 0, 1000),
             detail_max_attempts=_integer("XHS_DETAIL_MAX_ATTEMPTS", 3, 1, 5),
             detail_retry_delay_ms=_integer("XHS_DETAIL_RETRY_DELAY_MS", 800, 0, 10000),
+            auth_state_file=Path(os.getenv(
+                "XHS_AUTH_STATE_FILE", str(Path(os.getenv(
+                    "XHS_SIDECAR_DATA_DIR", str(module_root / "runtime" / "jobs")
+                )).resolve() / "_auth" / "session.enc")
+            )).resolve(),
+            auth_encryption_key=(os.getenv("XHS_AUTH_ENCRYPTION_KEY")
+                                 or os.getenv("XHS_AUTHOR_HASH_KEY", "openclaw-local-only")),
+            auth_failure_threshold=_integer("XHS_AUTH_FAILURE_THRESHOLD", 2, 1, 5),
+            auth_qr_ttl_seconds=_integer("XHS_AUTH_QR_TTL_SECONDS", 180, 60, 600),
         )
 
     def validate(self) -> None:
@@ -52,11 +65,14 @@ class SidecarConfig:
             raise ValueError("XHS_COLLECTOR_API_KEY must contain at least 16 characters for non-loopback binding")
         if self.host not in {"127.0.0.1", "::1", "localhost"} and len(self.author_hash_key) < 16:
             raise ValueError("XHS_AUTHOR_HASH_KEY must contain at least 16 characters for non-loopback binding")
+        if len(self.auth_encryption_key) < 16:
+            raise ValueError("XHS_AUTH_ENCRYPTION_KEY must contain at least 16 characters")
         if not self.spider_root.is_dir():
             raise ValueError(f"SPIDER_XHS_ROOT does not exist: {self.spider_root}")
         if not (self.spider_root / "apis" / "xhs_pc_apis.py").is_file():
             raise ValueError(f"SPIDER_XHS_ROOT is not a Spider_XHS checkout: {self.spider_root}")
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.auth_state_file.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _integer(name: str, default: int, minimum: int, maximum: int) -> int:

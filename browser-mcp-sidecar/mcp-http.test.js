@@ -25,6 +25,9 @@ test("streamable http reuses initialized MCP session", async () => {
     const toolNames = tools.body.result.tools.map((tool) => tool.name);
     assert.ok(toolNames.includes("browser_open"));
     assert.ok(toolNames.includes("browser_read_page"));
+    assert.ok(toolNames.includes("browser_current_state"));
+    assert.ok(toolNames.includes("browser_wait_for"));
+    assert.ok(toolNames.includes("browser_reset"));
   } finally {
     child.kill();
     await onceExit(child);

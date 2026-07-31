@@ -3,6 +3,7 @@ package com.example.spring.wechat.browser.service;
 import com.example.spring.wechat.browser.client.BrowserMcpClient;
 import com.example.spring.wechat.browser.config.BrowserAutomationProperties;
 import com.example.spring.wechat.browser.model.BrowserActionResult;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import org.junit.jupiter.api.Test;
 
@@ -100,6 +101,48 @@ class BrowserAutomationServiceTests {
         assertThat(client.clickedTarget).isEqualTo("\u767b\u5f55");
     }
 
+    @Test
+    void currentStateFormatsPageStateDetails() {
+        RecordingBrowserMcpClient client = new RecordingBrowserMcpClient();
+        BrowserAutomationService service = new BrowserAutomationService(client, localOnlyProperties());
+
+        String result = service.currentState("wx-user-1");
+
+        assertThat(result)
+                .contains("Current page state")
+                .contains("Title: Home")
+                .contains("URL: http://localhost:8080")
+                .contains("Inputs:")
+                .contains("email")
+                .contains("Buttons:")
+                .contains("Login");
+        assertThat(client.currentStateCalled).isTrue();
+    }
+
+    @Test
+    void waitForClampsTimeoutAndDelegates() {
+        RecordingBrowserMcpClient client = new RecordingBrowserMcpClient();
+        BrowserAutomationService service = new BrowserAutomationService(client, localOnlyProperties());
+
+        String result = service.waitFor("wx-user-1", "url", "dashboard", 120_000);
+
+        assertThat(result).contains("Wait condition met");
+        assertThat(client.waitCondition).isEqualTo("url");
+        assertThat(client.waitValue).isEqualTo("dashboard");
+        assertThat(client.waitTimeoutMs).isEqualTo(60_000);
+    }
+
+    @Test
+    void resetDelegatesClearProfileFlag() {
+        RecordingBrowserMcpClient client = new RecordingBrowserMcpClient();
+        BrowserAutomationService service = new BrowserAutomationService(client, localOnlyProperties());
+
+        String result = service.reset("wx-user-1", true);
+
+        assertThat(result).contains("Browser reset completed");
+        assertThat(client.resetClearProfile).isTrue();
+    }
+
     private BrowserAutomationProperties localOnlyProperties() {
         return new BrowserAutomationProperties(
                 true,
@@ -117,6 +160,11 @@ class BrowserAutomationServiceTests {
         private String clickedTarget;
         private String typedTarget;
         private String typedText;
+        private boolean currentStateCalled;
+        private String waitCondition;
+        private String waitValue;
+        private int waitTimeoutMs;
+        private boolean resetClearProfile;
 
         private RecordingBrowserMcpClient() {
             super(null, null);
@@ -149,6 +197,35 @@ class BrowserAutomationServiceTests {
         @Override
         public BrowserActionResult readPage(int maxChars) {
             return result("Page text", "", "", "");
+        }
+
+        @Override
+        public BrowserActionResult currentState() {
+            currentStateCalled = true;
+            ObjectNode raw = JsonNodeFactory.instance.objectNode();
+            raw.putArray("inputs").add("email");
+            raw.putArray("buttons").add("Login");
+            return new BrowserActionResult(
+                    true,
+                    "Current page state",
+                    "Home",
+                    "http://localhost:8080",
+                    "",
+                    raw);
+        }
+
+        @Override
+        public BrowserActionResult waitFor(String condition, String value, int timeoutMs) {
+            waitCondition = condition;
+            waitValue = value;
+            waitTimeoutMs = timeoutMs;
+            return result("Wait condition met", "", "http://localhost:8080/dashboard", "");
+        }
+
+        @Override
+        public BrowserActionResult reset(boolean clearProfile) {
+            resetClearProfile = clearProfile;
+            return result("Browser reset completed", "", "", "");
         }
 
         private BrowserActionResult result(String message, String title, String url, String screenshotPath) {

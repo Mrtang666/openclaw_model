@@ -3,13 +3,16 @@ package com.example.spring.wechat.browser.client;
 import com.example.spring.wechat.browser.config.BrowserAutomationProperties;
 import com.example.spring.wechat.web.mcp.McpCallResult;
 import com.example.spring.wechat.web.mcp.McpToolClient;
+import com.example.spring.wechat.web.exception.WebToolException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
+import java.nio.channels.ClosedChannelException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class BrowserMcpClientTests {
 
@@ -43,6 +46,49 @@ class BrowserMcpClientTests {
         assertThat(toolClient.toolName).isEqualTo("browser_type");
         assertThat(toolClient.arguments).containsEntry("target", "Search");
         assertThat(toolClient.arguments).containsEntry("text", "OpenClaw");
+    }
+
+    @Test
+    void currentStateDelegatesToBrowserCurrentStateTool() {
+        RecordingMcpToolClient toolClient = new RecordingMcpToolClient("""
+                {"success":true,"message":"Current page state","title":"Dashboard","url":"https://example.com/dashboard"}
+                """);
+        BrowserMcpClient client = new BrowserMcpClient(toolClient, properties());
+
+        var result = client.currentState();
+
+        assertThat(toolClient.toolName).isEqualTo("browser_current_state");
+        assertThat(toolClient.arguments).isEmpty();
+        assertThat(result.title()).isEqualTo("Dashboard");
+    }
+
+    @Test
+    void waitForPassesConditionArguments() {
+        RecordingMcpToolClient toolClient = new RecordingMcpToolClient("""
+                {"success":true,"message":"Wait condition met","url":"https://example.com/dashboard"}
+                """);
+        BrowserMcpClient client = new BrowserMcpClient(toolClient, properties());
+
+        client.waitFor("url", "dashboard", 12000);
+
+        assertThat(toolClient.toolName).isEqualTo("browser_wait_for");
+        assertThat(toolClient.arguments)
+                .containsEntry("condition", "url")
+                .containsEntry("value", "dashboard")
+                .containsEntry("timeoutMs", 12000);
+    }
+
+    @Test
+    void resetDelegatesToBrowserResetTool() {
+        RecordingMcpToolClient toolClient = new RecordingMcpToolClient("""
+                {"success":true,"message":"Browser reset completed"}
+                """);
+        BrowserMcpClient client = new BrowserMcpClient(toolClient, properties());
+
+        client.reset(true);
+
+        assertThat(toolClient.toolName).isEqualTo("browser_reset");
+        assertThat(toolClient.arguments).containsEntry("clearProfile", true);
     }
 
     @Test
@@ -129,6 +175,21 @@ class BrowserMcpClientTests {
         assertThat(result.message()).isEqualTo("EACCES: permission denied, mkdir 'data'");
     }
 
+    @Test
+    void explainsSidecarConnectivityFailure() {
+        RecordingMcpToolClient toolClient = new RecordingMcpToolClient("""
+                {"success":true,"message":"unused"}
+                """);
+        toolClient.failure = new WebToolException("MCP Streamable HTTP 调用失败", new ClosedChannelException());
+        BrowserMcpClient client = new BrowserMcpClient(toolClient, properties());
+
+        assertThatThrownBy(() -> client.open("https://example.com"))
+                .isInstanceOf(WebToolException.class)
+                .hasMessageContaining("浏览器自动化服务不可用")
+                .hasMessageContaining("127.0.0.1:3333")
+                .hasMessageContaining("docker compose -f browser-mcp-sidecar/compose.yaml up -d --build");
+    }
+
     private BrowserAutomationProperties properties() {
         return new BrowserAutomationProperties(
                 true,
@@ -147,6 +208,7 @@ class BrowserMcpClientTests {
         private String apiKey;
         private String toolName;
         private Map<String, Object> arguments = Map.of();
+        private RuntimeException failure;
 
         private RecordingMcpToolClient(String responseJson) {
             this.responseJson = responseJson;
@@ -154,6 +216,9 @@ class BrowserMcpClientTests {
 
         @Override
         public McpCallResult callTool(String endpoint, String apiKey, String toolName, Map<String, Object> arguments) {
+            if (failure != null) {
+                throw failure;
+            }
             this.endpoint = endpoint;
             this.apiKey = apiKey;
             this.toolName = toolName;

@@ -4,6 +4,9 @@
     "browser_click",
     "browser_type",
     "browser_read_page",
-    "browser_screenshot"
+    "browser_screenshot",
+    "browser_current_state",
+    "browser_wait_for",
+    "browser_reset"
   ]
 }

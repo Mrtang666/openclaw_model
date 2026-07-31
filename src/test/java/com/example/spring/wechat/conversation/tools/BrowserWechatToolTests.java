@@ -107,6 +107,47 @@ class BrowserWechatToolTests {
         assertThat(service.maxChars).isEqualTo(2000);
     }
 
+    @Test
+    void currentStateToolDelegates() {
+        RecordingBrowserAutomationService service = new RecordingBrowserAutomationService();
+        BrowserCurrentStateWechatTool tool = new BrowserCurrentStateWechatTool(service);
+
+        var reply = tool.execute(request(Map.of()));
+
+        assertThat(tool.name()).isEqualTo("browser_current_state");
+        assertThat(reply.text()).isEqualTo("state-result");
+        assertThat(service.userId).isEqualTo("wx-user-1");
+    }
+
+    @Test
+    void waitForToolPassesArguments() {
+        RecordingBrowserAutomationService service = new RecordingBrowserAutomationService();
+        BrowserWaitForWechatTool tool = new BrowserWaitForWechatTool(service);
+
+        var reply = tool.execute(request(Map.of(
+                "condition", "url",
+                "value", "dashboard",
+                "timeout_ms", "12000")));
+
+        assertThat(tool.name()).isEqualTo("browser_wait_for");
+        assertThat(reply.text()).isEqualTo("wait-result");
+        assertThat(service.waitCondition).isEqualTo("url");
+        assertThat(service.waitValue).isEqualTo("dashboard");
+        assertThat(service.waitTimeoutMs).isEqualTo(12000);
+    }
+
+    @Test
+    void resetToolPassesClearProfileFlag() {
+        RecordingBrowserAutomationService service = new RecordingBrowserAutomationService();
+        BrowserResetWechatTool tool = new BrowserResetWechatTool(service);
+
+        var reply = tool.execute(request(Map.of("clear_profile", "true")));
+
+        assertThat(tool.name()).isEqualTo("browser_reset");
+        assertThat(reply.text()).isEqualTo("reset-result");
+        assertThat(service.resetClearProfile).isTrue();
+    }
+
     private WechatToolRequest request(Map<String, String> arguments) {
         return new WechatToolRequest("wx-user-1", "user request", arguments, "", null, null);
     }
@@ -120,6 +161,10 @@ class BrowserWechatToolTests {
         private String screenshotName;
         private int maxChars;
         private BrowserActionResult screenshotResult;
+        private String waitCondition;
+        private String waitValue;
+        private int waitTimeoutMs;
+        private boolean resetClearProfile;
 
         private RecordingBrowserAutomationService() {
             super(null, null);
@@ -169,6 +214,28 @@ class BrowserWechatToolTests {
             this.userId = userId;
             this.maxChars = maxChars;
             return "read-result";
+        }
+
+        @Override
+        public String currentState(String userId) {
+            this.userId = userId;
+            return "state-result";
+        }
+
+        @Override
+        public String waitFor(String userId, String condition, String value, int timeoutMs) {
+            this.userId = userId;
+            this.waitCondition = condition;
+            this.waitValue = value;
+            this.waitTimeoutMs = timeoutMs;
+            return "wait-result";
+        }
+
+        @Override
+        public String reset(String userId, boolean clearProfile) {
+            this.userId = userId;
+            this.resetClearProfile = clearProfile;
+            return "reset-result";
         }
     }
 }

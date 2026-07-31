@@ -71,15 +71,29 @@ async function callChromeTool(name, args = {}, allowRetry = true) {
   }
 }
 
-async function resetChromeClient() {
+async function resetChromeClient(clearProfile = false) {
   const clientPromise = chromeClientPromise;
   chromeClientPromise = undefined;
   try {
     const client = await clientPromise;
-    await client.close();
+    await client?.close();
   } catch {
     // Best-effort cleanup before the next call starts a fresh Chrome DevTools MCP client.
   }
+  if (clearProfile) {
+    if (!isSafeProfileDirectory(userDataDir)) {
+      throw new Error(`Refusing to clear unsafe Chrome profile directory: ${userDataDir}`);
+    }
+    await rm(userDataDir, { recursive: true, force: true });
+    await mkdir(userDataDir, { recursive: true });
+  } else {
+    await cleanupChromeProfileLocks();
+  }
+}
+
+function isSafeProfileDirectory(directory) {
+  const value = (directory || "").replace(/\\/g, "/");
+  return value === "/data/chrome-profile" || value.startsWith("/data/chrome-profile/");
 }
 
 function isChromeToolFailure(result) {
@@ -106,6 +120,95 @@ function toolResponse(message, extra = {}) {
       ...extra
     }
   };
+}
+
+function browserStateScript() {
+  return `
+    () => {
+      const text = (document.body?.innerText || '').replace(/\\s+/g, ' ').trim();
+      const summarize = (el) => {
+        const labelText = Array.from(el.labels || []).map((label) => label.innerText || label.textContent || '').join(' ');
+        const fields = [
+          el.tagName?.toLowerCase(),
+          el.type ? 'type=' + el.type : '',
+          el.name ? 'name=' + el.name : '',
+          el.id ? 'id=' + el.id : '',
+          el.placeholder ? 'placeholder=' + el.placeholder : '',
+          el.getAttribute('aria-label') ? 'aria=' + el.getAttribute('aria-label') : '',
+          labelText ? 'label=' + labelText : '',
+          el.innerText || el.textContent || el.value || ''
+        ];
+        return fields.filter(Boolean).join(' | ').replace(/\\s+/g, ' ').trim().slice(0, 160);
+      };
+      const inputs = Array.from(document.querySelectorAll('input,textarea,[contenteditable="true"]'))
+        .filter((el) => !el.disabled && el.type !== 'hidden')
+        .map(summarize)
+        .filter(Boolean)
+        .slice(0, 30);
+      const buttons = Array.from(document.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"],a'))
+        .filter((el) => !el.disabled)
+        .map(summarize)
+        .filter(Boolean)
+        .slice(0, 40);
+      const lower = text.toLowerCase();
+      const isLoginPage = ['login', 'sign in', 'password', '邮箱', '邮件', '登录', '密码'].some((word) => lower.includes(word.toLowerCase()));
+      const requiresVerification = ['验证码', '二次验证', 'otp', 'verification code', 'two-factor', '2fa'].some((word) => lower.includes(word.toLowerCase()));
+      return {
+        success: true,
+        message: 'Current page state',
+        title: document.title || '',
+        url: location.href,
+        pageText: text.slice(0, 4000),
+        inputs,
+        buttons,
+        isLoginPage,
+        requiresVerification
+      };
+    }
+  `;
+}
+
+async function currentBrowserState(message = "Current page state", success = true, extra = {}) {
+  const result = await evaluatePageScript(browserStateScript());
+  const structured = structuredFromEvaluateResult(result);
+  return {
+    ...structured,
+    ...extra,
+    success,
+    message
+  };
+}
+
+function waitConditionScript(condition, value) {
+  return `
+    () => {
+      const condition = ${JSON.stringify(condition)};
+      const value = ${JSON.stringify(value)};
+      const title = document.title || '';
+      const url = location.href;
+      const pageText = (document.body?.innerText || '').replace(/\\s+/g, ' ').trim();
+      let matched = false;
+      let observed = '';
+      if (condition === 'url') {
+        observed = url;
+        matched = url.includes(value);
+      } else if (condition === 'title') {
+        observed = title;
+        matched = title.toLowerCase().includes(value.toLowerCase());
+      } else if (condition === 'text') {
+        observed = pageText.slice(0, 4000);
+        matched = pageText.toLowerCase().includes(value.toLowerCase());
+      } else if (condition === 'selector') {
+        observed = value;
+        try {
+          matched = Boolean(document.querySelector(value));
+        } catch {
+          matched = false;
+        }
+      }
+      return { success: true, matched, observed, title, url, pageText: pageText.slice(0, 4000) };
+    }
+  `;
 }
 
 const sessions = new Map();
@@ -284,6 +387,70 @@ function createBrowserServer() {
     }
   );
 
+  server.registerTool(
+    "browser_current_state",
+    {
+      title: "Read Current Browser State",
+      description: "Return the current URL, title, visible text summary, inputs, buttons, and login hints.",
+      inputSchema: {}
+    },
+    async () => {
+      const state = await currentBrowserState();
+      return toolResponse(state.message, state);
+    }
+  );
+
+  server.registerTool(
+    "browser_wait_for",
+    {
+      title: "Wait For Browser Condition",
+      description: "Wait until the current page URL, title, text, or selector matches a value.",
+      inputSchema: {
+        condition: z.enum(["url", "title", "text", "selector"]),
+        value: z.string().min(1),
+        timeoutMs: z.number().int().positive().max(60_000).optional()
+      }
+    },
+    async ({ condition, value, timeoutMs = 15_000 }) => {
+      const deadline = Date.now() + Math.min(Math.max(timeoutMs, 1_000), 60_000);
+      let last = {};
+      while (Date.now() <= deadline) {
+        const result = await evaluatePageScript(waitConditionScript(condition, value));
+        last = structuredFromEvaluateResult(result);
+        if (last.matched) {
+          return toolResponse("Wait condition met", {
+            ...last,
+            condition,
+            value,
+            success: true
+          });
+        }
+        await sleep(250);
+      }
+      const state = await currentBrowserState("Wait condition timed out", false, {
+        condition,
+        value,
+        observed: last.observed || ""
+      });
+      return toolResponse(state.message, state);
+    }
+  );
+
+  server.registerTool(
+    "browser_reset",
+    {
+      title: "Reset Browser Session",
+      description: "Restart the managed Chromium connection, optionally clearing the Chrome profile.",
+      inputSchema: { clearProfile: z.boolean().optional() }
+    },
+    async ({ clearProfile = false }) => {
+      await resetChromeClient(clearProfile);
+      return toolResponse("Browser reset completed", {
+        clearProfile
+      });
+    }
+  );
+
   return server;
 }
 
@@ -297,6 +464,10 @@ function safeDirectory(value) {
     return "";
   }
   return directory;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function handleMcp(req, res) {

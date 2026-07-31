@@ -64,18 +64,10 @@ public class LogisticsTrackWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "查询单个快递单号的实时物流状态、最新节点和近期轨迹。",
-                List.of(
-                        "不获取取件码，不读取短信、菜鸟、丰巢或其他第三方账户数据",
-                        "第一版仅支持即时查询，不创建物流订阅或主动提醒",
-                        "顺丰等快递公司可能要求手机号后四位；缺失时应提示用户补充",
-                        "物流状态和预计送达时间以快递公司返回数据为准"),
-                List.of(
-                        "用户明确询问快递到了哪里、何时送达、是否签收或提供快递单号时调用",
-                        "缺少 tracking_no 时必须先向用户追问，不要猜测或编造单号"),
-                List.of(
-                        "快递公司、已脱敏的快递单号、当前状态、最新物流位置和近期节点",
-                        "快递公司要求手机号校验时，返回补充手机号后四位的提示"));
+                "查询快递物流轨迹和签收状态",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

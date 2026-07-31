@@ -1,0 +1,4 @@
+interface:
+  display_name: "微信新闻与邮件"
+  short_description: "查询新闻、整理热点并起草或确认发送邮件"
+  default_prompt: "Use $wechat-news-email to fetch news or prepare email from WeChat."

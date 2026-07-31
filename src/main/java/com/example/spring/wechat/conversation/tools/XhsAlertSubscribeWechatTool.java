@@ -43,10 +43,10 @@ public class XhsAlertSubscribeWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "把当前微信会话绑定为舆情告警接收方。",
-                List.of("只能为当前微信用户订阅，不能指定其他接收人。"),
-                List.of("需要 project_key；当前会话必须包含有效微信连接 ID。"),
-                List.of("返回订阅 ID、阈值和接收用户。"));
+                "订阅小红书舆情项目风险告警",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

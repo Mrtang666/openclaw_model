@@ -1,0 +1,3 @@
+{
+  "tools": ["weather", "map_search", "taxi_service"]
+}

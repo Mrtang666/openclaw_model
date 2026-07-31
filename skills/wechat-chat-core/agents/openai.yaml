@@ -1,0 +1,4 @@
+interface:
+  display_name: "微信基础聊天"
+  short_description: "处理无需外部工具的自然对话、解释、改写和澄清"
+  default_prompt: "Use $wechat-chat-core to handle a normal WeChat chat turn."

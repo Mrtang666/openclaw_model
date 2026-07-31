@@ -79,13 +79,10 @@ public class DocumentGenerationWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "根据用户需求或最近文件上下文生成 DOCX、PDF、TXT、Markdown 文档。",
-                List.of(
-                        "缺少文档主题、用途或内容来源时需要追问。",
-                        "如果用户只要求分析文件，不要调用文档生成。",
-                        "content 参数不能填入“上一轮结果”这类占位句，信息不足时应重新生成正文。"),
-                List.of("format：目标格式", "title：文档标题", "requirement：用户具体要求", "content 或 previous_result：文档内容来源"),
-                List.of("可发送给微信用户的文件附件"));
+                "生成可发送给微信用户的文档附件",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

@@ -42,10 +42,10 @@ public class BrowserTypeWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "Type user-requested text into a page input, including credentials for a login flow.",
-                List.of("Only type values explicitly provided by the user.", "Do not invent credentials or verification codes."),
-                List.of("target: input field description.", "text: ordinary text."),
-                List.of("Typing result."));
+                "Type user-requested text into a page input.",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

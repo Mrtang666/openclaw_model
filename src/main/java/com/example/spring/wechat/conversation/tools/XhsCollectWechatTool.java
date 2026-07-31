@@ -45,10 +45,10 @@ public class XhsCollectWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "提交合规数据侧车的小红书关键词采集任务。",
-                List.of("不发布、删除、私信或操作小红书账号；只返回任务 ID，不假装采集已经完成。"),
-                List.of("需要 project_key 和 query。"),
-                List.of("返回本地采集任务 ID，结果由后台轮询后入库。"));
+                "创建小红书舆情采集任务",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

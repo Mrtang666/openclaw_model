@@ -26,7 +26,7 @@ public class KnowledgeAddWechatTool implements WechatTool {
 
     @Override
     public String description() {
-        return "当用户明确要求保存、记住、加入知识库、以后参考某段资料时，把文本、网页或文档内容加入个人知识库";
+        return "个人知识库入库工具，保存用户明确要求长期复用的资料。";
     }
 
     @Override
@@ -47,10 +47,10 @@ public class KnowledgeAddWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "保存用户明确要求长期复用的资料到知识库。",
-                List.of("只有用户明确要求保存时才调用；不要把普通聊天自动入库。", "content 必须是要保存的正文，不能只写“上一段内容”。"),
-                List.of("需要明确 title 和 content；如果缺少 content，应追问用户要保存什么。"),
-                List.of("返回知识文档 ID、标题、切分片段数量和是否重复入库。"));
+                "保存用户明确要求长期复用的资料到个人知识库",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

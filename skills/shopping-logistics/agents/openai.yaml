@@ -1,0 +1,4 @@
+interface:
+  display_name: "选购与物流"
+  short_description: "提供中立选购建议并查询快递物流状态"
+  default_prompt: "Use $shopping-logistics to advise purchases or track shipments."

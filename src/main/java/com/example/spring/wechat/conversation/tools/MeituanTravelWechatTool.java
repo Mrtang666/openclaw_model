@@ -27,7 +27,7 @@ public class MeituanTravelWechatTool implements WechatTool {
 
     @Override
     public String description() {
-        return "美团酒旅查询工具。查询酒店、机票、火车票、景点门票、度假产品并规划国内行程；结果由美团 CLI 生成并直接回复微信。";
+        return "美团酒旅查询工具，查询酒店、交通、门票、度假产品和国内行程方案。";
     }
 
     @Override
@@ -60,17 +60,10 @@ public class MeituanTravelWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "通过美团酒旅官方 CLI 查询酒店、交通、门票、度假产品和组合行程，并将原始结果直接回复微信",
-                List.of(
-                        "不办理签证或护照",
-                        "不创建真实订单、不代替用户预订或支付",
-                        "不编造美团未返回的实时价格、余票、库存和评分",
-                        "每轮最多调用一次，调整条件后再重新查询"),
-                List.of(
-                        "组合行程优先确认出发地、目的地、日期和人数",
-                        "酒店查询优先确认城市、入住日期和离店日期",
-                        "城市存在歧义时先追问"),
-                List.of("美团酒旅原始 Markdown 结果", "酒店和交通信息", "价格与评分", "预订跳转链接"));
+                "通过美团酒旅官方 CLI 查询国内酒旅信息并返回结果",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

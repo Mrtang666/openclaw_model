@@ -29,9 +29,10 @@ class EmailWechatToolTests {
                 .filteredOn(parameter -> parameter.name().equals("to"))
                 .singleElement()
                 .satisfies(parameter -> assertThat(parameter.required()).isTrue());
-        assertThat(tool.capability().toPromptText())
-                .contains("发送或准备邮件")
-                .contains("非白名单");
+        assertThat(tool.capability().summary()).isNotBlank();
+        assertThat(tool.capability().boundaries()).isEmpty();
+        assertThat(tool.capability().requiredInformation()).isEmpty();
+        assertThat(tool.capability().outputs()).isEmpty();
     }
 
     @Test

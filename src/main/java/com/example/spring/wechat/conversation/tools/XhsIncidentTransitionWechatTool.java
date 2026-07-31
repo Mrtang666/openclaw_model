@@ -47,10 +47,10 @@ public class XhsIncidentTransitionWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "按严格状态机推进舆情事件并保留操作审计。",
-                List.of("只有当前连接和用户的有效项目告警订阅者可以操作；不能跳过调查直接解决事件。"),
-                List.of("需要项目、事件编号和目标状态。"),
-                List.of("返回原状态、目标状态以及是否实际发生变更。"));
+                "推进小红书舆情事件状态",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

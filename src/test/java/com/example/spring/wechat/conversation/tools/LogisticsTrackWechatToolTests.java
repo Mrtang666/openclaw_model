@@ -30,9 +30,10 @@ class LogisticsTrackWechatToolTests {
                 .filteredOn(parameter -> parameter.name().equals("tracking_no"))
                 .singleElement()
                 .satisfies(parameter -> assertThat(parameter.required()).isTrue());
-        assertThat(tool.capability().toPromptText())
-                .contains("取件码")
-                .contains("物流订阅");
+        assertThat(tool.capability().summary()).isNotBlank();
+        assertThat(tool.capability().boundaries()).isEmpty();
+        assertThat(tool.capability().requiredInformation()).isEmpty();
+        assertThat(tool.capability().outputs()).isEmpty();
     }
 
     @Test

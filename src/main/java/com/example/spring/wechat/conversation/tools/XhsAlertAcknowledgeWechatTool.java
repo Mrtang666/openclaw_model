@@ -42,10 +42,10 @@ public class XhsAlertAcknowledgeWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "确认告警并记录确认时间。",
-                List.of("只有该项目的已订阅接收人可以确认，不能确认其他用户的告警。"),
-                List.of("需要 project_key 和 alert_event_id。"),
-                List.of("返回确认是否成功。"));
+                "确认小红书舆情告警事件",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

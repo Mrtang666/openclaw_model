@@ -1,0 +1,4 @@
+interface:
+  display_name: "百度网盘文件"
+  short_description: "处理百度网盘授权、保存、搜索、列表和分享"
+  default_prompt: "Use $baidu-netdisk to authorize, search, save, list, or share netdisk files."

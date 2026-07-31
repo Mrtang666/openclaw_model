@@ -52,17 +52,10 @@ public class ShoppingAdviceWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "提供不依赖电商平台 API 的中立选购建议，帮助用户明确关键参数、预算取舍、避坑项和下单前检查清单。",
-                List.of(
-                        "不搜索、抓取、推荐或返回京东、淘宝及其他平台的具体商品链接",
-                        "不提供实时价格、库存、销量、优惠券、佣金、下单或支付能力",
-                        "建议用于缩小选购范围，最终规格、售后和价格必须由用户在正规平台核对",
-                        "涉及地点、路线或天气时，可由 Agent 组合调用 map_search 和 weather"),
-                List.of(
-                        "用户询问某类商品怎么选、需要关注哪些参数、预算如何分配或有哪些避坑点时调用",
-                        "缺少 product 时先向用户追问商品品类"),
-                List.of(
-                        "预算建议、核心选购指标、针对使用场景的取舍建议、常见误区和下单检查清单"));
+                "生成不含具体平台链接的选购建议",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

@@ -65,17 +65,10 @@ public class EmailWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "发送或准备邮件，只支持纯文本外发邮件。",
-                List.of(
-                        "只在用户明确要求发送或准备邮件时调用",
-                        "不要编造收件人或邮箱地址",
-                        "非白名单收件人必须先让用户确认",
-                        "不读取收件箱，不发送附件，不发送 HTML 邮件",
-                        "不发送凭证、验证码、私钥等敏感信息，除非用户明确提供确切内容和接收方"),
-                List.of(
-                        "缺少收件人、主题或正文时先追问",
-                        "用户确认待发送草稿时传入 confirm_token"),
-                List.of("发送结果、待确认草稿摘要或需要补充的信息"));
+                "发送或准备纯文本邮件",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

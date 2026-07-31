@@ -49,10 +49,10 @@ public class XhsOpinionSearchWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "检索舆情分析结果并返回可追溯证据。",
-                List.of("只查询已采集数据；不能把没有结果解释为平台上不存在相关内容。"),
-                List.of("需要 project_key；其他筛选条件可选。"),
-                List.of("风险等级、风险分、摘要、发布时间、分析时间和来源链接。"));
+                "搜索已采集的小红书舆情笔记",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

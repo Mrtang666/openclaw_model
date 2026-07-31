@@ -43,9 +43,9 @@ public class BrowserClickWechatTool implements WechatTool {
     public WechatToolCapability capability() {
         return new WechatToolCapability(
                 "Click a page element.",
-                List.of("Risky clicks such as delete, pay, submit, send, authorize, or login require confirmation."),
-                List.of("target: page element description."),
-                List.of("Click result or confirmation prompt."));
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

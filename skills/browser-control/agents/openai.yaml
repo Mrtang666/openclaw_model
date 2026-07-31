@@ -1,0 +1,4 @@
+interface:
+  display_name: "浏览器控制"
+  short_description: "打开网页、点击、输入、读取页面文字和截图"
+  default_prompt: "Use $browser-control to operate a managed browser page."

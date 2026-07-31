@@ -44,10 +44,10 @@ public class XhsDailyReportWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "按北京时间自然日聚合采集量、分析量、负面量、风险事件和处置结果。",
-                List.of("统计结果只覆盖已采集并完成分析的数据，不代表小红书全平台。"),
-                List.of("需要 project_key；可指定报告日期。"),
-                List.of("返回量化指标、风险类别分布和当前高风险未结事件。"));
+                "生成小红书舆情项目日报",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

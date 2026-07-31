@@ -98,6 +98,39 @@ class FunctionCallingAgentLoopTests {
     }
 
     @Test
+    void keepsFinalClarificationTextWhenDocumentWasGenerated() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        FakeDocumentGenerationTool documentTool = new FakeDocumentGenerationTool();
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client, new WechatToolRegistry(List.of(documentTool)), 5);
+
+        when(client.chat(anyList(), anyList()))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "",
+                        List.of(new FunctionCallingToolCall(
+                                "document-1",
+                                "document_generation",
+                                Map.of("format", "docx", "title", "GitHub 今日热门项目整理"))))))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "文档已经生成好了。请告诉我你的邮箱地址，我帮你发送过去。",
+                        List.of())));
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "帮我整理Github今天比较火的几个项目，总结一个整理成文档发到我的邮箱上",
+                "",
+                List.of(),
+                (a, b) -> { },
+                (a, b) -> { },
+                (a, b, c, d) -> { })).orElseThrow();
+
+        assertThat(reply.parts()).hasSize(2);
+        assertThat(reply.parts().get(0).text()).contains("邮箱地址");
+        assertThat(reply.parts().get(1).hasFile()).isTrue();
+        assertThat(reply.parts().get(1).file().fileName()).endsWith(".docx");
+    }
+
+    @Test
     void executesToolCallsReturnsToolResultToModelAndUsesFinalAssistantAnswer() {
         DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
         WechatToolRegistry registry = new WechatToolRegistry(List.of(new FakeWeatherTool()));
@@ -231,6 +264,12 @@ class FunctionCallingAgentLoopTests {
                     assertThat(message.role()).isEqualTo("system");
                     assertThat(message.content()).contains("[Skill: meituan-travel]");
                     assertThat(message.content()).contains("Travel planning skill");
+                    assertThat(message.content()).doesNotContain(
+                            "xhs_monitor_collect",
+                            "xhs_alert_subscribe",
+                            "email_send",
+                            "knowledge_add",
+                            "web_read");
                 });
     }
 
@@ -804,6 +843,24 @@ class FunctionCallingAgentLoopTests {
                     null,
                     null);
             return WechatReply.ordered(List.of(WechatReply.Part.image("Screenshot captured\nScreenshot: data/browser/screenshots/dashboard.png", image)));
+        }
+    }
+
+    private static final class FakeDocumentGenerationTool implements WechatTool {
+        private int callCount;
+        public String name(){return "document_generation";}
+        public String description(){return "generate document";}
+        public List<String> arguments(){return List.of("format", "title");}
+        public List<WechatToolParameter> parameters(){return List.of(
+                WechatToolParameter.optionalString("format", "format", "docx"),
+                WechatToolParameter.optionalString("title", "title", "report"));}
+        public WechatReply execute(WechatToolRequest request){
+            callCount++;
+            return WechatReply.ordered(List.of(WechatReply.Part.file(new WechatReply.FileAttachment(
+                    ("DOC-" + callCount).getBytes(),
+                    "github-hot-projects.docx",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "文档已生成，请查收"))));
         }
     }
 

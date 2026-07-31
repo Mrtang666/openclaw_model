@@ -63,17 +63,10 @@ public class NewsWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "根据用户输入的关键词搜索新闻，支持分页展示，每次展示2条",
-                List.of(
-                        "不能编造不存在的新闻",
-                        "关键词从用户输入中提取"
-                ),
-                List.of(
-                        "keyword：搜索关键词（可选）",
-                        "action：分页操作（more/all，可选）"
-                ),
-                List.of("新闻摘要列表")
-        );
+                "根据用户输入关键词搜索新闻并分页展示",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

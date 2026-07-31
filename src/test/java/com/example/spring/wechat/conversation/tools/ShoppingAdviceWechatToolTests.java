@@ -21,10 +21,10 @@ class ShoppingAdviceWechatToolTests {
                 .filteredOn(parameter -> parameter.name().equals("product"))
                 .singleElement()
                 .satisfies(parameter -> assertThat(parameter.required()).isTrue());
-        assertThat(tool.capability().toPromptText())
-                .contains("不搜索")
-                .contains("具体商品链接")
-                .contains("map_search");
+        assertThat(tool.capability().summary()).isNotBlank();
+        assertThat(tool.capability().boundaries()).isEmpty();
+        assertThat(tool.capability().requiredInformation()).isEmpty();
+        assertThat(tool.capability().outputs()).isEmpty();
     }
 
     @Test

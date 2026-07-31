@@ -2,6 +2,7 @@ package com.example.spring;
 
 import com.example.spring.cli.command.core.CommandRegistry;
 import com.example.spring.chat.DashScopeChatClient;
+import com.example.spring.skill.SkillManager;
 import com.example.spring.wechat.conversation.tools.WechatToolRegistry;
 import com.example.spring.wechat.image.generation.client.DashScopeImageGenerationClient;
 import com.example.spring.wechat.voice.synthesis.service.DefaultVoiceSynthesisService;
@@ -11,6 +12,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.core.env.Environment;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.util.ReflectionTestUtils;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -36,6 +39,9 @@ class ApplicationContextTests {
     @Autowired
     private WechatToolRegistry wechatToolRegistry;
 
+    @Autowired
+    private SkillManager skillManager;
+
     @Test
     void contextLoadsWithCliRunner() {
     }
@@ -48,6 +54,16 @@ class ApplicationContextTests {
     @Test
     void disabledFoodDeliveryFeatureIsNotExposedToConversations() {
         assertThat(wechatToolRegistry.contains("food_delivery")).isFalse();
+    }
+
+    @Test
+    void registeredWechatToolsHaveSkillCoverage() {
+        List<String> uncoveredTools = wechatToolRegistry.definitions().stream()
+                .map(definition -> definition.name())
+                .filter(toolName -> skillManager.findByToolNames(List.of(toolName)).isEmpty())
+                .toList();
+
+        assertThat(uncoveredTools).isEmpty();
     }
 
     @Test

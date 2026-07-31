@@ -41,9 +41,9 @@ public class BrowserOpenWechatTool implements WechatTool {
     public WechatToolCapability capability() {
         return new WechatToolCapability(
                 "Open a browser page.",
-                List.of("Default policy only allows configured hosts.", "Do not use this to bypass login, CAPTCHA, or site risk controls."),
-                List.of("url: full web page URL."),
-                List.of("Page title, current URL, or actionable error."));
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

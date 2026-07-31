@@ -42,10 +42,10 @@ public class XhsIncidentListWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "按风险分查看聚合舆情事件。",
-                List.of("事件来自已分析数据，不代表小红书全平台完整覆盖。"),
-                List.of("需要 project_key。"),
-                List.of("事件主题、类别、状态、风险等级、风险分和关联笔记数。"));
+                "查询小红书舆情事件列表",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

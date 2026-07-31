@@ -1,0 +1,4 @@
+interface:
+  display_name: "小红书舆情监控"
+  short_description: "采集、检索、处置小红书舆情事件并生成日报"
+  default_prompt: "Use $xhs-opinion-monitoring to collect and review XHS opinion signals."

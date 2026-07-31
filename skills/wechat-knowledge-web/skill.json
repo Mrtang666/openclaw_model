@@ -1,0 +1,9 @@
+{
+  "tools": [
+    "knowledge_add",
+    "knowledge_query",
+    "knowledge_manage",
+    "web_read",
+    "web_search"
+  ]
+}

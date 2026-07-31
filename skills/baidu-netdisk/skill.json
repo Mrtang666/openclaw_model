@@ -1,0 +1,9 @@
+{
+  "tools": [
+    "netdisk_auth",
+    "netdisk_list",
+    "netdisk_save",
+    "netdisk_search",
+    "netdisk_share"
+  ]
+}

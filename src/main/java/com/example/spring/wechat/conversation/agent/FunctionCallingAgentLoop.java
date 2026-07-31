@@ -41,24 +41,13 @@ public class FunctionCallingAgentLoop {
             你是 OpenClaw 微信端 Agent。
             你可以根据用户需求调用工具，工具执行结果会以 tool message 形式返回给你。
             工作规则：
-            1. 需要天气、地图、图片、语音、音色、文件解析、文档生成、知识库、网页阅读、网页搜索等能力时，必须调用对应工具。
+            1. 需要外部数据、媒体、文件、网页、知识库、业务操作或其他工具能力时，必须调用对应工具。
             2. 工具返回结果后，你要结合工具结果和上下文继续思考，必要时继续调用下一个工具。
             3. 当用户需求已经全部完成，不再调用工具，直接输出最终回复。
             4. 如果用户需求缺少关键信息，直接追问一个最关键的问题。
             5. 如果图片、语音或文件工具已经生成媒体内容，最终回复保持简短，不要重复描述内部执行过程。
             6. 多个需求按用户表达顺序逐个处理。
-            7. 如果地图工具提示地点存在歧义或需要补充地址，立即向用户确认，不要继续拆分调用地点详情来猜测。
-            8. 用户要求“记住、保存、加入知识库、以后参考”时，优先调用 knowledge_add；用户要求“根据知识库、保存过的资料、我的资料”回答时，优先调用 knowledge_query。
-            9. 用户给出 URL 并要求阅读、总结或保存网页时，优先调用 web_read；用户要求查询最新资料、搜索互联网或找公开资料时，优先调用 web_search，必要时再对搜索结果中的 URL 调用 web_read。
-            10. 搜索结果只是摘要，不等于网页原文；当用户要求准确出处、技术细节、对比、报告、严谨回答时，搜索后应继续阅读 1-3 个高相关网页。
-            11. 普通微信回复在末尾简洁列出参考来源；用户要求“出处、引用、报告、严谨一点”时，关键结论可用 [来源1] 标注并在末尾列完整来源。
-            12. 上下文里如果出现最近搜索/最近阅读资源，用户说“第二个网页、刚才那个、上一个链接”时，应结合这些资源选择对应 URL，不要要求用户重复粘贴链接。
-            13. 用户询问国内酒店、机票、火车票、景点门票、度假推荐或组合旅行规划时，优先调用 meituan_travel；缺少关键日期、城市或人数时先追问。
-            14. 用户查询小红书舆情、负面反馈或风险事件时，使用 xhs_opinion_search 或 xhs_incident_list；用户明确要求启动一次监控采集且工具可用时，使用 xhs_monitor_collect。必须说明结果只覆盖已采集数据。
-            15. 用户要求接收小红书舆情告警时使用 xhs_alert_subscribe；用户根据告警编号明确确认时使用 xhs_alert_acknowledge。不能替其他用户订阅或确认。
-            16. 用户要求更新小红书舆情事件处置状态时使用 xhs_incident_transition；生成某日舆情日报时使用 xhs_daily_report。不能跳过调查直接把事件标记为已解决。
-            17. 调用 xhs_monitor_collect 时，project_key 和 query 必须来自用户当前消息或最近上下文中明确给出的值。不得使用工具 schema 示例值、其他话题关键词或自行猜测的默认值；缺少任一项时先追问。
-            18. 邮件发送是具有外部副作用的工具；只有用户明确要求发送或确认发送邮件时才调用 email_send，意图不确定时先追问。
+            7. 具体业务域的工具选择、缺参追问、安全确认和输出边界遵循已注入的 Skill 指令。
             """;
 
     private static final String RAG_SYSTEM_RULES = """
@@ -450,7 +439,7 @@ public class FunctionCallingAgentLoop {
         if (visibleParts == null || visibleParts.isEmpty()) {
             return WechatReply.text(content);
         }
-        if (containsVisibleMediaPart(visibleParts)) {
+        if (containsVisibleMediaPart(visibleParts) && !requiresVisibleFinalText(content, visibleParts)) {
             return WechatReply.ordered(visibleParts);
         }
         if (content.isBlank()) {
@@ -461,6 +450,24 @@ public class FunctionCallingAgentLoop {
         parts.add(WechatReply.Part.text(content));
         parts.addAll(visibleParts);
         return WechatReply.ordered(parts);
+    }
+
+    private boolean requiresVisibleFinalText(String content, List<WechatReply.Part> visibleParts) {
+        if (content == null || content.isBlank()) {
+            return false;
+        }
+        String normalized = content.strip();
+        if (visibleParts != null && visibleParts.stream()
+                .filter(part -> part != null && part.text() != null)
+                .map(part -> part.text().strip())
+                .anyMatch(normalized::equals)) {
+            return false;
+        }
+        return containsAny(normalized,
+                "邮箱", "邮件", "收件人", "地址",
+                "请告诉", "请提供", "请补充", "请确认", "需要你", "还需要",
+                "确认令牌", "确认 token", "confirm token",
+                "email", "mail", "recipient", "address");
     }
 
     private List<WechatReply.Part> toReplyParts(WechatReply reply) {

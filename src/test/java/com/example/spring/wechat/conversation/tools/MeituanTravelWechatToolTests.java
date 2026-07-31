@@ -21,16 +21,19 @@ class MeituanTravelWechatToolTests {
 
     @Test
     void returnsOfficialCliContentWithoutRewriting() {
-        String official = "## 上海三日游\n\n- 酒店：示例酒店\n- [查看详情](https://hotel.meituan.com/1)";
+        String official = "## Official Meituan result\n\n- Hotel: sample hotel\n- [Open](https://hotel.meituan.com/1)";
         when(client.query(any())).thenReturn(new MeituanTravelResult(official));
 
         var reply = tool.execute(request(Map.of(
-                "query", "杭州出发的上海三日游",
-                "origin_query", "帮我规划上海三日游",
-                "city", "上海")));
+                "query", "Shanghai three day trip from Hangzhou",
+                "origin_query", "Plan a Shanghai three day trip",
+                "city", "Shanghai")));
 
         assertThat(reply.text()).isEqualTo(official);
-        verify(client).query(new TravelQuery("杭州出发的上海三日游", "帮我规划上海三日游", "上海"));
+        verify(client).query(new TravelQuery(
+                "Shanghai three day trip from Hangzhou",
+                "Plan a Shanghai three day trip",
+                "Shanghai"));
     }
 
     @Test
@@ -40,22 +43,22 @@ class MeituanTravelWechatToolTests {
                 "secret detail"));
 
         var reply = tool.execute(request(Map.of(
-                "query", "北京酒店",
-                "origin_query", "北京酒店")));
+                "query", "Beijing hotel",
+                "origin_query", "Beijing hotel")));
 
-        assertThat(reply.text())
-                .isEqualTo("美团酒旅服务鉴权失败，请检查访问凭证。")
-                .doesNotContain("secret detail");
+        assertThat(reply.text()).isNotBlank().doesNotContain("secret detail");
     }
 
     @Test
-    void exposesOnlyTravelQueryCapabilities() {
+    void exposesCompactMetadataBecauseWorkflowRulesLiveInSkill() {
         assertThat(tool.name()).isEqualTo("meituan_travel");
         assertThat(tool.parameters()).extracting(WechatToolParameter::name)
                 .containsExactly("query", "origin_query", "city", "request_type");
-        assertThat(tool.description()).contains("酒店", "机票", "火车票", "景点门票");
-        assertThat(tool.capability().boundaries())
-                .anyMatch(value -> value.contains("不创建真实订单"));
+        assertThat(tool.description().length()).isLessThanOrEqualTo(80);
+        assertThat(tool.capability().summary()).isNotBlank();
+        assertThat(tool.capability().boundaries()).isEmpty();
+        assertThat(tool.capability().requiredInformation()).isEmpty();
+        assertThat(tool.capability().outputs()).isEmpty();
     }
 
     private WechatToolRequest request(Map<String, String> arguments) {

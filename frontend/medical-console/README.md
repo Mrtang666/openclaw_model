@@ -13,7 +13,8 @@
 
 ## 当前实现
 
-- 使用本地 Mock 数据展示页面和交互。
+- 未携带有效登录 token 时使用本地 Mock 数据展示页面和交互。
+- 家属状态页会同步当前照护方案、任务、打卡与告警；任务可由家属确认完成，方案说明支持展开查看。
 - 医生端患者切换会同步影响详情页。
 - 绑定页面只做前端交互演示，真实绑定需要后端 token 和权限校验。
 - 告警处理、方案确认按钮目前是页面原型，后续接入真实接口。
@@ -23,6 +24,9 @@
 - 家属端：`GET /api/care/v1/family/patients`
 - 家属端：`GET /api/care/v1/family/patients/{patientId}/status`
 - 家属端：`GET /api/care/v1/family/patients/{patientId}/tasks`
+- 家属端：`POST /api/care/v1/family/tasks/{taskId}/complete`
+- 家属端：`GET /api/care/v1/family/patients/{patientId}/plans`
+- 家属端：`GET /api/care/v1/family/plans/{planId}`
 - 家属端：`GET /api/care/v1/family/patients/{patientId}/alerts`
 - 家属端：`GET /api/care/v1/family/patients/{patientId}/checkins`
 - 医生端：`GET /api/care/v1/clinical/patients`

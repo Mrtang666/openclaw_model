@@ -30,6 +30,7 @@ import com.example.spring.wechat.model.WechatIncomingVideo;
 import com.example.spring.wechat.model.WechatIncomingVoice;
 import com.example.spring.wechat.conversation.tools.WechatToolRegistry;
 import com.example.spring.wechat.conversation.tools.WechatToolRequest;
+import com.example.spring.wechat.care.service.CareTaskInteractionService;
 import com.example.spring.wechat.image.exception.ImageUnderstandingException;
 import com.example.spring.wechat.image.model.ImageAnalysisRequest;
 import com.example.spring.wechat.image.service.ImageInputResolver;
@@ -533,6 +534,9 @@ public class WechatConversationService {
             return false;
         }
         String value = text.strip();
+        if (CareTaskInteractionService.looksLikeTaskReply(value)) {
+            return true;
+        }
         if (looksLikeRenameRequest(value)) {
             return true;
         }
@@ -547,6 +551,9 @@ public class WechatConversationService {
 
     private String directCareAction(String text) {
         String value = text == null ? "" : text.strip();
+        if (CareTaskInteractionService.looksLikeTaskReply(value)) {
+            return "task_response";
+        }
         if (looksLikeRenameRequest(value)) {
             return "rename";
         }

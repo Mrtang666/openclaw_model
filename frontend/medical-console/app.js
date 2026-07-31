@@ -234,14 +234,34 @@ async function hydratePatientStatus(patient, kind) {
     patient.riskLabel = status.urgentAlertCount > 0 ? "异常告警" : status.openAlertCount > 0 ? "需要关注" : "状态平稳";
     patient.lastUpdate = status.generatedAt ? new Date(status.generatedAt).toLocaleString() : "刚刚";
     patient.summary = `近 7 天打卡 ${status.checkInCount} 次，未处理告警 ${status.openAlertCount} 个，紧急告警 ${status.urgentAlertCount} 个，待确认记忆 ${status.pendingMemoryCount} 条。`;
+    const plans = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/plans`).catch(() => []);
+    const activePlan = (plans || []).find((plan) => plan.status === "ACTIVE")
+        || (plans || []).find((plan) => ["APPROVED", "WAITING_REVIEW", "DRAFT"].includes(plan.status));
+    patient.planDetails = activePlan
+        ? await careApi(`${apiPrefix(kind)}/plans/${activePlan.id}`).catch(() => ({
+            plan: activePlan,
+            version: null,
+            tasks: []
+        }))
+        : null;
+    if (patient.planDetails?.version) {
+        patient.plan = patient.planDetails.version.summary
+            || patient.planDetails.version.instructions
+            || patient.planDetails.plan?.title
+            || "当前没有方案说明。";
+    }
     const tasks = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/tasks`).catch(() => []);
     const alerts = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/alerts`).catch(() => []);
     const checkins = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/checkins`).catch(() => []);
     patient.tasks = (tasks || []).map((task) => ({
         id: task.id,
-        title: task.title || `任务 #${task.id}`,
+        version: task.version ?? 0,
+        statusCode: String(task.status || "").toUpperCase(),
+        title: normalizePlanText(task.title || `任务 ${task.id}`) || `任务 ${task.id}`,
         status: taskStatusLabel(task.status),
-        detail: taskDetailText(task)
+        detail: normalizePlanText(taskDetailText(task)),
+        dueAt: task.dueAt || null,
+        completedAt: task.completedAt || null
     }));
     patient.alerts = (alerts || []).map((alert) => ({
         id: alert.id,
@@ -255,7 +275,7 @@ async function hydratePatientStatus(patient, kind) {
         title: item.incidentType || "每日打卡",
         detail: item.originalText || `睡眠：${item.sleepStatus || "-"}，饮水：${item.hydrationStatus || "-"}`
     }));
-    patient.taskDone = patient.tasks.filter((task) => task.status === "COMPLETED").length;
+    patient.taskDone = patient.tasks.filter((task) => task.statusCode === "COMPLETED").length;
     patient.taskTotal = patient.tasks.length;
     return patient;
 }
@@ -269,8 +289,26 @@ function taskStatusLabel(status) {
     if (value === "COMPLETED") return "已完成";
     if (value === "OVERDUE") return "已超时";
     if (value === "CANCELLED") return "已取消";
+    if (value === "SKIPPED") return "已跳过";
     if (value === "PENDING") return "待完成";
     return status || "待处理";
+}
+
+function planStatusLabel(status) {
+    const value = String(status || "").toUpperCase();
+    if (value === "ACTIVE") return "执行中";
+    if (value === "APPROVED") return "已审核";
+    if (value === "WAITING_REVIEW") return "待审核";
+    if (value === "PAUSED") return "已暂停";
+    if (value === "COMPLETED") return "已结束";
+    if (value === "DRAFT") return "草稿";
+    return status || "未同步";
+}
+
+function taskStatusClass(statusCode) {
+    if (statusCode === "COMPLETED") return "completed";
+    if (["OVERDUE", "PENDING"].includes(statusCode)) return "pending";
+    return "inactive";
 }
 
 function taskDetailText(task) {
@@ -280,6 +318,50 @@ function taskDetailText(task) {
         return `提醒时间：${due} · ${instructions}`;
     }
     return instructions || due || "查看任务详情";
+}
+
+function normalizePlanText(value) {
+    return String(value || "")
+        .replace(/\r\n?/g, "\n")
+        .replace(/^\s*#{1,6}\s*/gm, "")
+        .replace(/^\s*[*+-]\s+/gm, "")
+        .replace(/\*\*(.*?)\*\*/g, "$1")
+        .replace(/__(.*?)__/g, "$1")
+        .replace(/`([^`]+)`/g, "$1")
+        .replace(/[#*]/g, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+}
+
+function planScheduleText(template) {
+    const scheduleType = {
+        ONCE: "一次性",
+        DAILY: "每日",
+        WEEKLY: "每周"
+    }[String(template?.scheduleType || "").toUpperCase()];
+    const parts = [];
+    if (scheduleType) parts.push(scheduleType);
+    if (template?.localTime) parts.push(`时间 ${String(template.localTime).slice(0, 5)}`);
+    if (template?.scheduledDate) parts.push(`日期 ${template.scheduledDate}`);
+    if (template?.dayOfWeek) parts.push(`星期 ${template.dayOfWeek}`);
+    return parts.join("，");
+}
+
+function buildPlanText(patient, version, templates) {
+    const sections = [];
+    if (version?.summary) sections.push(`方案摘要\n${version.summary}`);
+    if (version?.instructions) sections.push(`执行说明\n${version.instructions}`);
+    const taskText = templates.map((template, index) => {
+        const schedule = planScheduleText(template);
+        return [
+            `任务 ${index + 1}：${template.title || "未命名任务"}`,
+            template.instructions,
+            schedule
+        ].filter(Boolean).join("\n");
+    }).join("\n\n");
+    if (taskText) sections.push(`任务安排\n${taskText}`);
+    if (!sections.length && patient.plan) sections.push(patient.plan);
+    return normalizePlanText(sections.join("\n\n")) || "医生暂未填写详细说明。";
 }
 
 function escapeHtml(value) {
@@ -468,10 +550,11 @@ async function renderCaregiverStatus() {
         ${header("家属查看", `${patient.name}的今日状态`, "家属端优先展示当天状态、任务完成情况和异常提醒。", `<button class="button primary">联系医生</button>`)}
         ${notice}
         ${summaryGrid(patient)}
+        ${carePlanSection(patient)}
         <section class="grid two">
             <div class="card">
                 <h2 class="card-title">任务与打卡</h2>
-                ${taskList(patient)}
+                ${taskList(patient, { interactive: true })}
             </div>
             <div class="card">
                 <h2 class="card-title">异常与建议</h2>
@@ -481,6 +564,7 @@ async function renderCaregiverStatus() {
         </section>
     `;
     bindSummaryJumps();
+    bindTaskActions();
     const contactButton = document.querySelector(".page-header .button.primary");
     if (contactButton) {
         contactButton.addEventListener("click", () => contactDoctor(patient));
@@ -1074,6 +1158,38 @@ function summaryGrid(patient) {
     `;
 }
 
+function carePlanSection(patient) {
+    const details = patient.planDetails;
+    const plan = details?.plan;
+    const version = details?.version;
+    const templates = Array.isArray(details?.tasks) ? details.tasks : [];
+    const title = normalizePlanText(plan?.title || "今日照护方案") || "今日照护方案";
+    const status = planStatusLabel(plan?.status);
+    const effective = version?.effectiveFrom
+        ? `${version.effectiveFrom}${version.effectiveTo ? ` 至 ${version.effectiveTo}` : ""}`
+        : "按医生发布的当前版本执行";
+    const instructions = buildPlanText(patient, version, templates);
+    const templateSummary = templates.length
+        ? `已拆分 ${templates.length} 项日常任务`
+        : "任务正在同步中";
+    return `
+        <section class="card plan-card" aria-labelledby="care-plan-title">
+            <div class="plan-card-header">
+                <div>
+                    <div class="section-kicker">今日照护方案</div>
+                    <h2 class="card-title" id="care-plan-title">${escapeHtml(title)}</h2>
+                    <div class="plan-meta">${escapeHtml(effective)} · ${escapeHtml(version?.timezone || "Asia/Shanghai")} · ${escapeHtml(templateSummary)}</div>
+                </div>
+                <span class="badge ${plan?.status === "ACTIVE" ? "green" : "blue"}">${escapeHtml(status)}</span>
+            </div>
+            <details class="plan-disclosure">
+                <summary>查看方案说明</summary>
+                <div class="plan-textbox">${escapeHtml(instructions)}</div>
+            </details>
+        </section>
+    `;
+}
+
 function patientProfile(patient) {
     return `
         <div class="list">
@@ -1109,21 +1225,65 @@ function patientPreview(patient) {
     `;
 }
 
-function taskList(patient) {
+function taskList(patient, { interactive = false, showDetail = !interactive } = {}) {
     if (!patient.tasks.length) return `<div class="empty-state">当前没有任务。</div>`;
     return `
-        <div class="list">
-            ${patient.tasks.map((task) => `
-                <div class="list-item">
-                    <div class="list-row">
-                        <div class="item-title">${task.title}</div>
-                        <span class="badge ${task.status.includes("超时") || task.status.includes("未") || task.status.includes("待") ? "amber" : "green"}">${task.status}</span>
+        <div class="task-list">
+            ${patient.tasks.map((task, index) => {
+                const statusCode = task.statusCode || (task.status === "已完成" ? "COMPLETED" : "PENDING");
+                const completed = statusCode === "COMPLETED";
+                const inactive = ["CANCELLED", "SKIPPED"].includes(statusCode);
+                const canComplete = interactive && task.id && !completed && !inactive;
+                const badgeClass = completed ? "green" : inactive ? "blue" : "amber";
+                return `
+                <article class="task-item ${taskStatusClass(statusCode)}">
+                    <div class="task-leading">
+                        ${interactive ? `
+                            <button class="task-check" type="button" title="${completed ? "任务已完成" : "标记为已完成"}"
+                                aria-label="${completed ? "任务已完成" : `标记${escapeHtml(task.title)}为已完成`}" data-task-complete="${task.id || ""}"
+                                data-task-version="${task.version ?? 0}" ${canComplete ? "" : "disabled"}>
+                                <span class="task-dot">${completed ? "✓" : ""}</span>
+                            </button>
+                        ` : `<span class="task-dot task-dot-readonly">${completed ? "✓" : ""}</span>`}
+                        <span class="task-index">${String(index + 1).padStart(2, "0")}</span>
                     </div>
-                    <div class="item-meta">${task.detail}</div>
-                </div>
-            `).join("")}
+                    <div class="task-content">
+                        <div class="list-row">
+                            <h3 class="task-heading">${escapeHtml(task.title)}</h3>
+                            <span class="badge ${badgeClass}">${escapeHtml(task.status)}</span>
+                        </div>
+                        ${showDetail ? `<div class="item-meta">${escapeHtml(task.detail)}</div>` : ""}
+                    </div>
+                </article>
+                `;
+            }).join("")}
         </div>
     `;
+}
+
+function bindTaskActions() {
+    document.querySelectorAll("[data-task-complete]").forEach((button) => {
+        button.addEventListener("click", async () => {
+            const taskId = button.dataset.taskComplete;
+            if (!taskId || button.disabled) return;
+            button.disabled = true;
+            button.classList.add("is-loading");
+            try {
+                await careApi(`${apiPrefix("family")}/tasks/${taskId}/complete`, {
+                    method: "POST",
+                    body: JSON.stringify({
+                        version: Number(button.dataset.taskVersion || 0),
+                        note: "家属端确认患者已完成任务"
+                    })
+                });
+                await renderCaregiverStatus();
+            } catch (error) {
+                button.disabled = false;
+                button.classList.remove("is-loading");
+                window.alert(error.message);
+            }
+        });
+    });
 }
 
 function alertList(patient) {

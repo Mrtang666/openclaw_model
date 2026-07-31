@@ -540,6 +540,9 @@ public class WechatConversationService {
         if (looksLikeRenameRequest(value)) {
             return true;
         }
+        if (looksLikeCarePlanRequest(value)) {
+            return true;
+        }
         return containsAny(value,
                 "\u60a3\u8005\u7f16\u53f7", "\u6211\u7684\u7f16\u53f7", "\u7528\u6237\u7f16\u53f7", "\u533b\u7597\u8eab\u4efd", "\u5f53\u524d\u8eab\u4efd",
                 "\u7ed1\u5b9a\u60a3\u8005", "\u65b0\u589e\u60a3\u8005", "\u6dfb\u52a0\u60a3\u8005",
@@ -549,6 +552,22 @@ public class WechatConversationService {
                 "\u5236\u5b9a\u65b9\u6848", "\u7167\u62a4\u65b9\u6848", "\u786e\u8ba4\u53d1\u9001\u7ed9\u60a3\u8005", "\u53d1\u9001\u7ed9\u60a3\u8005");
     }
 
+    private boolean looksLikeCarePlanRequest(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        boolean planning = containsAny(text,
+                "\u5236\u5b9a\u8ba1\u5212", "\u65e5\u5e38\u8ba1\u5212", "\u7167\u62a4\u8ba1\u5212",
+                "\u5236\u5b9a\u65b9\u6848", "\u7167\u62a4\u65b9\u6848", "\u7ed9\u60a3\u8005\u5b89\u6392",
+                "\u4e3a\u60a3\u8005\u5236\u5b9a", "\u7ed9\u60a3\u8005\u5236\u5b9a");
+        if (planning) {
+            return true;
+        }
+        return text.contains("\u5236\u5b9a")
+                && containsAny(text, "\u8ba1\u5212", "\u65b9\u6848", "\u4efb\u52a1")
+                && containsAny(text, "\u60a3\u8005", "\u75c5\u4eba", "\u559d\u6c34", "\u996e\u6c34", "\u670d\u836f", "\u5b89\u5168", "\u6253\u5361");
+    }
+
     private String directCareAction(String text) {
         String value = text == null ? "" : text.strip();
         if (CareTaskInteractionService.looksLikeTaskReply(value)) {
@@ -556,6 +575,9 @@ public class WechatConversationService {
         }
         if (looksLikeRenameRequest(value)) {
             return "rename";
+        }
+        if (looksLikeCarePlanRequest(value)) {
+            return "plan_draft";
         }
         if (containsAny(value, "\u60a3\u8005\u7f16\u53f7", "\u6211\u7684\u7f16\u53f7", "\u7528\u6237\u7f16\u53f7", "\u533b\u7597\u8eab\u4efd", "\u5f53\u524d\u8eab\u4efd")) {
             return "whoami";

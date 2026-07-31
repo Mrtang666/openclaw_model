@@ -22,13 +22,14 @@ public class CarePlanTimeParser {
 
     private static final String PERIOD = "凌晨|早上|早晨|上午|中午|下午|午后|傍晚|晚上|晚间|夜间|睡前";
     private static final Pattern COLON_TIME = Pattern.compile(
-            "(?<period>" + PERIOD + ")?\\s*(?<hour>\\d{1,2})\\s*[:：]\\s*(?<minute>\\d{1,2})");
+            "(?<period>" + PERIOD + ")?\\s*(?<hour>\\d{1,2})\\s*[:：.]\\s*(?<minute>\\d{1,2})");
     private static final Pattern POINT_TIME = Pattern.compile(
             "(?<period>" + PERIOD + ")?\\s*(?<hour>\\d{1,2}|零|一|二|三|四|五|六|七|八|九|十|十一|十二|十三|十四|十五|十六|十七|十八|十九|二十|二十一|二十二|二十三|两)\\s*点\\s*(?:(?<half>半)|(?<minute>\\d{1,2})\\s*分?)?");
     private static final Pattern INTERVAL_HOURS = Pattern.compile("每\\s*(\\d{1,2})\\s*(?:个)?\\s*小时");
+    private static final String CLOCK = "(?:(?:" + PERIOD + ")?\\s*(?:\\d{1,2}(?:\\s*[:：.]\\s*\\d{1,2})?|"
+            + "[零一二三四五六七八九十两]+\\s*点\\s*(?:半|\\d{1,2}\\s*分?)?))";
     private static final Pattern TIME_RANGE = Pattern.compile(
-            "(?:\\d{1,2}|[零一二三四五六七八九十两]+)\\s*(?:点|[:：])?\\s*(?:到|至|~|～|—|-)\\s*"
-                    + "(?:\\d{1,2}|[零一二三四五六七八九十两]+)");
+            "(?<start>" + CLOCK + ")\\s*(?:到|至|~|～|—|-)\\s*(?<end>" + CLOCK + ")");
     private static final Map<String, Integer> CHINESE_HOURS = Map.ofEntries(
             Map.entry("零", 0), Map.entry("一", 1), Map.entry("二", 2), Map.entry("两", 2),
             Map.entry("三", 3), Map.entry("四", 4), Map.entry("五", 5), Map.entry("六", 6),
@@ -73,6 +74,47 @@ public class CarePlanTimeParser {
             resolved.add(current);
         }
         return List.copyOf(resolved);
+    }
+
+    public List<TimedTask> extractTimedTasks(String source) {
+        if (source == null || source.isBlank()) {
+            return List.of();
+        }
+        if (INTERVAL_HOURS.matcher(source).find()) {
+            return List.of();
+        }
+        List<RangeMatch> ranges = new ArrayList<>();
+        Matcher matcher = TIME_RANGE.matcher(source);
+        while (matcher.find()) {
+            LocalTime start = parseClock(matcher.group("start"));
+            LocalTime followUp = parseClock(matcher.group("end"));
+            if (start != null && followUp != null && followUp.isAfter(start)) {
+                ranges.add(new RangeMatch(matcher.start(), matcher.end(), start, followUp));
+            }
+        }
+        List<TimedTask> tasks = new ArrayList<>();
+        for (int index = 0; index < ranges.size(); index++) {
+            RangeMatch range = ranges.get(index);
+            int nextStart = index + 1 < ranges.size() ? ranges.get(index + 1).startIndex() : source.length();
+            String description = source.substring(range.endIndex(), nextStart)
+                    .replaceFirst("^[\\s:：,，;；。\\-]+", "")
+                    .replaceFirst("[\\s,，;；。]+$", "")
+                    .strip();
+            if (!description.isBlank()) {
+                tasks.add(new TimedTask(range.start(), range.followUp(), description));
+            }
+        }
+        return List.copyOf(tasks);
+    }
+
+    private LocalTime parseClock(String source) {
+        if (source == null || source.isBlank()) {
+            return null;
+        }
+        Map<LocalTime, Boolean> values = new LinkedHashMap<>();
+        collect(COLON_TIME.matcher(source), false, values);
+        collect(POINT_TIME.matcher(source), true, values);
+        return values.keySet().stream().findFirst().orElse(null);
     }
 
     private void collect(Matcher matcher, boolean supportsHalfHour, Map<LocalTime, Boolean> result) {
@@ -146,5 +188,11 @@ public class CarePlanTimeParser {
             return hour >= 1 && hour <= 11 ? hour + 12 : hour;
         }
         return hour;
+    }
+
+    public record TimedTask(LocalTime start, LocalTime followUp, String description) {
+    }
+
+    private record RangeMatch(int startIndex, int endIndex, LocalTime start, LocalTime followUp) {
     }
 }

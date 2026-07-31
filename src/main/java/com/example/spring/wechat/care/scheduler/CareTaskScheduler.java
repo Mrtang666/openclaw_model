@@ -67,6 +67,7 @@ public class CareTaskScheduler {
     public void process(Instant now) {
         materialize(now);
         enqueueDueReminders(now);
+        enqueueFollowUps(now);
         markOverdue(now);
         enqueueOverdueNotifications(now);
     }
@@ -86,9 +87,7 @@ public class CareTaskScheduler {
 
     void enqueueDueReminders(Instant now) {
         for (CareTaskInstance task : taskRepository.findReadyForReminder(now, taskProperties.batchSize())) {
-            List<NotificationTarget> targets = identityRepository.listUserNotificationTargetsByRole(
-                    task.patientUserId(), MedicalRole.PATIENT);
-            for (NotificationTarget target : targets) {
+            for (NotificationTarget target : patientTargets(task.patientUserId())) {
                 enqueue(task, target, "CARE_TASK_DUE",
                         dueReminderContent(task), now);
             }
@@ -99,6 +98,15 @@ public class CareTaskScheduler {
     void markOverdue(Instant now) {
         for (Long taskId : taskRepository.findReadyToMarkOverdue(now, taskProperties.batchSize())) {
             if (taskId != null) taskRepository.markOverdue(taskId, now);
+        }
+    }
+
+    void enqueueFollowUps(Instant now) {
+        for (CareTaskInstance task : taskRepository.findReadyForFollowUp(now, taskProperties.batchSize())) {
+            for (NotificationTarget target : patientTargets(task.patientUserId())) {
+                enqueue(task, target, "CARE_TASK_FOLLOW_UP", followUpContent(task), now);
+            }
+            taskRepository.markFollowUpEnqueued(task.id(), now);
         }
     }
 
@@ -143,17 +151,36 @@ public class CareTaskScheduler {
 
     private String dueReminderContent(CareTaskInstance task) {
         return """
-                【任务打卡提醒】
-                任务：%s
+                【任务提醒】
+                现在请完成：%s
                 %s
 
-                请直接回复：
-                完成 #%d
-                或
-                未完成 #%d
+                完成后请回复：完成 #%d
+                """.formatted(task.title(), instructions(task), task.id()).strip();
+    }
 
-                未完成会标记为异常，并通知已授权家属协助关注。
-                """.formatted(task.title(), task.instructions(), task.id(), task.id()).strip();
+    private String followUpContent(CareTaskInstance task) {
+        return """
+                【任务确认】
+                请确认“%s”是否已经完成。
+
+                已完成请回复：完成 #%d
+                未完成请回复：未完成 #%d
+                """.formatted(task.title(), task.id(), task.id()).strip();
+    }
+
+    private String instructions(CareTaskInstance task) {
+        String value = task.instructions() == null ? "" : task.instructions().strip();
+        return value.isBlank() || value.equals(task.title()) ? "" : "\n" + value;
+    }
+
+    private List<NotificationTarget> patientTargets(long patientUserId) {
+        Map<String, NotificationTarget> distinct = new LinkedHashMap<>();
+        for (NotificationTarget target : identityRepository.listUserNotificationTargetsByRole(
+                patientUserId, MedicalRole.PATIENT)) {
+            distinct.putIfAbsent(target.userId() + ":" + target.recipientId(), target);
+        }
+        return List.copyOf(distinct.values());
     }
 
     private String overdueNotificationContent(CareTaskInstance task) {

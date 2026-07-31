@@ -97,6 +97,7 @@ let selectedPatientId = "P001";
 let livePatients = [];
 
 const routes = {
+    "/patient/tasks": renderPatientTasks,
     "/bind/caregiver": renderCaregiverBind,
     "/bind/doctor": renderDoctorBind,
     "/caregiver/status": renderCaregiverStatus,
@@ -106,6 +107,7 @@ const routes = {
 };
 
 const routeRoles = {
+    "/patient/tasks": ["PATIENT"],
     "/bind/caregiver": ["CAREGIVER", "FAMILY"],
     "/caregiver/status": ["CAREGIVER", "FAMILY"],
     "/bind/doctor": ["DOCTOR", "NURSE", "THERAPIST", "DIETITIAN"],
@@ -189,10 +191,53 @@ async function careApi(path, options = {}) {
 }
 
 function apiPrefix(kind) {
+    if (kind === "patient") return "/api/care/v1/patient";
     if (kind === "family") return "/api/care/v1/family";
     if (kind === "clinical") return "/api/care/v1/clinical";
     const active = role().toUpperCase();
     return active === "DOCTOR" ? "/api/care/v1/clinical" : "/api/care/v1/family";
+}
+
+async function renderPatientTasks() {
+    let tasks = [];
+    let notice = "";
+    try {
+        tasks = await careApi("/api/care/v1/patient/tasks");
+    } catch (error) {
+        notice = `<div class="message info">暂时无法读取今日任务：${escapeHtml(error.message)}</div>`;
+    }
+    const patient = {
+        tasks: (tasks || []).map((task) => ({
+            id: task.id,
+            version: task.version ?? 0,
+            statusCode: String(task.status || "").toUpperCase(),
+            title: normalizePlanText(task.title || `任务 ${task.id}`) || `任务 ${task.id}`,
+            status: taskStatusLabel(task.status),
+            detail: normalizePlanText(taskDetailText(task)),
+            dueAt: task.dueAt || null,
+            completedAt: task.completedAt || null
+        }))
+    };
+    const completedCount = patient.tasks.filter((task) => task.statusCode === "COMPLETED").length;
+    root().innerHTML = `
+        ${header("患者任务", "今日任务与打卡", "系统会在任务开始时发送微信提醒，请按提醒中的任务编号完成打卡。")}
+        ${notice}
+        <section class="grid two">
+            <div class="card">
+                <h2 class="card-title">今日任务</h2>
+                ${taskList(patient, { interactive: true, showDetail: true, showTime: true })}
+            </div>
+            <div class="card">
+                <h2 class="card-title">完成情况</h2>
+                <div class="summary-grid">
+                    <div class="summary-item"><span>今日任务</span><strong>${patient.tasks.length}</strong></div>
+                    <div class="summary-item"><span>已完成</span><strong>${completedCount}</strong></div>
+                    <div class="summary-item"><span>待确认</span><strong>${patient.tasks.filter((task) => task.statusCode === "PENDING").length}</strong></div>
+                </div>
+            </div>
+        </section>
+    `;
+    bindTaskActions();
 }
 
 async function loadPatients(kind) {
@@ -256,7 +301,10 @@ async function hydratePatientStatus(patient, kind) {
     const tasks = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/tasks`).catch(() => []);
     const alerts = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/alerts`).catch(() => []);
     const checkins = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/checkins`).catch(() => []);
-    patient.tasks = (tasks || []).map((task) => ({
+    const currentPlanTasks = activePlan
+        ? (tasks || []).filter((task) => String(task.planId) === String(activePlan.id))
+        : (tasks || []);
+    patient.tasks = currentPlanTasks.map((task) => ({
         id: task.id,
         version: task.version ?? 0,
         statusCode: String(task.status || "").toUpperCase(),
@@ -544,6 +592,13 @@ async function renderCaregiverStatus() {
     let notice = "";
     try {
         await loadPatients("family");
+        if (!livePatients.length) {
+            root().innerHTML = `
+                ${header("家属查看", "患者状态", "先绑定患者，才能查看任务、打卡和异常情况。", `<a class="button primary" href="#/bind/caregiver">绑定患者</a>`)}
+                <div class="empty-state">当前没有绑定患者。请先在家属绑定患者页面完成绑定。</div>
+            `;
+            return;
+        }
         patient = await hydratePatientStatus(selectedPatient(), "family");
     } catch (error) {
         notice = backendUnavailableMessage(error);
@@ -552,6 +607,7 @@ async function renderCaregiverStatus() {
     root().innerHTML = `
         ${header("家属查看", `${patient.name}的今日状态`, "家属端优先展示当天状态、任务完成情况和异常提醒。", `<button class="button primary">联系医生</button>`)}
         ${notice}
+        ${patientTabs()}
         ${summaryGrid(patient)}
         ${carePlanSection(patient)}
         <section class="grid two">
@@ -566,6 +622,7 @@ async function renderCaregiverStatus() {
             </div>
         </section>
     `;
+    bindPatientTabs(renderCaregiverStatus);
     bindSummaryJumps();
     bindTaskActions();
     const contactButton = document.querySelector(".page-header .button.primary");
@@ -1275,14 +1332,19 @@ function bindTaskActions() {
             button.disabled = true;
             button.classList.add("is-loading");
             try {
-                await careApi(`${apiPrefix("family")}/tasks/${taskId}/complete`, {
+                const taskApi = role().toUpperCase() === "PATIENT" ? apiPrefix("patient") : apiPrefix("family");
+                await careApi(`${taskApi}/tasks/${taskId}/complete`, {
                     method: "POST",
                     body: JSON.stringify({
                         version: Number(button.dataset.taskVersion || 0),
                         note: "家属端确认患者已完成任务"
                     })
                 });
-                await renderCaregiverStatus();
+                if (role().toUpperCase() === "PATIENT") {
+                    await renderPatientTasks();
+                } else {
+                    await renderCaregiverStatus();
+                }
             } catch (error) {
                 button.disabled = false;
                 button.classList.remove("is-loading");

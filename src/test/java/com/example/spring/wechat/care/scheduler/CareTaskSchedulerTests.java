@@ -52,7 +52,8 @@ class CareTaskSchedulerTests {
                 null, null, "task-9", 0L, 30, 90, NOW, NOW);
         when(plans.listActiveTemplates()).thenReturn(List.of());
         when(tasks.findReadyForReminder(NOW, 100)).thenReturn(List.of(task));
-        when(identities.listUserNotificationTargets(1L))
+        when(tasks.findReadyForFollowUp(NOW, 100)).thenReturn(List.of());
+        when(identities.listUserNotificationTargetsByRole(1L, com.example.spring.wechat.care.model.MedicalRole.PATIENT))
                 .thenReturn(List.of(new NotificationTarget(1L, "connection", "recipient")));
         when(tasks.findReadyToMarkOverdue(NOW, 100)).thenReturn(List.of());
         when(tasks.findReadyForOverdueNotification(NOW, 100)).thenReturn(List.of());
@@ -85,6 +86,7 @@ class CareTaskSchedulerTests {
                 NOW, null, "task-9", 0L, 30, 30, NOW, NOW);
         when(plans.listActiveTemplates()).thenReturn(List.of());
         when(tasks.findReadyForReminder(NOW, 100)).thenReturn(List.of());
+        when(tasks.findReadyForFollowUp(NOW, 100)).thenReturn(List.of());
         when(tasks.findReadyToMarkOverdue(NOW, 100)).thenReturn(List.of());
         when(tasks.findReadyForOverdueNotification(NOW, 100)).thenReturn(List.of(task));
         when(identities.listNotificationTargetsByRole(
@@ -107,6 +109,37 @@ class CareTaskSchedulerTests {
         assertThat(captor.getAllValues()).extracting(MedicalNotification::toUserId).containsExactlyInAnyOrder(2L, 3L);
         assertThat(captor.getAllValues()).allSatisfy(notification -> assertThat(notification.content()).contains("任务异常提醒"));
         verify(tasks).markOverdueNotified(9L, NOW);
+    }
+
+    @Test
+    void followUpNotificationAsksThePatientToConfirmCompletion() {
+        CarePlanRepository plans = mock(CarePlanRepository.class);
+        CareTaskRepository tasks = mock(CareTaskRepository.class);
+        MedicalIdentityRepository identities = mock(MedicalIdentityRepository.class);
+        CareNotificationRepository notifications = mock(CareNotificationRepository.class);
+        CareTaskInstance task = new CareTaskInstance(
+                9L, 8L, 7L, 6L, 1L, "完成早操", "完成早操", CareTaskType.REHABILITATION,
+                LocalDate.of(2026, 7, 29), NOW, CareTaskStatus.PENDING, null, null, "", 0,
+                NOW, null, null, "task-9", 0L, 150, 180, NOW, NOW);
+        when(plans.listActiveTemplates()).thenReturn(List.of());
+        when(tasks.findReadyForReminder(NOW, 100)).thenReturn(List.of());
+        when(tasks.findReadyForFollowUp(NOW, 100)).thenReturn(List.of(task));
+        when(tasks.findReadyToMarkOverdue(NOW, 100)).thenReturn(List.of());
+        when(tasks.findReadyForOverdueNotification(NOW, 100)).thenReturn(List.of());
+        when(identities.listUserNotificationTargetsByRole(1L, com.example.spring.wechat.care.model.MedicalRole.PATIENT))
+                .thenReturn(List.of(new NotificationTarget(1L, "connection", "recipient")));
+        CareTaskScheduler scheduler = new CareTaskScheduler(
+                plans, tasks, identities, notifications,
+                new CareTaskProperties(true, 60_000, 100, 1, 1_440),
+                new CareProperties("", 12, null), Clock.fixed(NOW, ZoneOffset.UTC));
+
+        scheduler.process(NOW);
+
+        ArgumentCaptor<MedicalNotification> captor = ArgumentCaptor.forClass(MedicalNotification.class);
+        verify(notifications).enqueue(captor.capture());
+        assertThat(captor.getValue().notificationType()).isEqualTo("CARE_TASK_FOLLOW_UP");
+        assertThat(captor.getValue().content()).contains("请确认", "完成 #9", "未完成 #9");
+        verify(tasks).markFollowUpEnqueued(9L, NOW);
     }
 
     private CareTaskTemplate template(

@@ -555,3 +555,36 @@ body.role-doctor .floating-message { border-color: rgba(101, 216, 243, .34); bac
   .eyebrow::before { animation: none !important; transition: none !important; }
 }
 
+/* Keep the original particle login layout for /wechat start. */
+body:not(.role-patient):not(.role-caregiver):not(.role-doctor) .login-overlay {
+  top: 4vh;
+  width: min(92vw, 440px);
+}
+body:not(.role-patient):not(.role-caregiver):not(.role-doctor) .eyebrow::before {
+  display: none;
+}
+body:not(.role-patient):not(.role-caregiver):not(.role-doctor) h1 {
+  font-size: clamp(26px, 5vw, 40px);
+}
+body:not(.role-patient):not(.role-caregiver):not(.role-doctor) .qr-shell {
+  top: 50%;
+  width: min(66vw, 292px);
+  transform: translate(-50%, -38%);
+}
+
+@media (max-width: 560px) {
+  body:not(.role-patient):not(.role-caregiver):not(.role-doctor) .login-overlay {
+    top: 2.5vh;
+    width: min(94vw, 370px);
+  }
+  body:not(.role-patient):not(.role-caregiver):not(.role-doctor) .qr-shell {
+    width: min(74vw, 260px);
+    transform: translate(-50%, -34%);
+    padding: 10px;
+  }
+  body:not(.role-patient):not(.role-caregiver):not(.role-doctor) .status-detail {
+    bottom: 3.5vh;
+    width: 92vw;
+  }
+}
+

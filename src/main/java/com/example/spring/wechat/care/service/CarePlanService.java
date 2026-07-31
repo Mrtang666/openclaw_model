@@ -135,6 +135,7 @@ public class CarePlanService {
         return findPlan(planId);
     }
 
+    @Transactional
     public CarePlan activate(CareActor actor, long planId, VersionCommand command) {
         requireClinical(actor);
         CarePlan plan = findPlan(planId);
@@ -144,6 +145,10 @@ public class CarePlanService {
         Instant now = clock.instant();
         if (!planRepository.activate(planId, command.version(), now)) {
             throw conflict("计划尚未批准，或版本已经变化");
+        }
+        for (Long supersededPlanId : planRepository.completeOtherActivePlans(
+                plan.patientUserId(), plan.id(), now)) {
+            taskRepository.cancelOpenForPlan(supersededPlanId, actor.userId(), "已被新版照护方案替换", now);
         }
         CarePlanDetails activated = planRepository.findDetails(planId).orElseThrow();
         materializeTasks(activated.tasks(), now);
@@ -259,14 +264,15 @@ public class CarePlanService {
             scheduledDate = null;
             dayOfWeek = null;
         }
-        int grace = range(command.gracePeriodMinutes(), 60, 0, 1_440, "任务宽限时间不合法");
+        int followUp = range(command.followUpAfterMinutes(), 30, 1, 1_440, "任务确认时间不合法");
+        int grace = range(command.gracePeriodMinutes(), 60, followUp, 1_440, "任务宽限时间不合法");
         int escalation = range(
                 command.escalationAfterMinutes(), Math.max(120, grace), grace, 10_080,
                 "任务升级提醒时间不合法");
         return new CareTaskTemplate(
                 0L, 0L, 0L, 0L, type, required(command.title(), "任务标题不能为空", 255),
                 limit(clean(command.instructions()), 4000), schedule, localTime, scheduledDate, dayOfWeek,
-                startDate, endDate, grace, escalation, true, index, timezone, now);
+                startDate, endDate, followUp, grace, escalation, true, index, timezone, now);
     }
 
     private void requireReviewer(
@@ -417,8 +423,25 @@ public class CarePlanService {
             Integer dayOfWeek,
             LocalDate startDate,
             LocalDate endDate,
+            Integer followUpAfterMinutes,
             Integer gracePeriodMinutes,
             Integer escalationAfterMinutes) {
+
+        public TaskCommand(
+                String taskType,
+                String title,
+                String instructions,
+                String scheduleType,
+                LocalTime localTime,
+                LocalDate scheduledDate,
+                Integer dayOfWeek,
+                LocalDate startDate,
+                LocalDate endDate,
+                Integer gracePeriodMinutes,
+                Integer escalationAfterMinutes) {
+            this(taskType, title, instructions, scheduleType, localTime, scheduledDate, dayOfWeek,
+                    startDate, endDate, null, gracePeriodMinutes, escalationAfterMinutes);
+        }
     }
 
     public record VersionCommand(long version, String requestId) {

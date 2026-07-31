@@ -382,6 +382,7 @@ public class MedicalIdentityRepository {
                 FROM medical_user_wechat_bindings
                 WHERE user_id=? AND status='ACTIVE'
                 ORDER BY last_seen_at DESC,id DESC
+                LIMIT 1
                 """, (rs, rowNum) -> new NotificationTarget(
                         rs.getLong("user_id"), rs.getString("connection_id"), rs.getString("from_user_id")),
                 userId);

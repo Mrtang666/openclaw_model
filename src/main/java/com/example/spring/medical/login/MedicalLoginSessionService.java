@@ -108,7 +108,7 @@ public class MedicalLoginSessionService {
                     """, user.id(), Timestamp.from(now), loginSessionId);
             return Optional.of(new BoundMedicalIdentity(user, role));
         } catch (RuntimeException exception) {
-            log.warn("缁戝畾鍖荤枟韬唤鐧诲綍浼氳瘽澶辫触锛屼笉褰卞搷寰俊娑堟伅澶勭悊锛宭oginSessionId={}, fromUserId={}, error={}",
+            log.warn("绑定医疗身份登录会话失败，不影响微信消息处理，loginSessionId={}, fromUserId={}, error={}",
                     loginSessionId, fromUserId, rootMessage(exception));
             return Optional.empty();
         }

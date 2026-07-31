@@ -25,6 +25,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -41,7 +42,7 @@ class CareTaskSchedulerTests {
     }
 
     @Test
-    void dueNotificationGoesOnlyToThePatientAndProvidesTextReplyActions() {
+    void dueNotificationUsesConfirmedTaskTitleWithoutDetailedPlanInstructions() {
         CarePlanRepository plans = mock(CarePlanRepository.class);
         CareTaskRepository tasks = mock(CareTaskRepository.class);
         MedicalIdentityRepository identities = mock(MedicalIdentityRepository.class);
@@ -67,10 +68,36 @@ class CareTaskSchedulerTests {
         verify(notifications).enqueue(captor.capture());
         assertThat(captor.getValue().content())
                 .contains("晚间服药")
-                .contains("某药物详细内容")
-                .contains("完成 #9", "未完成 #9");
+                .contains("完成 #9", "未完成 #9")
+                .doesNotContain("某药物详细内容", "未完成会标记为异常", "医生方案要求");
         assertThat(captor.getValue().toUserId()).isEqualTo(1L);
         verify(tasks).markReminderEnqueued(9L, NOW);
+    }
+
+    @Test
+    void taskWithoutPatientWechatTargetRemainsEligibleForRetry() {
+        CarePlanRepository plans = mock(CarePlanRepository.class);
+        CareTaskRepository tasks = mock(CareTaskRepository.class);
+        MedicalIdentityRepository identities = mock(MedicalIdentityRepository.class);
+        CareNotificationRepository notifications = mock(CareNotificationRepository.class);
+        CareTaskInstance task = new CareTaskInstance(
+                9L, 8L, 7L, 6L, 1L, "喝水提醒", "喝水", CareTaskType.HYDRATION,
+                LocalDate.of(2026, 7, 29), NOW, CareTaskStatus.PENDING, null, null, "", 0,
+                null, null, "task-9", 0L, 30, 90, NOW, NOW);
+        when(plans.listActiveTemplates()).thenReturn(List.of());
+        when(tasks.findReadyForReminder(NOW, 100)).thenReturn(List.of(task));
+        when(identities.listUserNotificationTargets(1L)).thenReturn(List.of());
+        when(tasks.findReadyToMarkOverdue(NOW, 100)).thenReturn(List.of());
+        when(tasks.findReadyForOverdueNotification(NOW, 100)).thenReturn(List.of());
+        CareTaskScheduler scheduler = new CareTaskScheduler(
+                plans, tasks, identities, notifications,
+                new CareTaskProperties(true, 60_000, 100, 1, 1_440),
+                new CareProperties("", 12, null), Clock.fixed(NOW, ZoneOffset.UTC));
+
+        scheduler.process(NOW);
+
+        verify(notifications, never()).enqueue(org.mockito.ArgumentMatchers.any());
+        verify(tasks, never()).markReminderEnqueued(9L, NOW);
     }
 
     @Test

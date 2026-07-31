@@ -146,7 +146,8 @@ public class CarePlanDraftService {
         String finalText = firstNonBlank(record.editedPlan(), record.refinedPlan());
         List<NotificationTarget> targets = identityRepository.listUserNotificationTargets(record.patientUserId());
         if (targets.isEmpty()) {
-            throw new CareException(CareErrorCode.CONFLICT, "鎮ｈ€呭綋鍓嶆病鏈夊彲鐢ㄧ殑寰俊鎺ユ敹閫氶亾锛岃璁╂偅鑰呭厛閫氳繃 /patient 鐧诲綍銆?");
+            throw new CareException(CareErrorCode.CONFLICT,
+                    "患者当前没有可用的微信接收通道，请让患者先通过 /patient 登录。");
         }
         CarePlan activePlan = publishPlan(actor, record, finalText, requestId);
         String content = """

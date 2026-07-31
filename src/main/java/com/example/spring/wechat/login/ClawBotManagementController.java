@@ -36,7 +36,9 @@ public class ClawBotManagementController {
     @PostMapping("/connections")
     public ResponseEntity<?> addConnection(@RequestParam(required = false) String role) {
         try {
-            ClawBotConnectionSnapshot connection = botService.addConnection(role);
+            ClawBotConnectionSnapshot connection = role == null || role.isBlank()
+                    ? botService.addConnection()
+                    : botService.addConnection(role);
             return ResponseEntity.status(HttpStatus.CREATED)
                     .cacheControl(CacheControl.noStore())
                     .body(connection);
@@ -44,6 +46,10 @@ public class ClawBotManagementController {
             return ResponseEntity.status(HttpStatus.CONFLICT)
                     .body(Map.of("message", exception.getMessage()));
         }
+    }
+
+    ResponseEntity<?> addConnection() {
+        return addConnection(null);
     }
 
     @DeleteMapping("/connections/{connectionId}")

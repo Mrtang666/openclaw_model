@@ -13,6 +13,8 @@ import com.example.spring.wechat.care.repository.CarePlanRepository;
 import com.example.spring.wechat.care.repository.CareTaskRepository;
 import com.example.spring.wechat.care.repository.MedicalIdentityRepository;
 import com.example.spring.wechat.care.service.CarePermissions;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -33,6 +35,8 @@ import java.util.Map;
 @Component
 @ConditionalOnProperty(name = "care.task.enabled", havingValue = "true")
 public class CareTaskScheduler {
+
+    private static final Logger log = LoggerFactory.getLogger(CareTaskScheduler.class);
 
     private final CarePlanRepository planRepository;
     private final CareTaskRepository taskRepository;
@@ -57,6 +61,8 @@ public class CareTaskScheduler {
         this.taskProperties = taskProperties;
         this.careProperties = careProperties;
         this.clock = clock;
+        log.info("照护任务调度已启用，pollIntervalMs={}, batchSize={}, generationHorizonDays={}",
+                taskProperties.pollIntervalMs(), taskProperties.batchSize(), taskProperties.generationHorizonDays());
     }
 
     @Scheduled(fixedDelayString = "${care.task.poll-interval-ms:15000}")
@@ -87,11 +93,18 @@ public class CareTaskScheduler {
     void enqueueDueReminders(Instant now) {
         for (CareTaskInstance task : taskRepository.findReadyForReminder(now, taskProperties.batchSize())) {
             List<NotificationTarget> targets = identityRepository.listUserNotificationTargets(task.patientUserId());
+            if (targets.isEmpty()) {
+                log.warn("照护任务暂未入队：患者没有可用微信通道，taskId={}, patientUserId={}",
+                        task.id(), task.patientUserId());
+                continue;
+            }
             for (NotificationTarget target : targets) {
                 enqueue(task, target, "CARE_TASK_DUE",
                         dueReminderContent(task), now);
             }
             taskRepository.markReminderEnqueued(task.id(), now);
+            log.info("照护任务提醒已入队，taskId={}, patientUserId={}, targetCount={}, dueAt={}",
+                    task.id(), task.patientUserId(), targets.size(), task.dueAt());
         }
     }
 
@@ -105,11 +118,18 @@ public class CareTaskScheduler {
         for (CareTaskInstance task : taskRepository.findReadyForOverdueNotification(
                 now, taskProperties.batchSize())) {
             List<NotificationTarget> targets = familyTargets(task.patientUserId(), now);
+            if (targets.isEmpty()) {
+                log.warn("照护任务异常通知暂未入队：患者没有已授权家属微信通道，taskId={}, patientUserId={}",
+                        task.id(), task.patientUserId());
+                continue;
+            }
             for (NotificationTarget target : targets) {
                 enqueue(task, target, "CARE_TASK_OVERDUE",
                         overdueNotificationContent(task), now);
             }
             taskRepository.markOverdueNotified(task.id(), now);
+            log.info("照护任务异常通知已入队，taskId={}, patientUserId={}, targetCount={}",
+                    task.id(), task.patientUserId(), targets.size());
         }
     }
 
@@ -142,17 +162,13 @@ public class CareTaskScheduler {
 
     private String dueReminderContent(CareTaskInstance task) {
         return """
-                【任务打卡提醒】
-                任务：%s
+                【任务打卡】
                 %s
 
-                请直接回复：
+                请回复：
                 完成 #%d
-                或
                 未完成 #%d
-
-                未完成会标记为异常，并通知已授权家属协助关注。
-                """.formatted(task.title(), task.instructions(), task.id(), task.id()).strip();
+                """.formatted(task.title().strip(), task.id(), task.id()).strip();
     }
 
     private String overdueNotificationContent(CareTaskInstance task) {

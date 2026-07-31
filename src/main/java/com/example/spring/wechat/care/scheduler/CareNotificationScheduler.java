@@ -33,6 +33,9 @@ public class CareNotificationScheduler {
         this.sender = sender;
         this.properties = properties;
         this.clock = clock;
+        log.info("照护通知调度已启用，pollIntervalMs={}, batchSize={}, maxRetryCount={}",
+                properties.notification().pollIntervalMs(), properties.notification().batchSize(),
+                properties.notification().maxRetryCount());
     }
 
     @Scheduled(fixedDelayString = "${care.notification.poll-interval-ms:15000}")
@@ -56,10 +59,12 @@ public class CareNotificationScheduler {
             log.info("照护通知发送成功，notificationId={}", notification.id());
         } catch (Exception exception) {
             boolean terminal = notification.retryCount() + 1 >= notification.maxRetryCount();
+            String error = rootMessage(exception);
             repository.markFailed(
-                    notification.id(), terminal, rootMessage(exception),
+                    notification.id(), terminal, error,
                     terminal ? null : now.plusSeconds(properties.notification().retryDelaySeconds()), now);
-            log.warn("照护通知发送失败，notificationId={}, terminal={}", notification.id(), terminal);
+            log.warn("照护通知发送失败，notificationId={}, terminal={}, error={}",
+                    notification.id(), terminal, error);
         }
     }
 

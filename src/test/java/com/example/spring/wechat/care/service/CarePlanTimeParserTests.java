@@ -12,9 +12,9 @@ class CarePlanTimeParserTests {
 
     @Test
     void extractsNumericAndChineseClockTimesWithPeriods() {
-        assertThat(parser.extractTimePoints("每天08:30服药，下午3点半训练，晚上8点确认，二十一点休息"))
+        assertThat(parser.extractTimePoints("每天08:30服药，14.50喝水，下午3点半训练，晚上8点确认，二十一点休息"))
                 .containsExactly(
-                        LocalTime.of(8, 30), LocalTime.of(15, 30),
+                        LocalTime.of(8, 30), LocalTime.of(14, 50), LocalTime.of(15, 30),
                         LocalTime.of(20, 0), LocalTime.of(21, 0));
     }
 

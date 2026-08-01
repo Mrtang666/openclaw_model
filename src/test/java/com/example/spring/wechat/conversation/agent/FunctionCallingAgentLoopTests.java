@@ -670,6 +670,99 @@ class FunctionCallingAgentLoopTests {
     }
 
     @Test
+    void returnsVisibleToolResultWhenFollowupModelResponseIsEmpty() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        FakeImageTool imageTool = new FakeImageTool();
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client,
+                new WechatToolRegistry(List.of(imageTool)),
+                5);
+        when(client.chat(anyList(), anyList()))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "",
+                        List.of(new FunctionCallingToolCall(
+                                "call_image_1",
+                                "image_generation",
+                                Map.of("prompt", "cat"))))))
+                .thenReturn(Optional.empty());
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "帮我生成一张猫的图片",
+                "No previous context",
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                }))
+                .orElseThrow();
+
+        assertThat(reply.parts()).hasSize(1);
+        assertThat(reply.parts().get(0).hasImage()).isTrue();
+        assertThat(reply.parts().get(0).image().fileName()).isEqualTo("image-1.png");
+        verify(client, org.mockito.Mockito.times(2)).chat(anyList(), anyList());
+    }
+
+    @Test
+    void returnsLastToolFailureWhenFollowupModelResponseIsEmpty() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client,
+                new WechatToolRegistry(List.of(new FakeFailingWebSearchTool())),
+                5);
+        when(client.chat(anyList(), anyList()))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "",
+                        List.of(new FunctionCallingToolCall(
+                                "call_search_1",
+                                "web_search",
+                                Map.of("query", "Qdrant Java 接入方式"))))))
+                .thenReturn(Optional.empty());
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "帮我搜索Qdrant Java 接入方式",
+                "No previous context",
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                }))
+                .orElseThrow();
+
+        assertThat(reply.text()).contains("工具执行失败", "百炼 WebSearch 未返回可用搜索结果");
+        verify(client, org.mockito.Mockito.times(2)).chat(anyList(), anyList());
+    }
+
+    @Test
+    void returnsEmptyWhenFirstModelResponseIsEmpty() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client,
+                new WechatToolRegistry(List.of(new FakeWeatherTool())),
+                5);
+        when(client.chat(anyList(), anyList())).thenReturn(Optional.empty());
+
+        Optional<WechatReply> reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "Check the weather",
+                "No previous context",
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                }));
+
+        assertThat(reply).isEmpty();
+    }
+
+    @Test
     void returnsLastToolFailureInsteadOfGenericMaxLoopMessageWhenToolKeepsFailing() {
         DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
         WechatToolRegistry registry = new WechatToolRegistry(List.of(new FakeFailingWebSearchTool()));

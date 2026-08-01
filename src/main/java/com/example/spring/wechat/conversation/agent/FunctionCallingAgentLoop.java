@@ -43,6 +43,8 @@ import java.util.TreeMap;
 public class FunctionCallingAgentLoop {
 
     private static final Logger log = LoggerFactory.getLogger(FunctionCallingAgentLoop.class);
+    private static final String MAX_ROUNDS_MESSAGE =
+            "这次需求处理步骤比较多，我已经停止继续调用工具。你可以把需求拆短一点再发我。";
     private static final Set<String> TERMINAL_ACTION_TOOLS = Set.of(
             "taxi_service",
             "reminder_create",
@@ -172,8 +174,7 @@ public class FunctionCallingAgentLoop {
             Optional<FunctionCallingModelResponse> response = client.chat(state.messages(), toolDefinitions);
             if (response.isEmpty()) {
                 log.warn("Function Calling Agent Loop 第{}轮模型无响应，userId={}", round, request.sessionKey());
-                state.stop(AgentLoopStopReason.MODEL_EMPTY);
-                return Optional.empty();
+                return terminalReply(state, AgentLoopStopReason.MODEL_EMPTY);
             }
 
             FunctionCallingModelResponse modelResponse = response.get();
@@ -265,16 +266,24 @@ public class FunctionCallingAgentLoop {
             }
         }
 
+        return terminalReply(state, AgentLoopStopReason.MAX_ROUNDS);
+    }
+
+    private Optional<WechatReply> terminalReply(AgentLoopState state, AgentLoopStopReason reason) {
+        if (state == null) {
+            return Optional.empty();
+        }
+        state.stop(reason);
         if (state.hasVisibleParts()) {
-            state.stop(AgentLoopStopReason.MEDIA_RESULT);
             return Optional.of(WechatReply.ordered(state.visibleParts()));
         }
         if (!state.lastToolFailure().isBlank()) {
-            state.stop(AgentLoopStopReason.TOOL_FAILURE);
             return Optional.of(WechatReply.text(state.lastToolFailure()));
         }
-        state.stop(AgentLoopStopReason.MAX_ROUNDS);
-        return Optional.of(WechatReply.text("这次需求处理步骤比较多，我已经停止继续调用工具。你可以把需求拆短一点再发我。"));
+        if (reason == AgentLoopStopReason.MAX_ROUNDS) {
+            return Optional.of(WechatReply.text(MAX_ROUNDS_MESSAGE));
+        }
+        return Optional.empty();
     }
 
     private boolean shouldSkipWebSearchBecauseRagHasEvidence(

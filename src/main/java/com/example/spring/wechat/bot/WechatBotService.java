@@ -10,6 +10,9 @@ import com.example.spring.wechat.conversation.WechatConversationService;
 import com.example.spring.wechat.login.WechatLoginPageSession;
 import com.example.spring.wechat.login.WechatLoginPageSessionService;
 import com.example.spring.wechat.login.WechatLoginPageUrlService;
+import com.example.spring.wechat.reminder.service.ReminderRecipientBindingService;
+import com.example.spring.medical.login.MedicalLoginSessionService;
+import com.example.spring.wechat.report.WechatReplyPresentationService;
 import com.example.spring.wechat.bot.concurrency.ConversationKey;
 import com.example.spring.wechat.bot.concurrency.WechatConcurrencyProperties;
 import com.example.spring.wechat.bot.concurrency.WechatMessageDispatcher;
@@ -65,6 +68,9 @@ public class WechatBotService {
     private final WechatLoginPageUrlService loginPageUrlService;
     private final ClawBotConnectionProperties connectionProperties;
     private final WechatConcurrencyProperties concurrencyProperties;
+    private final ReminderRecipientBindingService reminderRecipientBindingService;
+    private final WechatReplyPresentationService replyPresentationService;
+    private final MedicalLoginSessionService medicalLoginSessionService;
     private final ExecutorService receiverExecutor = Executors.newCachedThreadPool(task -> {
         Thread thread = new Thread(task, "wechat-receiver-" + UUID.randomUUID());
         thread.setDaemon(true);
@@ -79,11 +85,14 @@ public class WechatBotService {
             WechatClientFactory clientFactory,
             ObjectProvider<WechatConversationService> conversationServiceProvider) {
         this(clientFactory,
-                (sessionKey, message) -> conversationServiceProvider.getObject().handleWechat(message),
+                (sessionKey, message, requestedRole) -> conversationServiceProvider.getObject().handleWechat(message),
                 null,
                 null,
                 new ClawBotConnectionProperties(),
-                new WechatConcurrencyProperties());
+                new WechatConcurrencyProperties(),
+                null,
+                null,
+                null);
     }
 
     public WechatBotService(
@@ -93,11 +102,14 @@ public class WechatBotService {
             WechatLoginPageUrlService loginPageUrlService) {
         this(
                 clientFactory,
-                (sessionKey, message) -> conversationServiceProvider.getObject().handleWechat(message),
+                (sessionKey, message, requestedRole) -> conversationServiceProvider.getObject().handleWechat(message),
                 loginPageSessionService,
                 loginPageUrlService,
                 new ClawBotConnectionProperties(),
-                new WechatConcurrencyProperties());
+                new WechatConcurrencyProperties(),
+                null,
+                null,
+                null);
     }
 
     @Autowired
@@ -107,22 +119,71 @@ public class WechatBotService {
             WechatLoginPageSessionService loginPageSessionService,
             WechatLoginPageUrlService loginPageUrlService,
             ClawBotConnectionProperties connectionProperties,
-            WechatConcurrencyProperties concurrencyProperties) {
+            WechatConcurrencyProperties concurrencyProperties,
+            ReminderRecipientBindingService reminderRecipientBindingService,
+            ObjectProvider<WechatReplyPresentationService> replyPresentationServiceProvider,
+            ObjectProvider<MedicalLoginSessionService> medicalLoginSessionServiceProvider) {
         this(
                 clientFactory,
-                (sessionKey, message) -> conversationServiceProvider.getObject().handleWechat(sessionKey, message),
+                (sessionKey, message, requestedRole) -> requestedRole == null || requestedRole.isBlank()
+                        ? conversationServiceProvider.getObject().handleWechat(sessionKey, message)
+                        : conversationServiceProvider.getObject().handleWechat(sessionKey, message, requestedRole),
                 loginPageSessionService,
                 loginPageUrlService,
                 connectionProperties,
-                concurrencyProperties);
+                concurrencyProperties,
+                reminderRecipientBindingService,
+                replyPresentationServiceProvider == null ? null : replyPresentationServiceProvider.getIfAvailable(),
+                medicalLoginSessionServiceProvider == null ? null : medicalLoginSessionServiceProvider.getIfAvailable());
+    }
+
+    public WechatBotService(
+            WechatClientFactory clientFactory,
+            ObjectProvider<WechatConversationService> conversationServiceProvider,
+            WechatLoginPageSessionService loginPageSessionService,
+            WechatLoginPageUrlService loginPageUrlService,
+            ClawBotConnectionProperties connectionProperties,
+            WechatConcurrencyProperties concurrencyProperties,
+            ReminderRecipientBindingService reminderRecipientBindingService) {
+        this(
+                clientFactory,
+                (sessionKey, message, requestedRole) -> requestedRole == null || requestedRole.isBlank()
+                        ? conversationServiceProvider.getObject().handleWechat(sessionKey, message)
+                        : conversationServiceProvider.getObject().handleWechat(sessionKey, message, requestedRole),
+                loginPageSessionService,
+                loginPageUrlService,
+                connectionProperties,
+                concurrencyProperties,
+                reminderRecipientBindingService,
+                null,
+                null);
+    }
+
+    public WechatBotService(
+            WechatClientFactory clientFactory,
+            ObjectProvider<WechatConversationService> conversationServiceProvider,
+            WechatLoginPageSessionService loginPageSessionService,
+            WechatLoginPageUrlService loginPageUrlService,
+            ClawBotConnectionProperties connectionProperties,
+            WechatConcurrencyProperties concurrencyProperties) {
+        this(
+                clientFactory,
+                conversationServiceProvider,
+                loginPageSessionService,
+                loginPageUrlService,
+                connectionProperties,
+                concurrencyProperties,
+                null,
+                null,
+                null);
     }
 
     WechatBotService(WechatClientFactory clientFactory, AgentService agentService) {
-        this(clientFactory, (sessionKey, message) -> {
+        this(clientFactory, (sessionKey, message, requestedRole) -> {
             StringBuilder reply = new StringBuilder();
             agentService.handleStreaming(message.text() == null ? "" : message.text(), reply::append);
             return WechatReply.text(reply.toString().strip());
-        }, null, null, new ClawBotConnectionProperties(), new WechatConcurrencyProperties());
+        }, null, null, new ClawBotConnectionProperties(), new WechatConcurrencyProperties(), null, null, null);
     }
 
     private WechatBotService(
@@ -131,29 +192,42 @@ public class WechatBotService {
             WechatLoginPageSessionService loginPageSessionService,
             WechatLoginPageUrlService loginPageUrlService,
             ClawBotConnectionProperties connectionProperties,
-            WechatConcurrencyProperties concurrencyProperties) {
+            WechatConcurrencyProperties concurrencyProperties,
+            ReminderRecipientBindingService reminderRecipientBindingService,
+            WechatReplyPresentationService replyPresentationService,
+            MedicalLoginSessionService medicalLoginSessionService) {
         this.clientFactory = clientFactory;
         this.messageHandler = messageHandler;
         this.loginPageSessionService = loginPageSessionService;
         this.loginPageUrlService = loginPageUrlService;
         this.connectionProperties = connectionProperties;
         this.concurrencyProperties = concurrencyProperties;
+        this.reminderRecipientBindingService = reminderRecipientBindingService;
+        this.replyPresentationService = replyPresentationService;
+        this.medicalLoginSessionService = medicalLoginSessionService;
         this.messageDispatcher = new WechatMessageDispatcher(concurrencyProperties);
         this.modelSlots = new Semaphore(concurrencyProperties.getModelMaxConcurrency(), true);
     }
 
     public synchronized WechatStartResult start() {
+        return start(null);
+    }
+
+    public synchronized WechatStartResult start(String requestedRole) {
         cleanupExpiredPendingConnections();
-        if (!runtimes.isEmpty()) {
+        boolean identityLogin = requestedRole != null && !requestedRole.isBlank();
+        if (!identityLogin && !runtimes.isEmpty()) {
             return new WechatStartResult(false, "微信 Bot 已在运行", activeLoginPageUrl);
         }
         try {
             ensureDispatcher();
-            ClientRuntime runtime = createConnectionInternal();
+            ClientRuntime runtime = createConnectionInternal(requestedRole);
             activeLoginPageUrl = pageUrl(runtime.loginSessionId);
             return new WechatStartResult(true, "请打开登录页面并使用微信扫码", activeLoginPageUrl);
         } catch (RuntimeException exception) {
-            activeLoginPageUrl = null;
+            if (!identityLogin) {
+                activeLoginPageUrl = null;
+            }
             return new WechatStartResult(false, "微信 Bot 启动失败：" + rootMessage(exception), null);
         }
     }
@@ -162,7 +236,10 @@ public class WechatBotService {
         if (runtimes.isEmpty()) {
             return "微信 Bot 未启动";
         }
-        List.copyOf(runtimes.values()).forEach(this::stopRuntime);
+        List.copyOf(runtimes.values()).forEach(runtime -> {
+            markMedicalLoginCancelled(runtime);
+            stopRuntime(runtime);
+        });
         runtimes.clear();
         messageDispatcher.close();
         messageDispatcher = null;
@@ -185,10 +262,35 @@ public class WechatBotService {
                 snapshot.connectedCount(), snapshot.pendingCount(), snapshot.totalConnections());
     }
 
+    /**
+     * Sends a system-initiated text message through the same logged-in connection that received the user message.
+     * Reminder tasks persist this connection identifier so multi-client sessions do not cross-send notifications.
+     */
+    public void sendProactiveText(String connectionId, String userId, String text) {
+        if (connectionId == null || connectionId.isBlank() || userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("主动消息缺少微信连接或接收用户");
+        }
+        ClientRuntime runtime = runtimes.get(connectionId.strip());
+        if (runtime == null || runtime.stopRequested || runtime.state != WechatBotState.RUNNING) {
+            throw new IllegalStateException("提醒对应的微信连接当前不可用，请在 Bot 登录后重试");
+        }
+        try {
+            sendReplyChunks(runtime.client, userId.strip(), text);
+            runtime.lastActivityAt = Instant.now();
+        } catch (RuntimeException exception) {
+            runtime.lastError = rootMessage(exception);
+            throw exception;
+        }
+    }
+
     public synchronized ClawBotConnectionSnapshot addConnection() {
+        return addConnection(null);
+    }
+
+    public synchronized ClawBotConnectionSnapshot addConnection(String requestedRole) {
         cleanupExpiredPendingConnections();
         ensureDispatcher();
-        return createConnectionInternal().snapshot();
+        return createConnectionInternal(requestedRole).snapshot();
     }
 
     public synchronized boolean stopConnection(String connectionId) {
@@ -196,6 +298,7 @@ public class WechatBotService {
         if (runtime == null) {
             return false;
         }
+        markMedicalLoginCancelled(runtime);
         stopRuntime(runtime);
         return true;
     }
@@ -205,10 +308,11 @@ public class WechatBotService {
         if (runtime == null) {
             throw new IllegalArgumentException("未找到微信连接：" + connectionId);
         }
+        markMedicalLoginCancelled(runtime);
         stopRuntime(runtime);
         cleanupExpiredPendingConnections();
         ensureDispatcher();
-        return createConnectionInternal().snapshot();
+        return createConnectionInternal(runtime.requestedRole).snapshot();
     }
 
     public ClawBotManagerSnapshot managerSnapshot() {
@@ -293,6 +397,9 @@ public class WechatBotService {
             runtime.botId = loginInfo.botId();
             runtime.state = WechatBotState.RUNNING;
             runtime.lastActivityAt = Instant.now();
+            if (medicalLoginSessionService != null) {
+                medicalLoginSessionService.markBound(runtime.loginSessionId, runtime.lastActivityAt);
+            }
             log.info("微信 ClawBot 已登录，connectionId={}, botId={}", runtime.connectionId, runtime.botId);
 
             while (!runtime.stopRequested && runtimes.get(runtime.connectionId) == runtime) {
@@ -331,6 +438,8 @@ public class WechatBotService {
         }
 
         String text = hasText ? message.text().strip() : "";
+        refreshReminderRecipientBinding(runtime, message);
+        bindMedicalIdentity(runtime, message);
         log.info(
                 "微信收到消息，fromUserId={}, text={}, imageCount={}, voiceCount={}, fileCount={}",
                 message.fromUserId(),
@@ -357,6 +466,47 @@ public class WechatBotService {
         }
     }
 
+    private void bindMedicalIdentity(ClientRuntime runtime, WechatIncomingMessage message) {
+        if (medicalLoginSessionService == null
+                || runtime.loginSessionId == null
+                || runtime.loginSessionId.isBlank()
+                || message.fromUserId() == null
+                || message.fromUserId().isBlank()) {
+            return;
+        }
+        medicalLoginSessionService.bindWechatUser(
+                runtime.loginSessionId,
+                runtime.connectionId,
+                message.fromUserId(),
+                runtime.displayName,
+                Instant.now()).ifPresent(bound -> runtime.displayName = medicalDisplayName(bound.role(), bound.user().displayName()));
+    }
+    private void refreshReminderRecipientBinding(ClientRuntime runtime, WechatIncomingMessage message) {
+        if (reminderRecipientBindingService == null
+                || runtime.botId == null
+                || runtime.botId.isBlank()
+                || message.fromUserId() == null
+                || message.fromUserId().isBlank()) {
+            return;
+        }
+        try {
+            ConversationKey key = new ConversationKey(runtime.connectionId, message.fromUserId());
+            int rebound = reminderRecipientBindingService.bind(
+                    runtime.botId,
+                    message.fromUserId(),
+                    runtime.connectionId,
+                    key.sessionKey(),
+                    Instant.now());
+            if (rebound > 0) {
+                log.info("微信提醒连接已更新，recipientId={}, migratedTasks={}",
+                        message.fromUserId(), rebound);
+            }
+        } catch (RuntimeException exception) {
+            log.warn("微信提醒连接更新失败，connectionId={}, recipientId={}, error={}",
+                    runtime.connectionId, message.fromUserId(), rootMessage(exception));
+        }
+    }
+
     private void processMessage(ClientRuntime runtime, ConversationKey key, WechatIncomingMessage message) {
         if (runtime.stopRequested || runtimes.get(runtime.connectionId) != runtime) {
             return;
@@ -377,7 +527,10 @@ public class WechatBotService {
                     message.fromUserId(),
                     preview(message.text()),
                     message.images() == null ? 0 : message.images().size());
-            WechatReply reply = messageHandler.handle(key.sessionKey(), message);
+            WechatReply reply = messageHandler.handle(key.sessionKey(), message, runtime.requestedRole);
+            if (replyPresentationService != null) {
+                reply = replyPresentationService.enhance(reply, message.text());
+            }
             String text = reply == null || reply.text() == null ? "" : reply.text().strip();
             if (reply != null && reply.parts() != null && !reply.parts().isEmpty()) {
                 sendReplyParts(runtime.client, message.fromUserId(), reply.parts());
@@ -909,6 +1062,10 @@ public class WechatBotService {
     }
 
     private synchronized ClientRuntime createConnectionInternal() {
+        return createConnectionInternal(null);
+    }
+
+    private synchronized ClientRuntime createConnectionInternal(String requestedRole) {
         if (runtimes.size() >= connectionProperties.getMaxConnections()) {
             throw new IllegalStateException("已达到最大连接数 " + connectionProperties.getMaxConnections());
         }
@@ -925,13 +1082,21 @@ public class WechatBotService {
             String loginUrl = newClient.executeLogin();
             WechatLoginPageSession session = loginPageSessionService == null
                     ? null
-                    : loginPageSessionService.create(loginUrl, newClient::loginState);
+                    : loginPageSessionService.create(loginUrl, requestedRole, newClient::loginState);
             ClientRuntime runtime = new ClientRuntime(
                     connectionId,
                     "用户 " + (runtimes.size() + 1),
                     newClient,
-                    session == null ? null : session.id());
+                    session == null ? null : session.id(),
+                    session == null ? requestedRole : session.requestedRole());
             runtimes.put(connectionId, runtime);
+            if (medicalLoginSessionService != null && session != null && session.requestedRole() != null) {
+                medicalLoginSessionService.recordWaiting(
+                        connectionId,
+                        session.id(),
+                        session.requestedRole(),
+                        session.createdAt());
+            }
             runtime.worker = receiverExecutor.submit(() -> runMessageLoop(runtime));
             if (session == null) {
                 activeLoginPageUrl = loginUrl;
@@ -952,6 +1117,22 @@ public class WechatBotService {
         return loginPageUrlService.pageUrl(loginSessionId);
     }
 
+    private String medicalDisplayName(com.example.spring.wechat.care.model.MedicalRole role, String displayName) {
+        String label = role == null ? "" : switch (role) {
+            case PATIENT -> "患者";
+            case CAREGIVER, FAMILY -> "家属";
+            case DOCTOR -> "医生";
+            case NURSE -> "护士";
+            case THERAPIST -> "治疗师";
+            case DIETITIAN -> "营养师";
+            case ADMIN -> "管理员";
+        };
+        String name = displayName == null || displayName.isBlank() ? "未命名" : displayName.strip();
+        if (label.isBlank()) {
+            return name;
+        }
+        return label + " " + name;
+    }
     private synchronized void cleanupExpiredPendingConnections() {
         if (loginPageSessionService == null) {
             return;
@@ -966,6 +1147,9 @@ public class WechatBotService {
                 .toList();
         expired.forEach(runtime -> {
             runtimes.remove(runtime.connectionId, runtime);
+            if (medicalLoginSessionService != null) {
+                medicalLoginSessionService.markExpired(runtime.loginSessionId);
+            }
             stopRuntime(runtime);
         });
     }
@@ -978,6 +1162,14 @@ public class WechatBotService {
             runtime.worker.cancel(true);
         }
         closeClient(runtime.client);
+    }
+
+    private void markMedicalLoginCancelled(ClientRuntime runtime) {
+        if (medicalLoginSessionService != null
+                && runtime != null
+                && runtime.state == WechatBotState.WAITING_FOR_SCAN) {
+            medicalLoginSessionService.markCancelled(runtime.loginSessionId);
+        }
     }
 
     private void ensureDispatcher() {
@@ -1013,14 +1205,15 @@ public class WechatBotService {
     @FunctionalInterface
     private interface WechatMessageHandler {
 
-        WechatReply handle(String sessionKey, WechatIncomingMessage message);
+        WechatReply handle(String sessionKey, WechatIncomingMessage message, String requestedRole);
     }
 
     private static final class ClientRuntime {
         private final String connectionId;
-        private final String displayName;
+        private volatile String displayName;
         private final WechatClient client;
         private final String loginSessionId;
+        private final String requestedRole;
         private final Instant createdAt = Instant.now();
         private final AtomicInteger queuedMessages = new AtomicInteger();
         private final AtomicInteger activeMessages = new AtomicInteger();
@@ -1032,11 +1225,17 @@ public class WechatBotService {
         private volatile boolean stopRequested;
         private volatile Future<?> worker;
 
-        private ClientRuntime(String connectionId, String displayName, WechatClient client, String loginSessionId) {
+        private ClientRuntime(
+                String connectionId,
+                String displayName,
+                WechatClient client,
+                String loginSessionId,
+                String requestedRole) {
             this.connectionId = connectionId;
             this.displayName = displayName;
             this.client = client;
             this.loginSessionId = loginSessionId;
+            this.requestedRole = requestedRole == null ? "" : requestedRole.strip();
         }
 
         private ClawBotConnectionSnapshot snapshot() {

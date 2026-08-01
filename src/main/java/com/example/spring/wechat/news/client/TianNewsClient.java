@@ -3,7 +3,8 @@ package com.example.spring.wechat.news.client;
 import com.example.spring.wechat.news.model.NewsArticle;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
@@ -13,9 +14,10 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-@Slf4j
 @Component
 public class TianNewsClient {
+
+    private static final Logger log = LoggerFactory.getLogger(TianNewsClient.class);
 
     @Value("${tian.api.key}")
     private String apiKey;
@@ -229,16 +231,9 @@ public class TianNewsClient {
                 source = "未知来源";
             }
 
-            NewsArticle article = NewsArticle.builder()
-                    .id(id)
-                    .title(title)
-                    .description(description)
-                    .url(getSafeString(item, "url"))
-                    .picUrl(getSafeString(item, "picUrl"))
-                    .source(source)
-                    .publishTime(getSafeString(item, "ctime"))
-                    .categoryId(categoryId)
-                    .build();
+            NewsArticle article = new NewsArticle(
+                    id, title, description, getSafeString(item, "url"), getSafeString(item, "picUrl"),
+                    source, getSafeString(item, "ctime"), categoryId, null);
 
             articles.add(article);
         }

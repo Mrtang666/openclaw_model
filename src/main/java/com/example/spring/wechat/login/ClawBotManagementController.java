@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
@@ -33,9 +34,9 @@ public class ClawBotManagementController {
     }
 
     @PostMapping("/connections")
-    public ResponseEntity<?> addConnection() {
+    public ResponseEntity<?> addConnection(@RequestParam(required = false) String role) {
         try {
-            ClawBotConnectionSnapshot connection = botService.addConnection();
+            ClawBotConnectionSnapshot connection = botService.addConnection(role);
             return ResponseEntity.status(HttpStatus.CREATED)
                     .cacheControl(CacheControl.noStore())
                     .body(connection);

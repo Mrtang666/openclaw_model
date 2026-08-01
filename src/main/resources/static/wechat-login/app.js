@@ -4,6 +4,11 @@ const canvas = document.querySelector("#particle-canvas");
 const qrCanvas = document.querySelector("#qr-canvas");
 const message = document.querySelector("#status-message");
 const detail = document.querySelector("#status-detail");
+const title = document.querySelector("h1");
+const eyebrow = document.querySelector(".eyebrow");
+const roleCaption = document.querySelector("#role-caption");
+const floatingMessageLayer = document.querySelector("#floating-message-layer");
+const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 const sessionId = new URLSearchParams(location.search).get("session");
 const addUserButton = document.querySelector("#add-user-button");
 const connectionPanel = document.querySelector("#connection-panel");
@@ -21,11 +26,87 @@ const statusLabels = {
   ERROR: ["登录状态获取失败", "请查看 IDEA 日志后重试"]
 };
 
+const roleVisuals = {
+  PATIENT: {
+    bodyClass: "role-patient",
+    title: "患者身份扫码登录",
+    eyebrow: "PATIENT ACCESS",
+    caption: "扫码后通过微信完成提醒、打卡和安全确认。",
+    waitingDetail: "请使用患者本人微信扫码，二维码仅用于本次身份绑定。",
+    colorA: [0.18, 0.92, 0.68],
+    colorB: [0.35, 0.58, 1.0],
+    phrases: [
+      "自愈的路上，你从不孤单",
+      "坚持日常，遇见新生",
+      "今天完成一点点，也是在向前走",
+      "认真打卡，是给明天的自己一点确定",
+      "请慢慢来，我们会陪你一起完成",
+      "每一次确认安全，都很重要",
+      "小步骤，也会带来大改变"
+    ]
+  },
+  CAREGIVER: {
+    bodyClass: "role-caregiver",
+    title: "家属身份扫码登录",
+    eyebrow: "CAREGIVER ACCESS",
+    caption: "扫码后查看患者状态、异常提醒和照护摘要。",
+    waitingDetail: "请使用已授权家属微信扫码，患者信息将按授权范围展示。",
+    colorA: [1.0, 0.72, 0.36],
+    colorB: [1.0, 0.44, 0.58],
+    phrases: [
+      "守护在身边，安心每一天",
+      "家人同心，照护有光",
+      "你关心的每一次查看，都有意义",
+      "及时了解状态，让陪伴更踏实",
+      "异常提醒会帮你更早发现变化",
+      "把担心交给系统，把陪伴留给家人",
+      "一份状态摘要，也是一份安心"
+    ]
+  },
+  DOCTOR: {
+    bodyClass: "role-doctor",
+    title: "医生身份扫码登录",
+    eyebrow: "DOCTOR ACCESS",
+    caption: "扫码后查看患者、处理告警、审核计划和调整任务。",
+    waitingDetail: "请使用已认证医护微信扫码，访问范围受角色权限控制。",
+    colorA: [0.24, 0.58, 1.0],
+    colorB: [0.38, 0.92, 1.0],
+    phrases: [
+      "专业守护，精准照护",
+      "每一次关注，都托举康复",
+      "告警聚合，让风险更早被看见",
+      "计划可追踪，任务可调整",
+      "把重复提醒交给系统，把判断留给医生",
+      "数据沉淀，服务连续照护",
+      "清晰状态，辅助更稳的决策"
+    ]
+  },
+  DEFAULT: {
+    bodyClass: "",
+    title: "微信扫码登录",
+    eyebrow: "iLink BOT",
+    caption: "正在识别本次登录身份，请稍候。",
+    waitingDetail: "二维码保持固定，背景粒子可以拖动交互。",
+    colorA: [0.12, 0.60, 1.0],
+    colorB: [0.62, 0.26, 1.0],
+    phrases: []
+  }
+};
+
 let renderer;
 let scene;
 let camera;
 let cloud;
 let clock;
+let particleCount = 0;
+let activeRole = "DEFAULT";
+let activeTargetIndex = 0;
+let targetCycleTimer;
+let floatingMessageTimer;
+let floatingResizeTimer;
+const floatingMessageTimeouts = new Set();
+let parallaxFrame;
+let pendingParallax = { x: 0, y: 0 };
 let dragging = false;
 let lastPointer = { x: 0, y: 0 };
 let targetRotation = { x: -0.08, y: 0.2 };
@@ -35,7 +116,9 @@ let dragEnergy = 0;
 function setStatus(status) {
   const labels = statusLabels[status] || ["正在等待登录状态", "请稍候"];
   message.textContent = labels[0];
-  detail.textContent = labels[1];
+  detail.textContent = status === "WAITING"
+    ? (roleVisuals[activeRole]?.waitingDetail || labels[1])
+    : labels[1];
   message.style.color = status === "LOGGED_IN" ? "#7dffbf" : (status === "ERROR" || status === "EXPIRED" ? "#ff9c9c" : "#d9f7e7");
 }
 
@@ -62,6 +145,278 @@ function drawQr(matrix, matrixSize, targetCanvas = qrCanvas) {
     });
   });
   targetCanvas.classList.add("ready");
+}
+
+function normalizeRole(role) {
+  const value = String(role || "").trim().toUpperCase();
+  if (value === "PARENT" || value === "PARENTS" || value === "FAMILY") return "CAREGIVER";
+  return roleVisuals[value] ? value : "DEFAULT";
+}
+
+function applyLoginRole(role) {
+  const roleKey = normalizeRole(role);
+  if (roleKey === activeRole && (roleKey === "DEFAULT" || floatingMessageTimer)) return;
+  activeRole = roleKey;
+  activeTargetIndex = 0;
+  const visual = roleVisuals[roleKey];
+  document.body.classList.remove("role-patient", "role-caregiver", "role-doctor");
+  if (visual.bodyClass) document.body.classList.add(visual.bodyClass);
+  title.textContent = visual.title;
+  eyebrow.textContent = visual.eyebrow;
+  if (roleCaption) roleCaption.textContent = visual.caption;
+  clearInterval(targetCycleTimer);
+  targetCycleTimer = null;
+  if (roleKey === "DEFAULT") {
+    stopFloatingMessages();
+    if (cloud) cloud.visible = true;
+    return;
+  }
+  if (cloud) cloud.visible = false;
+  startFloatingMessages(roleKey);
+}
+
+function startFloatingMessages(roleKey) {
+  stopFloatingMessages();
+  if (!floatingMessageLayer) return;
+  const config = floatingMessageConfig();
+  for (let index = 0; index < config.initialCount; index++) {
+    trackFloatingTimeout(() => spawnFloatingMessage(roleKey), index * 420);
+  }
+  scheduleNextFloatingMessage(roleKey);
+}
+
+function stopFloatingMessages() {
+  clearTimeout(floatingMessageTimer);
+  floatingMessageTimer = null;
+  floatingMessageTimeouts.forEach((timeoutId) => clearTimeout(timeoutId));
+  floatingMessageTimeouts.clear();
+  if (floatingMessageLayer) floatingMessageLayer.replaceChildren();
+}
+
+function trackFloatingTimeout(callback, delay) {
+  const timeoutId = window.setTimeout(() => {
+    floatingMessageTimeouts.delete(timeoutId);
+    callback();
+  }, delay);
+  floatingMessageTimeouts.add(timeoutId);
+}
+
+function scheduleNextFloatingMessage(roleKey) {
+  clearTimeout(floatingMessageTimer);
+  floatingMessageTimer = window.setTimeout(() => {
+    if (activeRole !== roleKey) return;
+    spawnFloatingMessage(roleKey);
+    scheduleNextFloatingMessage(roleKey);
+  }, randomBetween(1600, 2500));
+}
+
+function floatingMessageConfig() {
+  if (reducedMotionQuery.matches || innerHeight < 420) {
+    return { initialCount: 0, maxVisible: 0, allowLarge: false };
+  }
+  if (innerWidth <= 640 || innerHeight < 620) {
+    return { initialCount: 2, maxVisible: 3, allowLarge: false };
+  }
+  if (innerWidth <= 1100) {
+    return { initialCount: 4, maxVisible: 5, allowLarge: false };
+  }
+  return { initialCount: 5, maxVisible: 6, allowLarge: true };
+}
+
+function spawnFloatingMessage(roleKey) {
+  const phrases = roleVisuals[roleKey]?.phrases || [];
+  if (!floatingMessageLayer || !phrases.length) return;
+  const config = floatingMessageConfig();
+  const visibleMessages = floatingMessageLayer.querySelectorAll(".floating-message");
+  if (!config.maxVisible || visibleMessages.length >= config.maxVisible) return;
+  const item = document.createElement("span");
+  const sizeClass = config.allowLarge && Math.random() > 0.86
+    ? "large"
+    : (Math.random() > 0.48 ? "small" : "");
+  item.className = `floating-message is-positioning ${sizeClass}`.trim();
+  const visiblePhrases = new Set([...visibleMessages].map((messageItem) => messageItem.textContent));
+  const phrasePool = phrases.filter((phrase) => !visiblePhrases.has(phrase));
+  const candidates = phrasePool.length ? phrasePool : phrases;
+  item.textContent = candidates[Math.floor(Math.random() * candidates.length)];
+  floatingMessageLayer.append(item);
+  const position = findFloatingMessagePosition(item);
+  if (!position) {
+    item.remove();
+    return;
+  }
+  item.style.left = `${position.left}px`;
+  item.style.top = `${position.top}px`;
+  item.style.animationDuration = `${6.2 + Math.random() * 1.4}s`;
+  requestAnimationFrame(() => item.classList.remove("is-positioning"));
+  trackFloatingTimeout(() => item.remove(), 7900);
+}
+
+function findFloatingMessagePosition(item) {
+  const itemWidth = item.offsetWidth;
+  const itemHeight = item.offsetHeight;
+  const viewportPadding = innerWidth <= 640 ? 12 : 20;
+  const maxLeft = innerWidth - viewportPadding - itemWidth;
+  const maxTop = innerHeight - viewportPadding - itemHeight;
+  if (maxLeft <= viewportPadding || maxTop <= viewportPadding) return null;
+
+  const protectedMargin = innerWidth <= 640 ? 18 : 30;
+  const blockedRects = protectedMessageRects(protectedMargin);
+  floatingMessageLayer.querySelectorAll(".floating-message:not(.is-positioning)").forEach((messageItem) => {
+    blockedRects.push(expandRect(messageItem.getBoundingClientRect(), 16));
+  });
+
+  for (let attempt = 0; attempt < 90; attempt++) {
+    const useEdgeLane = attempt < 60;
+    const laneWidth = Math.max(0, (maxLeft - viewportPadding) * 0.24);
+    let left;
+    if (useEdgeLane) {
+      left = attempt % 2 === 0
+        ? viewportPadding + randomBetween(0, laneWidth)
+        : maxLeft - randomBetween(0, laneWidth);
+    } else {
+      left = randomBetween(viewportPadding, maxLeft);
+    }
+    const top = randomBetween(viewportPadding, maxTop);
+    const candidate = {
+      left,
+      top,
+      right: left + itemWidth,
+      bottom: top + itemHeight
+    };
+    if (blockedRects.every((blocked) => !rectsIntersect(candidate, blocked))) {
+      return { left: Math.round(left), top: Math.round(top) };
+    }
+  }
+  return null;
+}
+
+function protectedMessageRects(margin) {
+  const selectors = [
+    ".login-overlay",
+    ".qr-shell",
+    ".status-detail",
+    ".connection-panel",
+    ".mobile-panel-toggle",
+    ".login-dialog[open]"
+  ];
+  return selectors.flatMap((selector) => [...document.querySelectorAll(selector)])
+    .filter((element) => isVisibleInViewport(element))
+    .map((element) => expandRect(element.getBoundingClientRect(), margin));
+}
+
+function isVisibleInViewport(element) {
+  const style = getComputedStyle(element);
+  const rect = element.getBoundingClientRect();
+  return style.display !== "none"
+    && style.visibility !== "hidden"
+    && rect.width > 0
+    && rect.height > 0
+    && rect.right > 0
+    && rect.bottom > 0
+    && rect.left < innerWidth
+    && rect.top < innerHeight;
+}
+
+function expandRect(rect, margin) {
+  return {
+    left: rect.left - margin,
+    top: rect.top - margin,
+    right: rect.right + margin,
+    bottom: rect.bottom + margin
+  };
+}
+
+function rectsIntersect(first, second) {
+  return first.left < second.right
+    && first.right > second.left
+    && first.top < second.bottom
+    && first.bottom > second.top;
+}
+
+function randomBetween(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function updateParticleTarget(roleKey, targetIndex) {
+  if (!cloud || !particleCount) return;
+  const targets = roleVisuals[roleKey]?.targets || roleVisuals.DEFAULT.targets;
+  const target = targets[targetIndex % targets.length];
+  const positions = target.type === "heart"
+    ? heartTargetPositions(particleCount)
+    : textTargetPositions(particleCount, target.value);
+  cloud.geometry.setAttribute("aTarget", new THREE.BufferAttribute(positions, 3));
+  cloud.geometry.attributes.aTarget.needsUpdate = true;
+}
+
+function textTargetPositions(count, text) {
+  const width = 1200;
+  const height = 360;
+  const offscreen = document.createElement("canvas");
+  offscreen.width = width;
+  offscreen.height = height;
+  const context = offscreen.getContext("2d");
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = "#fff";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  const lines = splitParticleText(text);
+  const longestLine = Math.max(...lines.map((line) => line.length));
+  const fontSize = longestLine > 6 ? 132 : 152;
+  context.font = `700 ${fontSize}px "Microsoft YaHei", "PingFang SC", sans-serif`;
+  lines.forEach((line, index) => {
+    const lineY = height / 2 + (index - (lines.length - 1) / 2) * fontSize * 1.02;
+    context.fillText(line, width / 2, lineY, width - 72);
+  });
+  const image = context.getImageData(0, 0, width, height).data;
+  const samples = [];
+  const step = 3;
+  for (let y = 0; y < height; y += step) {
+    for (let x = 0; x < width; x += step) {
+      if (image[(y * width + x) * 4 + 3] > 32) {
+        samples.push([x, y]);
+      }
+    }
+  }
+  if (!samples.length) return heartTargetPositions(count);
+  const result = new Float32Array(count * 3);
+  for (let index = 0; index < count; index++) {
+    const sample = samples[index % samples.length];
+    const offset = index * 3;
+    result[offset] = (sample[0] / width - 0.5) * 2.65 + randomJitter(0.006);
+    result[offset + 1] = (0.5 - sample[1] / height) * 1.72 + 0.72 + randomJitter(0.006);
+    result[offset + 2] = randomJitter(0.08) - 0.18;
+  }
+  return result;
+}
+
+function splitParticleText(text) {
+  if (text.includes("|")) return text.split("|").filter(Boolean);
+  if (text.length <= 10) return [text];
+  const punctuationIndex = Math.max(text.indexOf("，"), text.indexOf("、"));
+  if (punctuationIndex > 1 && punctuationIndex < text.length - 2) {
+    return [text.slice(0, punctuationIndex), text.slice(punctuationIndex + 1)];
+  }
+  const middle = Math.ceil(text.length / 2);
+  return [text.slice(0, middle), text.slice(middle)];
+}
+
+function heartTargetPositions(count) {
+  const result = new Float32Array(count * 3);
+  for (let index = 0; index < count; index++) {
+    const t = (index / count) * Math.PI * 2 * 18 + Math.random() * 0.08;
+    const radius = Math.sqrt(Math.random());
+    const x = 16 * Math.pow(Math.sin(t), 3);
+    const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+    const offset = index * 3;
+    result[offset] = x / 8.6 * radius + randomJitter(0.018);
+    result[offset + 1] = y / 11.5 * radius + 0.34 + randomJitter(0.018);
+    result[offset + 2] = randomJitter(0.2) - 0.22;
+  }
+  return result;
+}
+
+function randomJitter(amount) {
+  return (Math.random() - 0.5) * amount;
 }
 
 function createParticleCloud() {
@@ -168,6 +523,7 @@ function initBackground() {
     renderer.setSize(innerWidth, innerHeight, false);
     clock = new THREE.Clock();
     createParticleCloud();
+    applyLoginRole("DEFAULT");
     addEventListener("resize", resize);
     canvas.addEventListener("pointerdown", pointerDown);
     addEventListener("pointermove", pointerMove, { passive: true });
@@ -187,6 +543,7 @@ function pointerDown(event) {
 }
 
 function pointerMove(event) {
+  updateRoleParallax(event);
   if (!dragging) return;
   const dx = event.clientX - lastPointer.x;
   const dy = event.clientY - lastPointer.y;
@@ -199,15 +556,34 @@ function pointerMove(event) {
   dragEnergy = Math.min(1, dragEnergy + Math.hypot(dx, dy) * 0.012);
 }
 
+function updateRoleParallax(event) {
+  if (activeRole === "DEFAULT" || reducedMotionQuery.matches) return;
+  pendingParallax = {
+    x: ((event.clientX / Math.max(1, innerWidth)) - 0.5) * 14,
+    y: ((event.clientY / Math.max(1, innerHeight)) - 0.5) * 10
+  };
+  if (parallaxFrame) return;
+  parallaxFrame = requestAnimationFrame(() => {
+    document.documentElement.style.setProperty("--ambient-shift-x", `${pendingParallax.x.toFixed(2)}px`);
+    document.documentElement.style.setProperty("--ambient-shift-y", `${pendingParallax.y.toFixed(2)}px`);
+    parallaxFrame = null;
+  });
+}
+
 function pointerUp() {
   dragging = false;
 }
 
 function resize() {
-  if (!renderer || !camera) return;
-  camera.aspect = innerWidth / Math.max(1, innerHeight);
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight, false);
+  if (renderer && camera) {
+    camera.aspect = innerWidth / Math.max(1, innerHeight);
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight, false);
+  }
+  clearTimeout(floatingResizeTimer);
+  floatingResizeTimer = window.setTimeout(() => {
+    if (activeRole !== "DEFAULT") startFloatingMessages(activeRole);
+  }, 180);
 }
 
 function animate() {
@@ -230,11 +606,12 @@ function animate() {
   renderer.render(scene, camera);
 }
 
-async function fetchSession(targetSessionId, targetCanvas = qrCanvas) {
+async function fetchSession(targetSessionId, targetCanvas = qrCanvas, shouldApplyRole = targetCanvas === qrCanvas) {
   if (!targetSessionId) throw new Error("缺少登录会话");
   const response = await fetch(`/api/wechat-login/${encodeURIComponent(targetSessionId)}`, { cache: "no-store" });
   if (!response.ok) throw new Error("登录会话不存在或已过期");
   const data = await response.json();
+  if (shouldApplyRole) applyLoginRole(data.requestedRole);
   if (!targetCanvas.classList.contains("ready")) drawQr(data.matrix, data.matrixSize, targetCanvas);
   return data;
 }
@@ -305,7 +682,7 @@ async function pollManager() {
 
 async function pollDialogSession(targetSessionId) {
   try {
-    const data = await fetchSession(targetSessionId, dialogQrCanvas);
+    const data = await fetchSession(targetSessionId, dialogQrCanvas, false);
     const labels = statusLabels[data.status] || [data.message, ""];
     dialogStatus.textContent = labels[0];
     if (["LOGGED_IN", "EXPIRED", "ERROR"].includes(data.status)) return;
@@ -322,7 +699,10 @@ async function addUser() {
   dialogStatus.textContent = "正在生成二维码...";
   loginDialog.showModal();
   try {
-    const response = await fetch("/api/clawbot/connections", { method: "POST" });
+    const roleQuery = activeRole && activeRole !== "DEFAULT"
+      ? `?role=${encodeURIComponent(activeRole)}`
+      : "";
+    const response = await fetch(`/api/clawbot/connections${roleQuery}`, { method: "POST" });
     const body = await response.json();
     if (!response.ok) throw new Error(body.message || "无法新增连接");
     await pollDialogSession(body.loginSessionId);

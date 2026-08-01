@@ -9,6 +9,7 @@ import com.example.spring.wechat.memory.config.WechatMemoryProperties;
 import com.example.spring.wechat.web.config.WebToolProperties;
 import com.example.spring.wechat.taxi.client.DidiMcpProperties;
 import com.example.spring.wechat.payment.config.WechatPayProperties;
+import com.example.spring.wechat.reminder.config.ReminderProperties;
 import com.example.spring.wechat.food.config.FoodDeliveryProperties;
 import com.example.spring.wechat.travel.config.MeituanTravelProperties;
 import com.example.spring.xhs.config.XhsCollectorProperties;
@@ -16,12 +17,13 @@ import com.example.spring.xhs.config.XhsAnalysisProperties;
 import com.example.spring.xhs.config.XhsAlertProperties;
 import com.example.spring.xhs.config.XhsConsoleProperties;
 import com.example.spring.xhs.config.XhsScheduledReportProperties;
+import com.example.spring.wechat.care.config.CareProperties;
+import com.example.spring.wechat.care.config.CareTaskProperties;
 import com.example.spring.wechat.email.config.EmailProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.scheduling.annotation.EnableScheduling;
-import com.example.spring.wechat.netdisk.config.BaiduNetdiskProperties;
 
 /**
  * Spring Boot 启动类，负责启动整个 OpenClaw 应用。
@@ -35,6 +37,8 @@ import com.example.spring.wechat.netdisk.config.BaiduNetdiskProperties;
         WebToolProperties.class,
         DidiMcpProperties.class,
         WechatPayProperties.class,
+        BaiduNetdiskProperties.class,
+        ReminderProperties.class,
         FoodDeliveryProperties.class,
         MeituanTravelProperties.class,
         XhsCollectorProperties.class,
@@ -42,8 +46,9 @@ import com.example.spring.wechat.netdisk.config.BaiduNetdiskProperties;
         XhsAlertProperties.class,
         XhsConsoleProperties.class,
         XhsScheduledReportProperties.class,
-        EmailProperties.class,
-        BaiduNetdiskProperties.class
+        CareProperties.class,
+        CareTaskProperties.class,
+        EmailProperties.class
 })
 @EnableScheduling
 public class AgentClawApplication {

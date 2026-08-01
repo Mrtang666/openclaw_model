@@ -4,16 +4,18 @@ import com.example.spring.wechat.news.client.TianNewsClient;
 import com.example.spring.wechat.news.client.TianNewsResponse;
 import com.example.spring.wechat.news.model.NewsArticle;
 import com.example.spring.wechat.news.model.NewsQuery;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.stream.Collectors;
 
-@Slf4j
 @Service
 public class NewsService {
+
+    private static final Logger log = LoggerFactory.getLogger(NewsService.class);
 
     @Autowired
     private TianNewsClient newsClient;

@@ -9,6 +9,7 @@ import com.example.spring.skill.SkillDefinition;
 import com.example.spring.skill.SkillManager;
 import com.example.spring.skill.SkillReference;
 import com.example.spring.wechat.bot.WechatReply;
+import com.example.spring.wechat.conversation.WechatConversationMode;
 import com.example.spring.wechat.conversation.tools.WechatTool;
 import com.example.spring.wechat.conversation.tools.WechatToolParameter;
 import com.example.spring.wechat.conversation.tools.WechatToolRegistry;
@@ -18,6 +19,10 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -29,6 +34,107 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class FunctionCallingAgentLoopTests {
+
+    @Test
+    void appliesDifferentSystemPromptsForPatientCaregiverAndDoctorModes() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client,
+                new WechatToolRegistry(List.of(new FakeReminderAfterTool(false))),
+                5);
+        when(client.chat(anyList(), anyList())).thenReturn(Optional.of(
+                new FunctionCallingModelResponse("ok", List.of())));
+
+        loop.run(request("你好", WechatConversationMode.PATIENT)).orElseThrow();
+        loop.run(request("你好", WechatConversationMode.CAREGIVER)).orElseThrow();
+        loop.run(request("你好", WechatConversationMode.DOCTOR)).orElseThrow();
+        loop.run(request("你好", WechatConversationMode.GENERAL)).orElseThrow();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<FunctionCallingMessage>> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(client, org.mockito.Mockito.times(4)).chat(messagesCaptor.capture(), anyList());
+
+        List<List<FunctionCallingMessage>> calls = messagesCaptor.getAllValues();
+        assertThat(calls.get(0).get(0).content())
+                .contains("当前对话模式：患者端")
+                .contains("一次只推进一件最重要的事");
+        assertThat(calls.get(1).get(0).content())
+                .contains("当前对话模式：家属端")
+                .contains("当前情况、需要关注、建议行动");
+        assertThat(calls.get(2).get(0).content())
+                .contains("当前对话模式：医生端")
+                .contains("摘要、关键变化、风险/告警、依从性、待处理事项");
+        assertThat(calls.get(3).get(0).content()).doesNotContain("当前对话模式：");
+    }
+
+    @Test
+    void runtimePromptProvidesServerTimeAndRequiresRelativeReminderTool() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client,
+                new WechatToolRegistry(List.of(new FakeReminderAfterTool(false))),
+                5,
+                Clock.fixed(Instant.parse("2026-07-27T07:58:08Z"), ZoneOffset.UTC),
+                "Asia/Shanghai");
+        when(client.chat(anyList(), anyList())).thenReturn(Optional.of(
+                new FunctionCallingModelResponse("ok", List.of())));
+
+        loop.run(request("两分钟后提醒我去喝水", (a, b, c, d) -> {
+        })).orElseThrow();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<FunctionCallingMessage>> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(client).chat(messagesCaptor.capture(), anyList());
+        assertThat(messagesCaptor.getValue().get(0).content())
+                .contains("服务器当前时间：2026-07-27T15:58:08+08:00")
+                .contains("必须调用 reminder_create_after")
+                .contains("原样提取 delay_value 和 delay_unit")
+                .contains("禁止换算分钟或 execute_at");
+    }
+
+    @Test
+    void relativeReminderExecutesOnlyFirstMutationAndReturnsAuthoritativeResult() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        FakeReminderAfterTool reminder = new FakeReminderAfterTool(false);
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(client, new WechatToolRegistry(List.of(reminder)), 5);
+        when(client.chat(anyList(), anyList())).thenReturn(Optional.of(new FunctionCallingModelResponse(
+                "",
+                List.of(
+                        new FunctionCallingToolCall(
+                                "reminder-1", "reminder_create_after", Map.of(
+                                        "title", "喝水", "delay_value", "2", "delay_unit", "minutes")),
+                        new FunctionCallingToolCall(
+                                "reminder-2", "reminder_create_after", Map.of(
+                                        "title", "喝水", "delay_value", "2", "delay_unit", "minutes"))))));
+
+        WechatReply reply = loop.run(request("两分钟后提醒我去喝水", (a, b, c, d) -> {
+        })).orElseThrow();
+
+        assertThat(reply.text()).isEqualTo("已创建提醒 #8，将于 2026-07-27 16:00:08 提醒：喝水");
+        assertThat(reminder.callCount).isEqualTo(1);
+        verify(client, org.mockito.Mockito.times(1)).chat(anyList(), anyList());
+    }
+
+    @Test
+    void relativeReminderBusinessFailureIsRecordedAsFailedAndEndsTurn() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        FakeReminderAfterTool reminder = new FakeReminderAfterTool(true);
+        List<String> statuses = new ArrayList<>();
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(client, new WechatToolRegistry(List.of(reminder)), 5);
+        when(client.chat(anyList(), anyList())).thenReturn(Optional.of(new FunctionCallingModelResponse(
+                "",
+                List.of(new FunctionCallingToolCall(
+                        "reminder-1", "reminder_create_after", Map.of(
+                                "title", "喝水", "delay_value", "0", "delay_unit", "minutes"))))));
+
+        WechatReply reply = loop.run(request(
+                "零分钟后提醒我去喝水", (a, b, c, status) -> statuses.add(status))).orElseThrow();
+
+        assertThat(reply.text()).startsWith("提醒操作未完成：");
+        assertThat(statuses).containsExactly("FAILED");
+        assertThat(reminder.callCount).isEqualTo(1);
+        verify(client, org.mockito.Mockito.times(1)).chat(anyList(), anyList());
+    }
 
     @Test
     void meituanTravelResultIsReturnedDirectlyWithoutAnotherModelRound() {
@@ -669,6 +775,81 @@ class FunctionCallingAgentLoopTests {
             called = true;
             callCount++;
             return WechatReply.text("weather result for " + request.argument("city") + ": sunny");
+        }
+    }
+
+    private FunctionCallingAgentRequest request(
+            String userText,
+            FunctionCallingAgentRequest.ToolExecutionRecorder recorder) {
+        return new FunctionCallingAgentRequest(
+                "clawbot:connection-1:wechat-user-1",
+                userText,
+                "No previous context",
+                List.of(),
+                (a, b) -> {
+                },
+                (a, b) -> {
+                },
+                recorder);
+    }
+
+    private FunctionCallingAgentRequest request(String userText, WechatConversationMode conversationMode) {
+        return new FunctionCallingAgentRequest(
+                "clawbot:connection-1:wechat-user-1",
+                userText,
+                "No previous context",
+                List.of(),
+                List.of(),
+                List.of(),
+                (a, b) -> {
+                },
+                (a, b) -> {
+                },
+                (a, b, c, d) -> {
+                },
+                conversationMode);
+    }
+
+    private static final class FakeReminderAfterTool implements WechatTool {
+        private final boolean fail;
+        private int callCount;
+
+        private FakeReminderAfterTool(boolean fail) {
+            this.fail = fail;
+        }
+
+        @Override
+        public String name() {
+            return "reminder_create_after";
+        }
+
+        @Override
+        public String description() {
+            return "create a reminder after a relative delay";
+        }
+
+        @Override
+        public List<String> arguments() {
+            return List.of("title", "delay_value", "delay_unit");
+        }
+
+        @Override
+        public List<WechatToolParameter> parameters() {
+            return List.of(
+                    WechatToolParameter.requiredString("title", "reminder title", "喝水"),
+                    new WechatToolParameter(
+                            "delay_value", "integer", true, "relative delay", List.of(), "2"),
+                    new WechatToolParameter(
+                            "delay_unit", "string", true, "relative unit", List.of("minutes", "hours", "days"), "minutes"));
+        }
+
+        @Override
+        public WechatReply execute(WechatToolRequest request) {
+            callCount++;
+            if (fail) {
+                return WechatReply.text("提醒操作未完成：delay_value 必须是正整数");
+            }
+            return WechatReply.text("已创建提醒 #8，将于 2026-07-27 16:00:08 提醒：喝水");
         }
     }
 

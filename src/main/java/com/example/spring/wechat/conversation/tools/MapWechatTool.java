@@ -45,7 +45,7 @@ public class MapWechatTool implements WechatTool {
 
     @Override
     public String description() {
-        return "查询地点详情、两地或多地点路线，生成完整路线图，并搜索周边美食、景点和商场";
+        return "微信地图出行工具，查询地点、路线、多地点路线、周边推荐和静态路线图。";
     }
 
     @Override
@@ -142,24 +142,10 @@ public class MapWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "查询中国境内地点、地点详情、两地或多地点驾车/公共交通/步行方案，生成完整路线图，以及搜索指定地点周边的美食、景点和商场。",
-                List.of(
-                        "缺少 operation 或该操作需要的地点信息时必须追问，不能猜测起点、终点或城市",
-                        "同名地点应使用 city 消除歧义；结果仍有歧义时先向用户确认再规划路线",
-                        "多地点路线默认保持用户给出的顺序；只有用户明确要求顺路或优化时才使用 optimize",
-                        "路线时间和距离来自地图服务估算，不承诺实时交通、班次或可达性",
-                        "票务只提供第三方平台搜索入口，不能声称实时有票、价格准确或链接是景区官方渠道",
-                        "不支持海外地点、实时公交到站、网约车下单、酒店餐厅预订和实际购票"),
-                List.of(
-                        "place_search/place_detail：query，已知地点 ID 时可用 place_id",
-                        "route：origin 和 destination，建议提供 city",
-                        "multi_route：locations，建议提供 city；可选 order_policy、round_trip 和 include_map_image",
-                        "nearby_search：center，可选 category 和 radius_meters"),
-                List.of(
-                        "地点名称、类型、地址、电话、营业信息和评分等可用资料",
-                        "路线距离、预计耗时、费用、公共交通线路及方案数量",
-                        "多地点路线顺序、逐段方案、总距离、总耗时和完整路线图",
-                        "附近地点推荐、地图查看/导航链接和景点票务平台搜索链接"));
+                "查询地点、路线、周边推荐和路线图并返回地图服务结果",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

@@ -20,34 +20,37 @@ class FoodDeliveryWechatToolTests {
     private final FoodDeliveryWechatTool tool = new FoodDeliveryWechatTool(service, new ObjectMapper());
 
     @Test
-    void exposesAddressReusePrompt() {
+    void exposesAddressReusePromptWithoutRawPhone() {
         when(service.addresses("user-1")).thenReturn(List.of(new FoodDeliveryAddress(
-                "address-1", "user-1", "家", "张先生", "13800138000",
-                "杭州", "滨江区", "星光大道3幢1202", "", "", true, Instant.now())));
+                "address-1", "user-1", "Home", "Zhang", "13800138000",
+                "Hangzhou", "Binjiang", "Xingguang Road Building 3 Room 202", "", "", true, Instant.now())));
 
-        String reply = tool.execute(request("查看地址", Map.of("operation", "list_addresses"))).text();
+        String reply = tool.execute(request("show address", Map.of("operation", "list_addresses"))).text();
 
-        assertThat(reply).contains("上次使用的是").contains("是否仍送到这里").doesNotContain("13800138000");
+        assertThat(reply).contains("address-1").doesNotContain("13800138000");
     }
 
     @Test
-    void paymentShowsMiniProgramFallback() {
+    void paymentShowsReturnedPaymentLinks() {
         when(service.createPayment("user-1", "order-1")).thenReturn(new FoodPaymentHandoff(
                 "handoff-1", "order-1", FoodPaymentHandoff.Type.WECHAT_JSAPI,
                 "https://pay.example.com/order-1", "weixin://dl/business/?t=food-order-1",
                 Instant.now().plusSeconds(600), "CREATED"));
 
-        String reply = tool.execute(request("支付订单", Map.of(
+        String reply = tool.execute(request("pay order", Map.of(
                 "operation", "create_payment", "order_id", "order-1"))).text();
 
-        assertThat(reply).contains("打开支付页面").contains("小程序/H5兜底").contains("weixin://");
+        assertThat(reply).contains("https://pay.example.com/order-1", "weixin://");
     }
 
     @Test
-    void toolDescriptionRequiresExplicitConfirmation() {
-        assertThat(tool.capability().toPromptText())
-                .contains("明确回复确认下单")
-                .contains("支付密码");
+    void exposesCompactMetadataBecauseWorkflowRulesLiveInSkill() {
+        assertThat(tool.name()).isEqualTo("food_delivery");
+        assertThat(tool.description().length()).isLessThanOrEqualTo(80);
+        assertThat(tool.capability().summary()).isNotBlank();
+        assertThat(tool.capability().boundaries()).isEmpty();
+        assertThat(tool.capability().requiredInformation()).isEmpty();
+        assertThat(tool.capability().outputs()).isEmpty();
     }
 
     private WechatToolRequest request(String userText, Map<String, String> arguments) {

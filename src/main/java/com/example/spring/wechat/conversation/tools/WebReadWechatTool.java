@@ -49,7 +49,7 @@ public class WebReadWechatTool implements WechatTool {
 
     @Override
     public String description() {
-        return "读取用户提供的公开网页 URL，提取标题和正文；用户要求保存、记住或以后参考时，自动加入知识库。";
+        return "网页读取工具，读取公开 URL 正文，并可按要求保存到知识库。";
     }
 
     @Override
@@ -67,12 +67,10 @@ public class WebReadWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "读取公开网页正文并返回给大模型总结，必要时保存到知识库。",
-                List.of(
-                        "只支持 http/https；不支持登录、验证码、本机和内网地址。",
-                        "网页摘要不等同于长期知识；只有用户要求保存、记住或以后参考时才入库。"),
-                List.of("需要 url。"),
-                List.of("返回网页标题、来源 URL、正文片段；保存时返回知识库 document_id。"));
+                "读取公开网页正文并返回标题、来源和正文片段",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

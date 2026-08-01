@@ -77,6 +77,27 @@ public class CareNotificationRepository {
                 timestamp(now), id);
     }
 
+    public void deferUntilConnectionAvailable(long id, String error, Instant retryAt, Instant now) {
+        jdbc.update("""
+                UPDATE medical_notifications
+                SET status='PENDING',last_error=?,scheduled_at=?,locked_at=NULL,updated_at=?
+                WHERE id=? AND status='PROCESSING'
+                """, limit(error, 1000), timestamp(retryAt), timestamp(now), id);
+    }
+
+    public void requeueConnectionUnavailablePatientNotifications(Instant now) {
+        jdbc.update("""
+                UPDATE medical_notifications n
+                LEFT JOIN medical_care_task_instances i
+                    ON n.idempotency_key LIKE CONCAT('task:', i.id, ':%')
+                SET n.status='PENDING',n.retry_count=0,n.scheduled_at=?,n.locked_at=NULL,n.updated_at=?
+                WHERE n.status='FAILED'
+                  AND n.notification_type IN ('CARE_PLAN_TO_PATIENT','CARE_TASK_DUE','CARE_TASK_FOLLOW_UP')
+                  AND (n.last_error LIKE '%微信连接当前不可用%' OR n.last_error LIKE '%没有可用微信连接%')
+                  AND (n.notification_type='CARE_PLAN_TO_PATIENT' OR i.status='PENDING')
+                """, timestamp(now), timestamp(now));
+    }
+
     public void releaseExpiredLocks(Instant expiredBefore, Instant now) {
         jdbc.update("""
                 UPDATE medical_notifications

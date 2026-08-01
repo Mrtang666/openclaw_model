@@ -1,0 +1,11 @@
+{
+  "tools": [
+    "xhs_monitor_collect",
+    "xhs_opinion_search",
+    "xhs_incident_list",
+    "xhs_incident_transition",
+    "xhs_daily_report",
+    "xhs_alert_subscribe",
+    "xhs_alert_acknowledge"
+  ]
+}

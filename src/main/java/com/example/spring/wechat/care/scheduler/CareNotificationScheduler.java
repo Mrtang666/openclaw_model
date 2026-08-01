@@ -52,6 +52,7 @@ public class CareNotificationScheduler {
     }
 
     public void processDue(Instant now) {
+        repository.requeueConnectionUnavailablePatientNotifications(now);
         repository.releaseExpiredLocks(
                 now.minusSeconds(properties.notification().lockTimeoutSeconds()), now);
         for (Long id : repository.findDueIds(now, properties.notification().batchSize())) {
@@ -66,6 +67,13 @@ public class CareNotificationScheduler {
             repository.markSent(notification.id(), now);
             log.info("照护通知发送成功，notificationId={}", notification.id());
         } catch (Exception exception) {
+            lastError = rootMessage(exception);
+            if (isConnectionUnavailable(lastError)) {
+                repository.deferUntilConnectionAvailable(
+                        notification.id(), lastError, now.plusSeconds(connectionRetryDelaySeconds()), now);
+                log.info("照护通知等待接收方重新登录，notificationId={}", notification.id());
+                return;
+            }
             boolean terminal = notification.retryCount() + 1 >= notification.maxRetryCount();
             String error = rootMessage(exception);
             repository.markFailed(
@@ -74,6 +82,16 @@ public class CareNotificationScheduler {
             log.warn("照护通知发送失败，notificationId={}, terminal={}, error={}",
                     notification.id(), terminal, error);
         }
+    }
+
+    private boolean isConnectionUnavailable(String message) {
+        String value = message == null ? "" : message;
+        return value.contains("微信连接当前不可用")
+                || value.contains("没有可用微信连接");
+    }
+
+    private long connectionRetryDelaySeconds() {
+        return Math.max(60L, properties.notification().retryDelaySeconds());
     }
 
     private void sendToFirstAvailableTarget(MedicalNotification notification) {
@@ -108,7 +126,8 @@ public class CareNotificationScheduler {
 
     private List<NotificationTarget> latestTargets(MedicalNotification notification) {
         if ("CARE_PLAN_TO_PATIENT".equals(notification.notificationType())
-                || "CARE_TASK_DUE".equals(notification.notificationType())) {
+                || "CARE_TASK_DUE".equals(notification.notificationType())
+                || "CARE_TASK_FOLLOW_UP".equals(notification.notificationType())) {
             return identityRepository.listUserNotificationTargetsByRole(notification.toUserId(), MedicalRole.PATIENT);
         }
         if ("CARE_PLAN_TO_FAMILY".equals(notification.notificationType())) {

@@ -32,4 +32,14 @@ class CarePlanTimeParserTests {
         assertThat(parser.resolveDailyTimes("晚些时候进行训练", LocalTime.of(16, 0)))
                 .containsExactly(LocalTime.of(16, 0));
     }
+
+    @Test
+    void extractsTimedTasksWithDotSeparatedTimes() {
+        assertThat(parser.extractTimedTasks("任务清单：7.00-9.00完成早操，12.00-13.00汇报平安"))
+                .containsExactly(
+                        new CarePlanTimeParser.TimedTask(
+                                LocalTime.of(7, 0), LocalTime.of(9, 0), "完成早操"),
+                        new CarePlanTimeParser.TimedTask(
+                                LocalTime.of(12, 0), LocalTime.of(13, 0), "汇报平安"));
+    }
 }

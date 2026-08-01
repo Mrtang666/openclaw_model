@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>小红书舆情管理台</title>
+  <link rel="stylesheet" href="styles.css?v=20260731-opinion-schedule-2">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">X</span>
+        <div><strong>小红书舆情</strong><span>管理控制台</span></div>
+      </div>
+      <nav id="navigation" aria-label="功能导航">
+        <button class="nav-item active" data-view="overview"><span>总</span>总览</button>
+        <button class="nav-item" data-view="projects"><span>项</span>项目管理</button>
+        <button class="nav-item" data-view="jobs"><span>采</span>采集任务</button>
+        <button class="nav-item" data-view="opinions"><span>舆</span>舆情数据</button>
+        <button class="nav-item" data-view="incidents"><span>险</span>风险事件</button>
+        <button class="nav-item" data-view="reports"><span>报</span>舆情日报</button>
+        <button class="nav-item" data-view="scheduled-reports"><span>定</span>定时报告</button>
+        <button class="nav-item" data-view="alerts"><span>警</span>告警管理</button>
+        <button class="nav-item" data-view="authorization"><span>权</span>账号授权</button>
+        <button class="nav-item" data-view="system"><span>态</span>系统状态</button>
+      </nav>
+      <div class="sidebar-foot">本地管理模式</div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div>
+          <h1 id="page-title">总览</h1>
+          <p id="page-subtitle">查看当前项目的舆情与风险概况</p>
+        </div>
+        <div class="top-actions">
+          <label class="project-picker">当前项目
+            <select id="global-project"><option value="">全部项目</option></select>
+          </label>
+          <div id="service-badge" class="service-badge loading"><i></i><span>检查服务</span></div>
+          <button id="refresh-button" class="icon-button" title="刷新当前页面" aria-label="刷新当前页面">↻</button>
+        </div>
+      </header>
+
+      <div id="notice" class="notice" hidden></div>
+      <section id="content" class="content" aria-live="polite"></section>
+    </main>
+  </div>
+
+  <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+  <aside id="detail-drawer" class="detail-drawer" aria-label="详情" aria-hidden="true">
+      <header><div><span class="eyebrow">舆情详情</span><h2 id="drawer-title">帖子详情</h2></div>
+      <button id="drawer-close" class="icon-button" aria-label="关闭详情">×</button></header>
+    <div id="drawer-content" class="drawer-content"></div>
+  </aside>
+
+  <dialog id="action-dialog">
+    <form method="dialog" id="action-form">
+      <header><h2 id="dialog-title">处理风险事件</h2><button type="button" data-close-dialog="action-dialog" class="icon-button" aria-label="关闭">×</button></header>
+      <input type="hidden" id="dialog-incident-id">
+      <label>目标状态<select id="dialog-status" required></select></label>
+      <label>处理备注<textarea id="dialog-note" rows="4" maxlength="1000" required placeholder="填写本次处理依据和结果"></textarea></label>
+      <footer><button type="button" data-close-dialog="action-dialog" class="button secondary">取消</button><button id="dialog-submit" value="default" class="button primary">确认变更</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="project-dialog">
+    <form method="dialog" id="project-edit-form">
+      <header><h2>编辑监控项目</h2><button type="button" data-close-dialog="project-dialog" class="icon-button" aria-label="关闭">×</button></header>
+      <input type="hidden" id="edit-project-key">
+      <label>项目名称<input id="edit-project-name" required maxlength="255"></label>
+      <label>监控关键词<input id="edit-project-terms" placeholder="多个关键词使用逗号分隔"></label>
+      <label>项目状态<select id="edit-project-status"><option value="ACTIVE">运行中</option><option value="PAUSED">已暂停</option></select></label>
+      <footer><button type="button" data-close-dialog="project-dialog" class="button secondary">取消</button><button id="project-edit-submit" value="default" class="button primary">保存修改</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="delete-project-dialog">
+    <form method="dialog" id="delete-project-form">
+      <header><h2>永久删除项目</h2><button type="button" data-close-dialog="delete-project-dialog" class="icon-button" aria-label="关闭删除弹窗">×</button></header>
+      <input type="hidden" id="delete-project-key">
+      <div class="dialog-warning">项目及其采集任务、帖子、分析结果、风险事件和告警记录将被永久删除，此操作无法撤销。</div>
+      <label>输入项目标识 <strong id="delete-project-key-label"></strong> 以确认
+        <input id="delete-project-confirmation" required autocomplete="off">
+      </label>
+      <footer><button type="button" data-close-dialog="delete-project-dialog" class="button secondary">取消</button><button id="delete-project-submit" value="default" class="button danger">永久删除</button></footer>
+    </form>
+  </dialog>
+
+  <script type="module" src="app.js?v=20260731-opinion-schedule-2"></script>
+</body>
+</html>

@@ -36,13 +36,14 @@ public record CarePlanRequest(
             Integer dayOfWeek,
             LocalDate startDate,
             LocalDate endDate,
+            Integer followUpAfterMinutes,
             Integer gracePeriodMinutes,
             Integer escalationAfterMinutes) {
 
         CarePlanService.TaskCommand toCommand() {
             return new CarePlanService.TaskCommand(
                     taskType, title, instructions, scheduleType, localTime, scheduledDate,
-                    dayOfWeek, startDate, endDate, gracePeriodMinutes, escalationAfterMinutes);
+                    dayOfWeek, startDate, endDate, followUpAfterMinutes, gracePeriodMinutes, escalationAfterMinutes);
         }
     }
 }

@@ -45,10 +45,10 @@ public class ChatWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "处理不需要专用工具的普通文本对话、写作、总结、计划和解释类需求。",
-                List.of("如果用户需求明确属于天气、图片、语音、音色、文件等专用能力，不要优先使用 chat。"),
-                List.of("message：用户要普通大模型处理的文本任务"),
-                List.of("文本回复"));
+                "普通大模型聊天和文本处理",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

@@ -1,0 +1,4 @@
+interface:
+  display_name: "微信地图出行"
+  short_description: "天气、路线、周边和打车的一体化微信出行流程"
+  default_prompt: "Use $wechat-map-mobility to plan a WeChat route with weather and taxi support."

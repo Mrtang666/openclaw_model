@@ -93,13 +93,10 @@ public class VoiceStyleWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "根据用户偏好筛选、试听、确认并长期保存语音合成音色。",
-                List.of(
-                        "用户需求模糊时需要追问性别、语言、风格或用途。",
-                        "用户说选择第几个、把第几个当音色时，要结合上一批候选列表理解，不能重新生成一批候选。",
-                        "性别约束必须严格遵守：女声只给女声，男声只给男声。"),
-                List.of("action：show_candidates/preview/confirm/more/ask_clarify", "query：音色偏好", "index 或 voice：候选序号或音色名"),
-                List.of("候选音色列表", "试听语音", "已保存的用户音色偏好"));
+                "推荐、预览并保存语音合成音色偏好",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

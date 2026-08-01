@@ -55,10 +55,18 @@ public class KnowledgeSearchService {
         if (plannedQueries.isEmpty()) {
             plannedQueries = List.of(text);
         }
+        return searchByQueries(sessionKey, plannedQueries, limit, tags);
+    }
+
+    public List<KnowledgeSearchResult> searchByQueries(String sessionKey, List<String> queries, int topK, String tags) {
+        if (queries == null || queries.isEmpty()) {
+            return List.of();
+        }
+        int limit = topK <= 0 ? properties.topK() : topK;
         Map<String, KnowledgeSearchResult> deduplicated = new LinkedHashMap<>();
         List<String> tagList = parseTags(tags);
         String safeSession = sessionKey == null ? "" : sessionKey.strip();
-        for (String query : plannedQueries) {
+        for (String query : queries) {
             if (query == null || query.isBlank()) {
                 continue;
             }

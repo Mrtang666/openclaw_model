@@ -32,7 +32,7 @@ public class KnowledgeManageWechatTool implements WechatTool {
 
     @Override
     public String description() {
-        return "管理用户个人知识库资料：列出、查看、筛选、修改标题、修改标签、删除、批量删除和重新向量化。风险操作需要二次确认。";
+        return "个人知识库管理工具，列出、查看、更新、删除或重建资料索引。";
     }
 
     @Override
@@ -60,10 +60,10 @@ public class KnowledgeManageWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "产品化管理用户个人知识库资料。",
-                List.of("删除、批量删除、重新向量化必须先确认；无法恢复原文时不能假装重新向量化成功。"),
-                List.of("detail/delete/update/reindex 需要 document_id；batch_delete 需要 document_ids 或筛选条件。"),
-                List.of("返回资料列表、详情、更新结果、确认提示或执行结果。"));
+                "管理个人知识库资料和需要确认的风险操作",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

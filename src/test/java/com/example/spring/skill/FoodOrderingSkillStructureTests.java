@@ -14,7 +14,7 @@ class FoodOrderingSkillStructureTests {
 
     @Test
     void skillHasValidRequiredFilesAndMetadata() throws Exception {
-        String skill = Files.readString(SKILL_DIR.resolve("SKILL.md"), StandardCharsets.UTF_8);
+        String skill = readNormalized(SKILL_DIR.resolve("SKILL.md"));
         String agent = Files.readString(SKILL_DIR.resolve("agents").resolve("openai.yaml"), StandardCharsets.UTF_8);
 
         assertThat(skill).startsWith("---\nname: wechat-food-ordering\n");
@@ -26,10 +26,14 @@ class FoodOrderingSkillStructureTests {
 
     @Test
     void skillReferencesExist() throws Exception {
-        String skill = Files.readString(SKILL_DIR.resolve("SKILL.md"), StandardCharsets.UTF_8);
+        String skill = readNormalized(SKILL_DIR.resolve("SKILL.md"));
 
         assertThat(skill).contains("references/gateway-contract.md", "references/payment-and-status.md");
         assertThat(SKILL_DIR.resolve("references").resolve("gateway-contract.md")).exists();
         assertThat(SKILL_DIR.resolve("references").resolve("payment-and-status.md")).exists();
+    }
+
+    private String readNormalized(Path path) throws Exception {
+        return Files.readString(path, StandardCharsets.UTF_8).replace("\r\n", "\n");
     }
 }

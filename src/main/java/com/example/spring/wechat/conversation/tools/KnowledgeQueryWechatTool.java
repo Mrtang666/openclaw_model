@@ -26,7 +26,7 @@ public class KnowledgeQueryWechatTool implements WechatTool {
 
     @Override
     public String description() {
-        return "当用户要求根据知识库、保存过的资料或项目资料回答问题时，从个人知识库检索相关片段";
+        return "个人知识库检索工具，按问题查找已保存资料片段。";
     }
 
     @Override
@@ -45,10 +45,10 @@ public class KnowledgeQueryWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "从用户个人知识库检索相关资料片段，供大模型基于资料回答。",
-                List.of("只代表知识库中检索到的资料；没有结果时必须说明未找到，不能编造。"),
-                List.of("需要 question；如果用户问题为空，应追问。"),
-                List.of("返回相关知识片段、来源标题、来源 URL 和匹配分数。"));
+                "从个人知识库检索相关资料片段",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

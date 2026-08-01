@@ -47,7 +47,7 @@ public class WebSearchWechatTool implements WechatTool {
 
     @Override
     public String description() {
-        return "搜索互联网、查询最新资料或查找公开网页资料；如果用户直接提供 URL，优先使用 web_read。用户要求记住搜索结果时，只保存搜索摘要。";
+        return "互联网搜索工具，查询公开网页资料并返回标题、链接和摘要。";
     }
 
     @Override
@@ -68,13 +68,10 @@ public class WebSearchWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "搜索公开互联网资料并返回标题、链接和摘要。",
-                List.of(
-                        "搜索摘要不等于网页全文；需要准确总结某篇文章时，应继续调用 web_read。",
-                        "普通搜索结果只用于当前任务；只有用户要求保存、记住或以后参考时才把搜索摘要入库。",
-                        "未配置搜索服务时不能假装搜索过。"),
-                List.of("需要 query。"),
-                List.of("返回搜索结果标题、URL、摘要、来源和时间；保存时返回知识库 document_id。"));
+                "搜索公开互联网资料并返回结果摘要",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

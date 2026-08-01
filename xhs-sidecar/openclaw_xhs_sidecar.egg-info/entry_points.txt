@@ -1,0 +1,2 @@
+[console_scripts]
+openclaw-xhs-sidecar = xhs_sidecar.server:main

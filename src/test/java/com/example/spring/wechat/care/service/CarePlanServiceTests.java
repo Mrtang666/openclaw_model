@@ -121,6 +121,35 @@ class CarePlanServiceTests {
         verify(tasks).reactivateFutureCancelledForPlan(8L, 4L, NOW);
     }
 
+    @Test
+    void activatingReplacementPlanCompletesAllPreviousPlansAndCancelsTheirTasks() {
+        CarePlanRepository plans = mock(CarePlanRepository.class);
+        CareTaskRepository tasks = mock(CareTaskRepository.class);
+        CareAuthorizationService authorization = mock(CareAuthorizationService.class);
+        CarePlanService service = service(plans, tasks, authorization);
+        CareActor doctor = new CareActor(4L, "DOC-4", "医生", MedicalRole.DOCTOR);
+        CarePlan approved = plan(CarePlanType.DAILY_CHECKIN, CarePlanStatus.APPROVED);
+        CarePlan active = new CarePlan(
+                approved.id(), approved.patientUserId(), approved.planType(), approved.title(), CarePlanStatus.ACTIVE,
+                approved.clinicalReviewRequired(), approved.currentRevision(), approved.createdByUserId(),
+                approved.submittedAt(), approved.reviewedByUserId(), approved.reviewedAt(), approved.reviewNote(),
+                NOW, null, approved.idempotencyKey(), 1L, approved.createdAt(), NOW);
+        when(plans.findById(8L)).thenReturn(Optional.of(approved));
+        when(plans.activate(8L, 0L, NOW)).thenReturn(true);
+        when(plans.completeOtherActivePlans(1L, 8L, NOW)).thenReturn(List.of(6L));
+        when(plans.findDetails(8L)).thenReturn(Optional.of(new CarePlanDetails(
+                active,
+                new CarePlanVersion(7L, 8L, 1, "", "", LocalDate.of(2026, 7, 29),
+                        null, "Asia/Shanghai", 2L, NOW),
+                List.of())));
+
+        CarePlan result = service.activate(doctor, 8L, new CarePlanService.VersionCommand(0L, "request-6"));
+
+        assertThat(result.status()).isEqualTo(CarePlanStatus.ACTIVE);
+        verify(plans).completeOtherActivePlans(1L, 8L, NOW);
+        verify(tasks).cancelOpenForPlan(6L, 4L, "已被新版照护方案替换", NOW);
+    }
+
     private CarePlanService service(
             CarePlanRepository plans,
             CareTaskRepository tasks,

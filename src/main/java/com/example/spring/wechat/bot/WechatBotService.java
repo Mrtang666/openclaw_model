@@ -337,6 +337,54 @@ public class WechatBotService {
                 connections);
     }
 
+    public boolean sendProactiveText(String connectionId, String userId, String text) {
+        if (connectionId == null || connectionId.isBlank()
+                || userId == null || userId.isBlank()
+                || text == null || text.isBlank()) {
+            return false;
+        }
+        ClientRuntime runtime = runtimes.get(connectionId.strip());
+        if (runtime == null || runtime.state != WechatBotState.RUNNING || runtime.stopRequested) {
+            return false;
+        }
+        try {
+            for (String chunk : splitForWechat(text)) {
+                runtime.client.sendText(userId.strip(), chunk);
+            }
+            runtime.lastActivityAt = Instant.now();
+            return true;
+        } catch (IOException | RuntimeException exception) {
+            runtime.lastError = "主动消息发送失败：" + rootMessage(exception);
+            log.warn("微信主动消息发送失败，connectionId={}, userId={}, error={}",
+                    connectionId, userId, rootMessage(exception));
+            return false;
+        }
+    }
+
+    public boolean sendProactiveFile(String connectionId, String userId, byte[] bytes,
+                                     String fileName, String caption) {
+        if (connectionId == null || connectionId.isBlank() || userId == null || userId.isBlank()
+                || bytes == null || bytes.length == 0 || fileName == null || fileName.isBlank()) {
+            return false;
+        }
+        ClientRuntime runtime = runtimes.get(connectionId.strip());
+        if (runtime == null || runtime.state != WechatBotState.RUNNING || runtime.stopRequested) {
+            return false;
+        }
+        try {
+            sendMediaWithRetry("主动报告文件", userId.strip(), fileName,
+                    () -> runtime.client.sendFile(userId.strip(), bytes, fileName,
+                            caption == null ? "" : caption));
+            runtime.lastActivityAt = Instant.now();
+            return true;
+        } catch (IOException | RuntimeException exception) {
+            runtime.lastError = "主动文件发送失败：" + rootMessage(exception);
+            log.warn("微信主动文件发送失败，connectionId={}, userId={}, fileName={}, error={}",
+                    connectionId, userId, fileName, rootMessage(exception));
+            return false;
+        }
+    }
+
     @PreDestroy
     public void shutdown() {
         stop();

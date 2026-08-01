@@ -1,0 +1,41 @@
+name: openclaw-browser-mcp
+
+services:
+  browser-mcp-sidecar:
+    image: openclaw-browser-mcp-sidecar:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_REGISTRY: ${BASE_REGISTRY:-dockerproxy.net/library}
+    restart: unless-stopped
+    environment:
+      BROWSER_MCP_HOST: 0.0.0.0
+      BROWSER_MCP_PORT: 3333
+      CHROME_HEADLESS: "true"
+      CHROME_USER_DATA_DIR: /data/chrome-profile
+      BROWSER_SCREENSHOT_DIR: /data/screenshots
+      CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS: "1"
+      CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS: "1"
+    ports:
+      - "127.0.0.1:3333:3333"
+    volumes:
+      - browser-chrome-profile-v3:/data/chrome-profile
+      - browser-screenshots:/data/screenshots
+    shm_size: "1gb"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3333/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  browser-chrome-profile-v3:
+  browser-screenshots:

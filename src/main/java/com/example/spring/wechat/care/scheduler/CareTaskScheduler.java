@@ -73,6 +73,7 @@ public class CareTaskScheduler {
     public void process(Instant now) {
         materialize(now);
         enqueueDueReminders(now);
+        enqueueFollowUps(now);
         markOverdue(now);
         enqueueOverdueNotifications(now);
     }
@@ -100,6 +101,7 @@ public class CareTaskScheduler {
                 continue;
             }
             for (NotificationTarget target : targets) {
+            for (NotificationTarget target : patientTargets(task.patientUserId())) {
                 enqueue(task, target, "CARE_TASK_DUE",
                         dueReminderContent(task), now);
             }
@@ -112,6 +114,15 @@ public class CareTaskScheduler {
     void markOverdue(Instant now) {
         for (Long taskId : taskRepository.findReadyToMarkOverdue(now, taskProperties.batchSize())) {
             if (taskId != null) taskRepository.markOverdue(taskId, now);
+        }
+    }
+
+    void enqueueFollowUps(Instant now) {
+        for (CareTaskInstance task : taskRepository.findReadyForFollowUp(now, taskProperties.batchSize())) {
+            for (NotificationTarget target : patientTargets(task.patientUserId())) {
+                enqueue(task, target, "CARE_TASK_FOLLOW_UP", followUpContent(task), now);
+            }
+            taskRepository.markFollowUpEnqueued(task.id(), now);
         }
     }
 

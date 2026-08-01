@@ -1,0 +1,38 @@
+name: openclaw-xhs
+
+services:
+  sidecar:
+    image: openclaw-xhs-sidecar:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_REGISTRY: ${BASE_REGISTRY:-dockerproxy.net/library}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      XHS_SIDECAR_HOST: 0.0.0.0
+      XHS_SIDECAR_PORT: 18081
+      SPIDER_XHS_ROOT: /opt/spider
+      SPIDER_XHS_PYTHON: /usr/local/bin/python
+      XHS_SIDECAR_DATA_DIR: /data/jobs
+    ports:
+      - "127.0.0.1:18081:18081"
+    volumes:
+      - xhs-jobs:/data/jobs
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18081/health', timeout=2).read()"
+      interval: 15s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  xhs-jobs:

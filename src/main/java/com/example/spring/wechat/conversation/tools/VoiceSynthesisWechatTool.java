@@ -96,13 +96,10 @@ public class VoiceSynthesisWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "把最终要回复给用户的文本合成为可发送的语音文件。",
-                List.of(
-                        "只有用户明确要求用语音回复、朗读、播报时才调用。",
-                        "如果前一步刚生成了文本内容，应把真正正文作为 previous_result 或 target_text，不要把“请朗读刚才内容”这句话合成为语音。",
-                        "文本过长时系统会拆成多段语音发送。"),
-                List.of("text/target_text：要合成的正文", "source：previous 或 current", "previous_result：前置工具真实输出"),
-                List.of("一个或多个语音文件"));
+                "把文本内容合成为语音文件",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

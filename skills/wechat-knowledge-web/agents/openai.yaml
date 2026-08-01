@@ -1,0 +1,4 @@
+interface:
+  display_name: "微信知识库与网页"
+  short_description: "搜索、阅读、保存和查询个人知识库资料"
+  default_prompt: "Use $wechat-knowledge-web to search, read, save, or query knowledge."

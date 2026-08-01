@@ -22,9 +22,13 @@ public class TaxiWechatTool implements WechatTool {
             WechatToolParameter.optionalString("quote_id","报价编号",""), WechatToolParameter.optionalString("option_index","车型编号","1"),
             WechatToolParameter.optionalString("order_id","订单编号",""), WechatToolParameter.optionalString("reason","取消原因","用户取消"),
             WechatToolParameter.optionalString("phone","叫车手机号",""), WechatToolParameter.optionalString("openid","微信支付 openid",""));}
-    public WechatToolCapability capability(){return new WechatToolCapability("地点追问和确认、滴滴询价、下单、查单、取消及微信支付",
-            List.of("地点不完整时先追问","地点解析成功后必须让用户确认","未确认车型不得创建订单","最终费用以滴滴完单结果为准"),
-            List.of("operation","origin","destination","city","confirmation_id","quote_id","option_index","order_id"),List.of("地点确认信息","报价方案","订单状态"));}
+    public WechatToolCapability capability() {
+        return new WechatToolCapability(
+                "处理打车地点确认、询价、下单、查单、取消和支付交接",
+                List.of(),
+                List.of(),
+                List.of());
+    }
 
     public WechatReply execute(WechatToolRequest request){try{return switch(request.argument("operation").toLowerCase(Locale.ROOT)){
         case "estimate","prepare_locations" -> prepareLocations(request); case "confirm_locations" -> confirmLocations(request);

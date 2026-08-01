@@ -53,7 +53,7 @@ public class CarePlanRepository {
             CareTaskScheduleType.valueOf(rs.getString("schedule_type")),
             rs.getTime("local_time").toLocalTime(), nullableDate(rs, "scheduled_date"),
             nullableInteger(rs, "day_of_week"), rs.getDate("start_date").toLocalDate(),
-            nullableDate(rs, "end_date"), rs.getInt("grace_period_minutes"),
+            nullableDate(rs, "end_date"), rs.getInt("follow_up_after_minutes"), rs.getInt("grace_period_minutes"),
             rs.getInt("escalation_after_minutes"), rs.getBoolean("enabled"),
             rs.getInt("sort_order"), rs.getString("timezone"),
             instant(rs.getTimestamp("created_at")));
@@ -177,6 +177,28 @@ public class CarePlanRepository {
                 """, timestamp(now), timestamp(now), planId, expectedVersion) == 1;
     }
 
+    public List<Long> completeOtherActivePlans(
+            long patientUserId,
+            long activePlanId,
+            Instant now) {
+        List<Long> planIds = jdbc.queryForList("""
+                SELECT id
+                FROM medical_care_plans
+                WHERE patient_user_id=? AND id<>?
+                  AND status IN ('ACTIVE','PAUSED')
+                """, Long.class, patientUserId, activePlanId);
+        if (planIds.isEmpty()) {
+            return List.of();
+        }
+        jdbc.update("""
+                UPDATE medical_care_plans
+                SET status='COMPLETED',ended_at=?,version=version+1,updated_at=?
+                WHERE patient_user_id=? AND id<>?
+                  AND status IN ('ACTIVE','PAUSED')
+                """, timestamp(now), timestamp(now), patientUserId, activePlanId);
+        return List.copyOf(planIds);
+    }
+
     public boolean pause(long planId, long expectedVersion, Instant now) {
         return transition(planId, expectedVersion, "ACTIVE", "PAUSED", now, false);
     }
@@ -258,14 +280,14 @@ public class CarePlanRepository {
         jdbc.update("""
                 INSERT INTO medical_care_task_templates
                 (plan_version_id,task_type,title,instructions,schedule_type,local_time,scheduled_date,
-                 day_of_week,start_date,end_date,grace_period_minutes,escalation_after_minutes,
-                 enabled,sort_order,created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,TRUE,?,?)
+                 day_of_week,start_date,end_date,follow_up_after_minutes,grace_period_minutes,
+                 escalation_after_minutes,enabled,sort_order,created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,TRUE,?,?)
                 """, versionId, template.taskType().name(), template.title(), template.instructions(),
                 template.scheduleType().name(), Time.valueOf(template.localTime()),
                 nullableSqlDate(template.scheduledDate()), template.dayOfWeek(),
                 Date.valueOf(template.startDate()), nullableSqlDate(template.endDate()),
-                template.gracePeriodMinutes(), template.escalationAfterMinutes(), template.sortOrder(),
+                template.followUpAfterMinutes(), template.gracePeriodMinutes(), template.escalationAfterMinutes(), template.sortOrder(),
                 timestamp(template.createdAt()));
     }
 

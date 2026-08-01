@@ -47,10 +47,10 @@ public class NetdiskAuthWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "管理当前微信用户自己的百度网盘授权。",
-                List.of("不能接收用户百度账号密码，只能返回官方 OAuth 授权链接。"),
-                List.of("operation：status、bind 或 rebind"),
-                List.of("授权状态说明或百度授权链接"));
+                "检查百度网盘授权状态或返回 OAuth 授权链接",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

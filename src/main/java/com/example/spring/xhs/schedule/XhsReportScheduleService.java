@@ -66,12 +66,15 @@ public class XhsReportScheduleService {
                     INSERT INTO xhs_report_schedules(
                         project_id, name, frequency, run_time, day_of_week, day_of_month,
                         timezone, formats, collect_before_report, collection_limit, top_post_limit,
-                        enabled, next_run_at, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        enabled, negative_email_enabled, negative_email_minimum_risk_score,
+                        negative_email_high_risk_only, negative_email_cooldown_minutes,
+                        next_run_at, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, projectId, value.name(), value.frequency(), Time.valueOf(value.runTime()),
                     value.dayOfWeek(), value.dayOfMonth(), value.timezone().getId(),
                     String.join(",", value.formats()), value.collectBeforeReport(), value.collectionLimit(),
-                    value.topPostLimit(), value.enabled(), timestamp(next), Timestamp.from(now), Timestamp.from(now));
+                    value.topPostLimit(), value.enabled(), value.negativeEmailEnabled(), value.negativeEmailMinimumRiskScore(),
+                    value.negativeEmailHighRiskOnly(), value.negativeEmailCooldownMinutes(), timestamp(next), Timestamp.from(now), Timestamp.from(now));
         } catch (DuplicateKeyException exception) {
             throw new IllegalArgumentException("同一项目下的报告计划名称不能重复", exception);
         }
@@ -94,12 +97,16 @@ public class XhsReportScheduleService {
                     UPDATE xhs_report_schedules
                     SET project_id = ?, name = ?, frequency = ?, run_time = ?, day_of_week = ?,
                         day_of_month = ?, timezone = ?, formats = ?, collect_before_report = ?,
-                        collection_limit = ?, top_post_limit = ?, enabled = ?, next_run_at = ?, updated_at = ?
+                        collection_limit = ?, top_post_limit = ?, enabled = ?,
+                        negative_email_enabled = ?, negative_email_minimum_risk_score = ?,
+                        negative_email_high_risk_only = ?, negative_email_cooldown_minutes = ?,
+                        next_run_at = ?, updated_at = ?
                     WHERE id = ?
                     """, projectId, value.name(), value.frequency(), Time.valueOf(value.runTime()),
                     value.dayOfWeek(), value.dayOfMonth(), value.timezone().getId(),
                     String.join(",", value.formats()), value.collectBeforeReport(), value.collectionLimit(),
-                    value.topPostLimit(), value.enabled(), timestamp(next), Timestamp.from(now), id);
+                    value.topPostLimit(), value.enabled(), value.negativeEmailEnabled(), value.negativeEmailMinimumRiskScore(),
+                    value.negativeEmailHighRiskOnly(), value.negativeEmailCooldownMinutes(), timestamp(next), Timestamp.from(now), id);
         } catch (DuplicateKeyException exception) {
             throw new IllegalArgumentException("同一项目下的报告计划名称不能重复", exception);
         }
@@ -259,7 +266,9 @@ public class XhsReportScheduleService {
                 time == null ? LocalTime.of(9, 0) : time.toLocalTime(), nullableInt(rs, "day_of_week"),
                 nullableInt(rs, "day_of_month"), rs.getString("timezone"), formats(rs.getString("formats")),
                 rs.getBoolean("collect_before_report"), rs.getInt("collection_limit"),
-                rs.getInt("top_post_limit"), rs.getBoolean("enabled"), instant(rs, "next_run_at"),
+                rs.getInt("top_post_limit"), rs.getBoolean("enabled"), rs.getBoolean("negative_email_enabled"),
+                rs.getInt("negative_email_minimum_risk_score"), rs.getBoolean("negative_email_high_risk_only"),
+                rs.getInt("negative_email_cooldown_minutes"), instant(rs, "next_run_at"),
                 instant(rs, "last_run_at"), instant(rs, "created_at"), instant(rs, "updated_at"));
     }
 
@@ -273,7 +282,8 @@ public class XhsReportScheduleService {
                 row.runTime().withSecond(0).withNano(0).toString(), row.dayOfWeek(), row.dayOfMonth(),
                 row.timezone(), row.formats(), row.collectBeforeReport(), row.collectionLimit(), row.topPostLimit(),
                 emails, wechat == null ? "" : wechat.connectionId(), wechat == null ? "" : wechat.target(),
-                row.enabled(), row.nextRunAt(), row.lastRunAt(), row.createdAt(), row.updatedAt());
+                row.enabled(), row.negativeEmailEnabled(), row.negativeEmailMinimumRiskScore(), row.negativeEmailHighRiskOnly(),
+                row.negativeEmailCooldownMinutes(), row.nextRunAt(), row.lastRunAt(), row.createdAt(), row.updatedAt());
     }
 
     private void replaceRecipients(long scheduleId, Validated value, Instant now) {
@@ -325,6 +335,9 @@ public class XhsReportScheduleService {
         }
         List<String> formats = normalizeFormats(request.formats());
         List<String> emails = normalizeEmails(request.emailRecipients());
+        if (request.negativeEmailEnabled() && emails.isEmpty()) {
+            throw new IllegalArgumentException("开启负面帖子即时邮件后至少需要配置一个邮箱接收人");
+        }
         String connectionId = safe(request.wechatConnectionId());
         String recipientId = safe(request.wechatRecipientId());
         if (connectionId.isBlank() != recipientId.isBlank()) {
@@ -334,7 +347,9 @@ public class XhsReportScheduleService {
                 frequency.equals("WEEKLY") ? clamp(request.dayOfWeek(), 1, 7, 1) : null,
                 frequency.equals("MONTHLY") ? clamp(request.dayOfMonth(), 1, 31, 1) : null,
                 zone, formats, request.collectBeforeReport(), clamp(request.collectionLimit(), 1, 100, 20),
-                clamp(request.topPostLimit(), 1, 100, 10), emails, connectionId, recipientId, request.enabled());
+                clamp(request.topPostLimit(), 1, 100, 10), emails, connectionId, recipientId, request.enabled(),
+                request.negativeEmailEnabled(), clamp(request.negativeEmailMinimumRiskScore(), 0, 100, 60),
+                request.negativeEmailHighRiskOnly(), clamp(request.negativeEmailCooldownMinutes(), 1, 1440, 30));
     }
 
     private List<String> normalizeEmails(List<String> values) {
@@ -434,7 +449,9 @@ public class XhsReportScheduleService {
     record ScheduleRow(long id, long projectId, String projectKey, String projectName, String name,
                        String frequency, LocalTime runTime, Integer dayOfWeek, Integer dayOfMonth,
                        String timezone, List<String> formats, boolean collectBeforeReport,
-                       int collectionLimit, int topPostLimit, boolean enabled, Instant nextRunAt,
+                       int collectionLimit, int topPostLimit, boolean enabled, boolean negativeEmailEnabled,
+                       int negativeEmailMinimumRiskScore, boolean negativeEmailHighRiskOnly, int negativeEmailCooldownMinutes,
+                       Instant nextRunAt,
                        Instant lastRunAt, Instant createdAt, Instant updatedAt) {
     }
 
@@ -442,6 +459,7 @@ public class XhsReportScheduleService {
                              Integer dayOfWeek, Integer dayOfMonth, ZoneId timezone, List<String> formats,
                              boolean collectBeforeReport, int collectionLimit, int topPostLimit,
                              List<String> emails, String wechatConnectionId, String wechatRecipientId,
-                             boolean enabled) {
+                             boolean enabled, boolean negativeEmailEnabled, int negativeEmailMinimumRiskScore,
+                             boolean negativeEmailHighRiskOnly, int negativeEmailCooldownMinutes) {
     }
 }

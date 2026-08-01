@@ -4,11 +4,13 @@
 
 ## 1. 项目定位
 
-OpenClaw 是一个以 **Java 17 + Spring Boot 3.4.7** 为核心的智能体应用。它并非只有聊天能力，而是由三条主要产品链路组成：
+OpenClaw 是一个以 **Java 17 + Spring Boot 3.4.7** 为核心的智能体应用。它并非只有聊天能力，而是由五条主要产品链路组成：
 
 1. **CLI 与微信 iLink 智能体**：接收文本、图片、语音、视频、文件，结合会话记忆、RAG 和 Function Calling 调用领域工具。
-2. **Web 管理与回调能力**：提供微信扫码与多连接管理、百度网盘 OAuth、支付回调、Agent 目标复盘接口，以及小红书舆情管理台 API。
-3. **小红书舆情系统**：采用 Python Sidecar 隔离采集，再由 Java 主程序完成入库、语义分析、风险事件、告警、报表与控制台展示。
+2. **提醒与报告能力**：支持一次性/重复提醒、延后/完成/取消、主动微信通知，以及超长回答转为临时 HTML 报告链接。
+3. **医疗照护协同**：面向患者、家属和医护角色，提供身份绑定、可信记忆、每日签到、安全告警、照护计划、任务调度和审计。
+4. **Web 管理与回调能力**：提供微信扫码与多连接管理、百度网盘 OAuth、支付回调、Agent 目标复盘、医疗控制台和小红书舆情管理台 API。
+5. **小红书舆情系统**：采用 Python Sidecar 隔离采集，再由 Java 主程序完成入库、语义分析、风险事件、告警、报表与控制台展示。
 
 核心原则是：**模型负责理解和决策，Java 工具负责执行，Skill 文件负责把业务边界与安全规则提供给模型**。工具注册、Skill 加载和外部 Sidecar 均与主对话编排解耦。
 
@@ -28,8 +30,10 @@ flowchart TB
         BOT[WechatBotService\n多连接、接收队列、回复发送]
         CONV[WechatConversationService\n媒体预处理、记忆、RAG、目标、回复组装]
         LOOP[FunctionCallingAgentLoop\n模型调用、工具循环、参数校验]
-        REG[WechatToolRegistry\n43 个微信工具]
+        REG[WechatToolRegistry\n53 个微信工具]
         SKILL[SkillManager\n扫描 skills/* 并注入领域规则]
+        CARE[医疗照护域\n身份、授权、记忆、签到、计划、任务、告警]
+        REM[提醒与报告\nReminderScheduler + WechatReportService]
         XHS[XHS 模块\n采集协调、分析、告警、报表、控制台]
     end
 
@@ -44,7 +48,7 @@ flowchart TB
         AMAP[高德天气与地图]
         BROWSER[browser-mcp-sidecar\nChromium + MCP]
         XHSS[xhs-sidecar\nPython + Spider_XHS]
-        OTHER[快递100、QQ SMTP、百度网盘、\n美团酒旅 CLI、新闻/搜索、支付通道]
+        OTHER[快递100、QQ SMTP/IMAP、百度网盘、\n美团酒旅 CLI、新闻/搜索、支付通道]
     end
 
     CLI --> CMD
@@ -52,10 +56,12 @@ flowchart TB
     CMD --> CONV
     WEB --> BOT
     WEB --> XHS
+    WEB --> CARE
     XHSUI --> XHS
     LOOP --> REG
     LOOP --> SKILL
     CONV --> MYSQL
+    CONV --> REM
     CONV -. 自动检索 .-> QDRANT
     REG --> DS
     REG --> AMAP
@@ -74,7 +80,7 @@ flowchart TB
 | 入口层 | CLI、微信 iLink、HTTP、XHS Console | 接收用户输入、展示结果、处理回调或控制台操作。 |
 | 编排层 | `WechatBotService`、`WechatConversationService` | 消息队列、输入媒体处理、会话记忆、RAG、任务目标、回复组装。 |
 | 决策层 | `FunctionCallingAgentLoop`、DashScope Function Calling | 让模型决定回答或调用工具；执行多轮 `tool_calls` 后生成最终答复。 |
-| 工具层 | `WechatToolRegistry`、43 个 `WechatTool` | 对每一项业务能力提供受参数校验、配置开关和领域规则约束的执行入口。 |
+| 工具层 | `WechatToolRegistry`、53 个 `WechatTool` | 对每一项业务能力提供受参数校验、配置开关和领域规则约束的执行入口。 |
 | 指令层 | `SkillManager`、`skills/*` | 运行时加载业务说明、确认要求和能力边界；不直接执行工具。 |
 | 数据层 | MySQL、Flyway、Qdrant、文件目录 | 保存会话、用户偏好、媒资、业务订单、舆情、审计和向量知识。 |
 | 集成层 | DashScope、高德、Sidecar、SMTP、百度网盘等 | 将第三方协议隔离在领域 Client/Service 中。 |
@@ -95,6 +101,9 @@ CLI 由 `ConsoleRunner` 启动，经 `CommandDispatcher` 与 `CommandRegistry` �
 | `/wechat status` | 查询微信连接状态。 | 微信 iLink |
 | `/wechat stop` | 停止微信连接。 | 微信 iLink |
 | `/wechat reconnect <connectionId>` | 重连指定微信连接。 | 微信 iLink |
+| `/patient` | 以患者身份启动微信扫码登录。 | 医疗身份模块 |
+| `/caregiver` / `/parents` | 以家属身份启动微信扫码登录。 | 医疗身份模块 |
+| `/doctor` | 以医生身份启动微信扫码登录。 | 医疗身份模块 |
 | `/xhs start` | 打开小红书管理台。 | XHS Console 启用 |
 | `/xhs status` | 查看小红书模块健康状态。 | XHS 模块 |
 | `/xhs help` | 输出小红书 CLI 帮助。 | 无 |
@@ -119,6 +128,8 @@ CLI 由 `ConsoleRunner` 启动，经 `CommandDispatcher` 与 `CommandRegistry` �
 | `/api/wechat-pay/notify` | 接收微信支付通知并交给支付服务验签处理。 |
 | `/api/wechat-pay/refund/{paymentId}` | 提交退款请求；支付服务未实现时返回 501。 |
 | `/api/agent-goals/review-actions/*` | 查看待人工复盘动作，并标记已应用或已忽略。 |
+| `/api/care/v1/*` | 医疗照护初始化、Bearer 会话、患者/家属/临床端数据、计划、任务和告警 API。 |
+| `/r/{reportId}` | 微信长回复临时 HTML 报告页面，带 TTL 和定时清理。 |
 | `/api/xhs-console/*` | 小红书项目、采集、舆情、事件、报告、告警和授权管理 API。 |
 
 ## 4. 微信 Agent 主流程
@@ -193,6 +204,15 @@ flowchart LR
 
 Skill 只提供“何时调用、缺什么信息、怎样确认、哪些事不能做”的指令，**不替代** `WechatToolRegistry`，也不执行脚本。
 
+### 4.4 当前循环的防重复与呈现策略
+
+- 对同名、同参数的工具调用计算签名，避免模型在单轮循环中反复执行相同动作。
+- 同一 `voice_synthesis` 目标文本和音色只允许一次有效执行，防止重复发送语音。
+- 对失败工具调用记录失败签名；提醒类工具返回“操作未完成”时会作为失败处理，避免模型把失败包装为成功。
+- 已有 RAG 证据且用户未要求“最新、今天、联网、新闻、价格”等实时信息时，`web_search` 会被跳过，减少重复检索与外部调用。
+- 图片、语音、文件、截图等可见媒体只由对应工具输出保留；最终回答会根据是否仍需补充确认文本，决定单独发送媒体还是“文本 + 媒体”。
+- `WechatConversationMode` 会按医疗身份补充患者、家属或医生的对话规则，但权限校验仍由照护领域服务和 API 执行。
+
 ## 5. 输入媒体与知识链路
 
 ### 5.1 多模态输入分流
@@ -250,11 +270,11 @@ flowchart LR
 - `web_read`：读取公开 URL，可在明确要求时保存到知识库。
 - `web_search`：短期公开搜索结果，不自动入库；优先走 MCP Streamable HTTP，失败可降级到兼容联网搜索。
 
-## 6. 全部微信工具清单（43 个）
+## 6. 全部微信工具清单（53 个）
 
 > 工具由 Spring 自动发现后注册。某些工具受 `@ConditionalOnProperty` 或外部配置控制，关闭时不会出现在模型可选工具集合中。
 
-### 6.1 通用、知识与内容（8 个）
+### 6.1 通用、知识、网页与新闻（7 个）
 
 | 工具 | 作用 | 主要流程与边界 |
 | --- | --- | --- |
@@ -265,9 +285,15 @@ flowchart LR
 | `web_read` | 读取公开网页正文。 | 默认只读；是否保存由用户意图/参数决定。 |
 | `web_search` | 搜索互联网公开资料。 | MCP 协议初始化、`tools/list`、`tools/call`；MCP 失败可降级。 |
 | `news` | 新闻关键词检索与分页展示。 | 输出标题、来源、时间、摘要、链接；时效内容说明来源时间。 |
-| `email_send` | 起草或发送纯文本邮件。 | 白名单可直发；非白名单先创建短时草稿，再凭同会话确认 token 发送；不读收件箱、不发附件。 |
+### 6.2 邮件（3 个）
 
-### 6.2 媒体与文档（8 个）
+| 工具 | 作用 | 主要流程与边界 |
+| --- | --- | --- |
+| `email_text_send` | 发送纯文本邮件。 | 白名单可直发；非白名单先创建短时草稿，再凭同会话确认 token 发送。 |
+| `email_query` | 通过 IMAP 查询最近邮件、关键词、正文、已读状态和附件。 | 只能访问已配置邮箱；附件下载受大小和允许目录限制。 |
+| `email_send` | 把当前微信文件、本地文件或代码目录作为附件发送。 | 发送前必须确认；目录会过滤 `.git`、`node_modules`、构建产物、日志和临时文件，并可压缩成 ZIP。 |
+
+### 6.3 媒体与文档（8 个）
 
 | 工具 | 作用 | 主要流程与边界 |
 | --- | --- | --- |
@@ -280,7 +306,7 @@ flowchart LR
 | `document_analysis` | 解析 PDF/Word/TXT/Markdown/Excel/PPT。 | 提取摘要、重点、表格、结构；没有具体诉求时追问。 |
 | `document_generation` | 生成 DOCX/PDF/TXT/Markdown。 | 基于用户需求或最近文件上下文；缺少关键字段先追问。 |
 
-### 6.3 出行、消费与交易前流程（8 个）
+### 6.4 出行、消费与交易前流程（7 个）
 
 | 工具 | 作用 | 主要流程与边界 |
 | --- | --- | --- |
@@ -291,9 +317,7 @@ flowchart LR
 | `shopping_advice` | 中立选购建议。 | 输入品类、预算、用途、偏好、限制；不查电商 API，不给商品链接或实时价格。 |
 | `logistics_track` | 快递状态、最新位置、近期节点。 | 单号在调用/日志中脱敏；部分承运商需要手机号后四位，不持久化。 |
 | `food_delivery` | 外卖地址、商家、菜单、购物车、预结算、下单、支付、进度、取消。 | 见第 7 章的严格确认状态机。 |
-| `email_send` | 对外发送邮件。 | 兼具内容域和外部副作用，确认机制见上表。 |
-
-### 6.4 百度网盘（5 个）
+### 6.5 百度网盘（5 个）
 
 | 工具 | 作用 | 主要流程与边界 |
 | --- | --- | --- |
@@ -303,7 +327,7 @@ flowchart LR
 | `netdisk_search` | 关键词或语义方式查找个人网盘文件。 | 仅在当前微信用户授权范围内查询。 |
 | `netdisk_share` | 为个人网盘文件生成分享链接。 | 属于数据外发，先确认目标文件；仅保留安全 HTTP(S) 链接。 |
 
-### 6.5 浏览器自动化（8 个，条件启用）
+### 6.6 浏览器自动化（8 个，条件启用）
 
 | 工具 | 作用 | 关键安全限制 |
 | --- | --- | --- |
@@ -318,7 +342,29 @@ flowchart LR
 
 浏览器工具经 `BrowserAutomationService -> BrowserMcpClient -> browser-mcp-sidecar -> Chromium` 调用。它默认关闭，且不使用宿主机 Chrome 登录态。
 
-### 6.6 小红书舆情（7 个，条件启用）
+### 6.7 提醒（7 个）
+
+| 工具 | 作用 | 主要流程与边界 |
+| --- | --- | --- |
+| `reminder_create` | 按明确日期/时间创建一次性、每日或每周提醒。 | 时间必须晚于当前时间；支持 ISO-8601 和时区。 |
+| `reminder_create_after` | 按几分钟/小时/天后的相对时间创建一次性提醒。 | 原样传递 `delay_value` 与 `delay_unit`，相对延后不能超过 7 天。 |
+| `reminder_list` | 按状态、关键词列出当前会话提醒。 | 默认返回有限条目；只查询当前会话。 |
+| `reminder_update` | 修改标题、内容、时间或时区。 | 绝对时间与相对延后不能同时传入；仅允许修改活跃提醒。 |
+| `reminder_cancel` | 按编号或标题取消提醒。 | 标题匹配多个时返回候选，不默认取消。 |
+| `reminder_complete` | 将提醒标记为完成。 | 完成后不再主动发送。 |
+| `reminder_snooze` | 延后当前或最近发送的提醒。 | 未提供编号/标题时使用当前会话最近一次已发送提醒；失败或取消状态不能直接延后。 |
+
+提醒由 `ReminderScheduler` 抢占到期任务，`WechatReminderNotificationSender` 主动发送，支持失败重试、幂等和家属/患者通知目标绑定。
+
+### 6.8 医疗照护（1 个，条件启用）
+
+| 工具 | 作用 | 主要流程与边界 |
+| --- | --- | --- |
+| `care_agent` | 识别医疗身份，返回患者/家属/医生页面，检查绑定，联系医生，整理医生照护方案草稿，响应任务。 | 未登录先要求 `/patient`、`/caregiver` 或 `/doctor` 扫码；患者详情优先通过 Web 链接展示；医生方案先生成草稿，必须在审核页确认后才发送/激活。 |
+
+医疗对话模式由 `WechatConversationMode` 注入：患者、家属和医生分别使用不同的表达和隐私边界，但实际授权始终由 `CareAuthorizationService`、`CarePermissions` 和后端 Bearer API 执行。
+
+### 6.9 小红书舆情（7 个，条件启用）
 
 | 工具 | 作用 | 边界 |
 | --- | --- | --- |
@@ -379,6 +425,64 @@ flowchart LR
 | 外卖真实下单/取消 | 需要固定确认语义与一次性预结算/确认 token。 |
 | 打车取消 | 明确确认后才提交取消。 |
 | 小红书事件流转 | 需要确认目标事件和目标状态，并写审计。 |
+
+### 7.4 医疗照护计划与告警
+
+医疗照护模块定位为“记录、协同、提醒和风险提示”，不提供诊断、处方、药量调整或紧急医疗服务替代。其主要角色是患者、家属/照护人、医生、护士、康复师、营养师和管理员。
+
+```mermaid
+flowchart TD
+    A[患者/家属/医护扫码登录] --> B[医疗身份与 Bearer 会话]
+    B --> C[患者授权关系与最小权限]
+    C --> D[记忆记录 / 每日签到 / 家属观察]
+    D --> E[原始记录与结构化结果持久化]
+    E --> F[确定性安全规则]
+    F -->|普通| G[患者状态摘要与待办]
+    F -->|风险| H[SafetyAlert]
+    H --> I[主动通知患者/家属/医护]
+    I --> J[确认、处理、误报或升级]
+    C --> K[照护计划草稿]
+    K --> L[家属/医护审核]
+    L --> M[激活计划]
+    M --> N[生成每日/每周/一次性任务]
+    N --> O[完成、延后、超时和后续提醒]
+    E --> P[患者/趋势报告与访问审计]
+```
+
+| 状态对象 | 状态流转 | 说明 |
+| --- | --- | --- |
+| 可信记忆 | `RECEIVED → EXTRACTED → WAITING_CONFIRMATION → VERIFIED / CORRECTED / REJECTED` | 原始内容先保存；未确认的内容不能当作可信事实返回。 |
+| 照护计划 | `DRAFT → WAITING_REVIEW → APPROVED → ACTIVE → PAUSED → COMPLETED` | 涉及医学判断的计划必须由有权限医护审核；Agent 不得自行改变处方或禁忌。 |
+| 安全告警 | `OPEN → ACKNOWLEDGED → RESOLVED / ESCALATED / FALSE_ALARM` | 跌倒、迷路、明确紧急求助等确定性规则可触发；模糊模型信号必须待确认。 |
+| 照护任务 | 活跃、完成、延后、超时、失败 | 支持每天、每周和一次性任务；超时可通知患者和家属。 |
+
+医疗 Web API 前缀为 `/api/care/v1`，统一使用 `Authorization: Bearer <access-token>` 和可选 `X-Request-Id`。覆盖：
+
+- `bootstrap/users`：受 `CARE_BOOTSTRAP_KEY` 保护的患者、家属、医生等角色初始化；token 只回显一次，数据库仅保存 SHA-256 摘要。
+- `patient/*`：状态、记忆、签到、告警、授权关系、计划和任务。
+- `family/*`：已授权患者查询、记忆确认、告警确认/解决、计划提交与任务处理；可联系绑定医生。
+- `clinical/*`：患者绑定/转交/解绑、趋势与记录查看、计划草稿、计划审核/激活/暂停/完成、任务和告警处理。
+- `/medical-console/`：面向上述角色的静态控制台；微信内的 `care_agent` 返回具有会话约束的页面链接。
+
+### 7.5 提醒与微信报告
+
+```mermaid
+flowchart LR
+    A[用户在微信提出时间表达] --> B[Function Calling 选择 reminder_*]
+    B --> C[(reminder_tasks)]
+    C --> D[ReminderScheduler]
+    D --> E[抢占到期任务、幂等检查、失败重试]
+    E --> F[WechatReminderNotificationSender]
+    F --> G[微信主动消息]
+    G --> H[完成 / 延后 / 取消 / 创建后续提醒]
+
+    R[长文本或多项结果] --> S[WechatReplyPresentationService]
+    S --> T[生成临时 HTML 报告]
+    T --> U[/r/{reportId}]
+    U --> V[WechatReportCleanupScheduler 按 TTL 清理]
+```
+
+提醒相对时间严格使用 `reminder_create_after`，绝对日期和钟点使用 `reminder_create`；模型不得自行把“几小时后”换算成绝对时间。微信报告在回复超过文本长度或条目数量阈值时生成临时 Web 页面，避免长消息影响微信阅读体验。
 
 ## 8. 小红书舆情全流程
 
@@ -485,15 +589,20 @@ stateDiagram-v2
 | --- | --- | --- |
 | `WechatMemoryMaintenanceScheduler` | 配置驱动；另有每天 03:30 cron | 清理过期记忆并维护会话摘要。 |
 | `RideOrderPollingService` | 默认 15 秒 | 更新打车订单状态。 |
+| `ReminderScheduler` | 默认 15 秒 | 抢占到期提醒、处理发送成功/失败、重试与重复计划的下次执行时间。 |
+| `WechatReportCleanupScheduler` | 默认 1 小时 | 清理已过 TTL 的微信临时 HTML 报告。 |
+| `CareTaskScheduler` | 默认 15 秒 | 生成照护计划任务、处理任务到期与跟进通知。 |
+| `CareNotificationScheduler` | 默认 15 秒 | 投递待发送医疗照护通知并按策略重试。 |
 | `XhsCollectionScheduler` | 默认 10 秒 | 提交/轮询小红书采集 Job。 |
 | `XhsAnalysisScheduler` | 默认 15 秒 | 处理待分析帖子。 |
 | `XhsAlertScheduler` | 默认 10 秒 | 投递待发送舆情告警。 |
 | `XhsScheduledReportDispatcher` | 默认 10 秒 | 为到期报表计划创建运行记录。 |
 | `XhsReportArtifactCleanup` | 默认 1 小时 | 清理过期报表文件与元数据。 |
+| `XhsNegativePostEmailScheduler` | 默认 10 秒 | 处理小红书负面帖子相关的邮件报告投递。 |
 
 ## 10. 数据模型与迁移
 
-Flyway 迁移目前覆盖 22 个文件、多个业务域。数据库创建只负责空库；业务表由 Flyway 自动建立。
+当前工作区的 Flyway 迁移目录包含 32 个 SQL 文件，覆盖会话、提醒、外卖、医疗照护、Agent 目标、网盘、支付、打车和小红书舆情等域。数据库创建只负责空库；业务表由 Flyway 自动建立。
 
 ```mermaid
 erDiagram
@@ -507,6 +616,15 @@ erDiagram
     AGENT_GOALS ||--o{ AGENT_GOAL_STEPS : has
     AGENT_GOALS ||--o{ AGENT_GOAL_EVALUATIONS : has
     AGENT_GOALS ||--o{ AGENT_GOAL_REVIEW_ACTIONS : creates
+    REMINDER_TASKS ||--o{ REMINDER_RECIPIENT_BINDINGS : targets
+    MEDICAL_USERS ||--o{ MEDICAL_PATIENT_RELATIONS : authorizes
+    MEDICAL_USERS ||--o{ CARE_MEMORY_EVENTS : records
+    MEDICAL_USERS ||--o{ DAILY_CHECKINS : submits
+    MEDICAL_USERS ||--o{ CARE_PLANS : owns
+    CARE_PLANS ||--o{ CARE_PLAN_VERSIONS : versions
+    CARE_PLANS ||--o{ CARE_TASK_INSTANCES : generates
+    MEDICAL_USERS ||--o{ SAFETY_ALERTS : receives
+    SAFETY_ALERTS ||--o{ MEDICAL_NOTIFICATIONS : notifies
     XHS_MONITOR_PROJECTS ||--o{ XHS_MONITOR_TERMS : configures
     XHS_MONITOR_PROJECTS ||--o{ XHS_COLLECTION_JOBS : creates
     XHS_MONITOR_PROJECTS ||--o{ XHS_POSTS : contains
@@ -522,14 +640,14 @@ erDiagram
 | --- | --- | --- |
 | V1 会话记忆 | `users`、`conversations`、`conversation_messages`、`conversation_states`、`user_preferences`、`conversation_summaries`、`tool_execution_logs` | 微信用户、上下文、摘要、状态和调用审计。 |
 | V2-V5 媒体与知识 | 文档/分块/生成文档、图片、知识文档/日志、网页缓存 | 支撑文件、图片、知识库和网页阅读。 |
-| V6-V8 出行交易 | 打车报价/订单/事件、支付订单/事件、地点确认 | 支撑打车与支付交接。 |
-| V10 网盘 | 授权、OAuth state、待处理动作、操作日志 | 支撑百度网盘 OAuth 和失败后续办。 |
-| V11 外卖 | 地址、草稿、预览、订单、事件、支付交接 | 支撑严格确认的外卖链路。 |
-| V12-V17 舆情基础 | 项目、词、采集任务、帖子、评论、指标、分析、事件、告警、订阅、审计、访问 URL | 支撑采集到告警的完整闭环。 |
+| V6-V9 出行交易 | 打车地点确认/报价/订单/事件、支付订单/事件 | 支撑打车与支付交接。 |
+| V10-V11 提醒 | 提醒任务、收件人绑定、状态增强和后续提醒 | 支撑一次性/重复提醒、主动通知和重试。 |
+| V12 外卖 | 地址、草稿、预览、订单、事件、支付交接 | 支撑严格确认的外卖链路。 |
+| V13-V19 医疗照护 | 医疗身份、照护记录、告警通知、计划/任务、登录会话、角色绑定、后续提醒 | 支撑患者、家属、医护端协同与审计。 |
 | V20-V23 Agent 目标 | 目标、步骤、评估、复盘动作 | 记录可观测的任务执行与人工改进项。 |
-| V22-V23 舆情报表 | 报表计划、接收人、运行、artifact、投递、采集任务关联 | 支撑可重试的定时报告。 |
+| V25-V33 小红书舆情 | 项目、词、采集任务、帖子、评论、指标、分析、事件、告警、订阅、审计、访问 URL、定时报表、邮件报告扩展 | 当前工作区已将旧的 V12-V17/V22-V24 舆情迁移重新编号，避免版本冲突。 |
 
-> 注意：当前迁移目录中存在两个 `V22__...` 文件与两个 `V23__...` 文件。Flyway 通常要求迁移版本唯一；上线或新环境全量迁移前，应通过现有 `FlywayMigrationVersionTests` 和 `mvn test` 核验这一目录是否符合项目当前迁移命名策略。
+> 当前目录不再使用旧的 V12-V17、V22-V24 小红书文件名；不要把已执行环境中的旧版本文件直接与当前目录混合。升级前应先备份数据库，并用 Flyway 校验实际历史版本和校验和。
 
 ## 11. Sidecar 与部署拓扑
 
@@ -554,7 +672,8 @@ flowchart LR
 | 可选增强 | Qdrant | 关闭/不可用时自动 RAG 退化，普通聊天继续。 |
 | 可选增强 | browser-mcp-sidecar | 浏览器工具不注册或调用返回服务不可用。 |
 | 可选增强 | xhs-sidecar | 小红书采集不能进行，历史查询/报告能力取决于已有数据。 |
-| 按工具需要 | 高德、快递100、SMTP、百度网盘、美团 CLI、支付 | 对应工具给出配置缺失或服务错误，不影响基础聊天。 |
+| 按工具需要 | 高德、快递100、SMTP/IMAP、百度网盘、美团 CLI、支付 | 对应工具给出配置缺失或服务错误，不影响基础聊天。 |
+| 医疗照护 | `CARE_BOOTSTRAP_KEY`、MySQL、微信连接 | 医疗身份初始化、主动照护通知和会话链接不可用；不会降低为无权限访问。 |
 
 ### 11.2 推荐启动顺序
 
@@ -572,7 +691,8 @@ flowchart LR
 | 浏览器 | 默认关闭、仅本地 host、不共享宿主机登录态、敏感输入拦截、高风险点击确认。 |
 | 小红书 | 本地绑定、API Key、环境变量白名单、Cookie 不落 Job/日志、作者伪匿名化、只读采集。 |
 | 网盘 | OAuth token 加密存储；不索取账号密码；分享/同名目标需要确认。 |
-| 邮件 | 非白名单二次确认；纯文本；不读取收件箱或发送附件。 |
+| 邮件 | 纯文本邮件保持白名单/确认 token；附件发送和目录压缩必须确认，且只允许白名单目录、大小上限与过滤后的文件；IMAP 查询受配置、附件目录和大小限制。 |
+| 医疗照护 | Bearer 会话按角色和患者授权限制访问；敏感操作与查看写审计；未确认记忆不是可信事实；系统不诊断、不处方、不调整药物，紧急信号只提示联系家属、医护或急救服务。 |
 | 交易 | 外卖、打车、支付均要求明确确认；用户完成支付、验证码、生物认证等最后步骤。 |
 | RAG | 检索内容被视为事实资料，而非系统指令；RAG 失败不阻断普通聊天。 |
 | 记忆 | 会话、偏好、摘要和工具状态可持久化；`#new` 只开启新会话，不删除历史或长期偏好。 |
@@ -591,12 +711,14 @@ flowchart LR
 | 多媒体与文档 | `wechat/image/`、`wechat/voice/`、`wechat/document/` |
 | 出行和消费 | `wechat/map/`、`wechat/taxi/`、`wechat/food/`、`wechat/commerce/`、`wechat/travel/` |
 | 网盘/邮件/浏览器 | `wechat/netdisk/`、`wechat/email/`、`wechat/browser/` |
+| 提醒与临时报告 | `wechat/reminder/`、`wechat/report/` |
+| 医疗照护 | `wechat/care/`、`frontend/medical-console/`、`docs/PATIENT_CARE_COORDINATION_AGENT.md`、`docs/CARE_BACKEND_API.md` |
 | 小红书 | `xhs/`、`xhs-sidecar/`、`static/xhs-console/` |
 | 数据库 | `src/main/resources/db/migration/`、`docs/DATABASE_SETUP.md` |
 | 部署 | `README-RUN.md`、`browser-mcp-sidecar/compose.yaml`、`xhs-sidecar/compose.yaml` |
 
 ## 14. 当前功能覆盖结论
 
-项目当前已覆盖：多入口智能对话、多模态媒体处理、运行时工具/Skill、MySQL 记忆、Qdrant RAG、网页与新闻、文档与图片/语音、地图/天气/出行、选购/物流、邮件、百度网盘、浏览器自动化、外卖/打车/支付交接，以及完整的小红书舆情采集到报表链路。
+项目当前已覆盖：多入口智能对话、多模态媒体处理、运行时工具/Skill、MySQL 记忆、Qdrant RAG、网页与新闻、文档与图片/语音、地图/天气/出行、选购/物流、邮件收取与附件发送、百度网盘、浏览器自动化、外卖/打车/支付交接、提醒与主动通知、微信长回复报告、患者/家属/医护照护协同，以及完整的小红书舆情采集到报表和邮件投递链路。
 
-功能并非全部默认开启：模型、MySQL 是核心依赖；Qdrant、浏览器 Sidecar、小红书 Sidecar 与各第三方 API 按配置启用。系统对发送、支付、删除、分享、授权、下单、取消和状态流转设置了确认或白名单机制，且对工具失败设计了“局部功能降级、不阻断普通对话”的处理方式。
+功能并非全部默认开启：模型、MySQL 是核心依赖；Qdrant、浏览器 Sidecar、小红书 Sidecar、医疗身份初始化、邮件、外卖和各第三方 API 按配置启用。系统对发送、支付、删除、分享、授权、下单、取消、提醒操作、医疗计划审核和事件流转设置了确认、权限、版本或白名单机制，且对工具失败设计了“局部功能降级、不阻断普通对话”的处理方式。

@@ -240,7 +240,8 @@ public class XhsConsoleService {
     }
 
     public List<OpinionRow> opinions(
-            String projectKey, String keyword, String sentiment, int minimumRiskScore, int limit) {
+            String projectKey, String keyword, String sentiment, Instant publishedFrom, Instant publishedTo,
+            String sortBy, String sortDirection, int minimumRiskScore, int limit) {
         StringBuilder sql = new StringBuilder("""
                 SELECT p.id, pr.project_key, p.title, p.author_key, p.source_url, p.published_at,
                        a.summary, a.sentiment, a.risk_category, a.risk_score, a.analyzed_at,
@@ -273,9 +274,31 @@ public class XhsConsoleService {
             sql.append(" AND a.sentiment = ?");
             arguments.add(sentiment.strip().toUpperCase(Locale.ROOT));
         }
-        sql.append(" ORDER BY a.risk_score DESC, a.analyzed_at DESC, p.id DESC LIMIT ?");
+        if (publishedFrom != null) {
+            sql.append(" AND p.published_at >= ?");
+            arguments.add(Timestamp.from(publishedFrom));
+        }
+        if (publishedTo != null) {
+            sql.append(" AND p.published_at <= ?");
+            arguments.add(Timestamp.from(publishedTo));
+        }
+        sql.append(" ORDER BY CASE WHEN p.published_at IS NULL THEN 1 ELSE 0 END, ");
+        sql.append(opinionSort(sortBy));
+        sql.append(" ").append("ASC".equalsIgnoreCase(sortDirection) ? "ASC" : "DESC");
+        sql.append(", p.id DESC LIMIT ?");
         arguments.add(safeLimit(limit, 50));
         return jdbcTemplate.query(sql.toString(), this::mapOpinion, arguments.toArray());
+    }
+
+    private String opinionSort(String sortBy) {
+        return switch (sortBy == null ? "" : sortBy.strip()) {
+            case "riskScore" -> "a.risk_score";
+            case "analyzedAt" -> "a.analyzed_at";
+            case "likedCount" -> "COALESCE(m.liked_count, 0)";
+            case "commentCount" -> "COALESCE(m.comment_count, 0)";
+            case "publishedAt", "" -> "p.published_at";
+            default -> "p.published_at";
+        };
     }
 
     public PostDetail post(long postId) {

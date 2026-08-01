@@ -30,6 +30,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 
 @RestController
 @RequestMapping("/api/xhs-console")
@@ -155,9 +156,14 @@ public class XhsConsoleController {
             @RequestParam(required = false) String projectKey,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String sentiment,
+            @RequestParam(required = false) Instant publishedFrom,
+            @RequestParam(required = false) Instant publishedTo,
+            @RequestParam(defaultValue = "publishedAt") String sortBy,
+            @RequestParam(defaultValue = "DESC") String sortDirection,
             @RequestParam(defaultValue = "0") int minimumRiskScore,
             @RequestParam(defaultValue = "50") int limit) {
-        return service.opinions(projectKey, keyword, sentiment, minimumRiskScore, limit);
+        return service.opinions(projectKey, keyword, sentiment, publishedFrom, publishedTo,
+                sortBy, sortDirection, minimumRiskScore, limit);
     }
 
     @GetMapping("/posts/{postId}")

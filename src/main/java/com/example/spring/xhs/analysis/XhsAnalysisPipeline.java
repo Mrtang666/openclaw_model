@@ -3,6 +3,7 @@ package com.example.spring.xhs.analysis;
 import com.example.spring.xhs.config.XhsAnalysisProperties;
 import com.example.spring.xhs.repository.XhsAnalysisRepository;
 import com.example.spring.xhs.alert.XhsAlertService;
+import com.example.spring.xhs.schedule.XhsNegativePostEmailService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -20,6 +21,7 @@ public class XhsAnalysisPipeline {
     private final XhsRiskScorer riskScorer;
     private final XhsAnalysisProperties properties;
     private final XhsAlertService alertService;
+    private final XhsNegativePostEmailService negativePostEmailService;
 
     @Autowired
     public XhsAnalysisPipeline(
@@ -27,12 +29,14 @@ public class XhsAnalysisPipeline {
             XhsSemanticAnalyzer semanticAnalyzer,
             XhsRiskScorer riskScorer,
             XhsAnalysisProperties properties,
-            XhsAlertService alertService) {
+            XhsAlertService alertService,
+            XhsNegativePostEmailService negativePostEmailService) {
         this.repository = repository;
         this.semanticAnalyzer = semanticAnalyzer;
         this.riskScorer = riskScorer;
         this.properties = properties;
         this.alertService = alertService;
+        this.negativePostEmailService = negativePostEmailService;
     }
 
     XhsAnalysisPipeline(
@@ -40,7 +44,7 @@ public class XhsAnalysisPipeline {
             XhsSemanticAnalyzer semanticAnalyzer,
             XhsRiskScorer riskScorer,
             XhsAnalysisProperties properties) {
-        this(repository, semanticAnalyzer, riskScorer, properties, null);
+        this(repository, semanticAnalyzer, riskScorer, properties, null, null);
     }
 
     public int processPending() {
@@ -75,6 +79,9 @@ public class XhsAnalysisPipeline {
         // Saving the analysis is the completion marker. Keep it last so an incident failure
         // leaves the post eligible for an idempotent retry.
         repository.saveAnalysis(result);
+        if (negativePostEmailService != null) {
+            negativePostEmailService.enqueue(candidate, semantic, risk);
+        }
     }
 
     private String incidentKey(XhsAnalysisCandidate candidate, XhsSemanticAssessment semantic) {

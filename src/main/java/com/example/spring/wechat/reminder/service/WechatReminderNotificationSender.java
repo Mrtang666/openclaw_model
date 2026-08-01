@@ -14,6 +14,6 @@ public class WechatReminderNotificationSender implements ReminderNotificationSen
 
     @Override
     public void sendText(String connectionId, String recipientId, String text) {
-        wechatBotService.sendProactiveText(connectionId, recipientId, text);
+        wechatBotService.sendProactiveTextOrThrow(connectionId, recipientId, text);
     }
 }

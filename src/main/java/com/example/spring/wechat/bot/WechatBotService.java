@@ -266,7 +266,7 @@ public class WechatBotService {
      * Sends a system-initiated text message through the same logged-in connection that received the user message.
      * Reminder tasks persist this connection identifier so multi-client sessions do not cross-send notifications.
      */
-    public void sendProactiveText(String connectionId, String userId, String text) {
+    public void sendProactiveTextOrThrow(String connectionId, String userId, String text) {
         if (connectionId == null || connectionId.isBlank() || userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("主动消息缺少微信连接或接收用户");
         }

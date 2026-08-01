@@ -165,7 +165,7 @@ class MapWechatToolTests {
     }
 
     @Test
-    void functionCallingSchemaContainsMapEnumsAndCapabilityBoundaries() {
+    void functionCallingSchemaContainsMapEnumsAndCompactCapability() {
         MapWechatTool tool = new MapWechatTool(mock(MapService.class));
         FunctionCallingToolSchemaConverter converter = new FunctionCallingToolSchemaConverter();
 
@@ -175,9 +175,8 @@ class MapWechatToolTests {
             Map<?, ?> function = (Map<?, ?>) schema.get("function");
             assertThat(function.get("name")).isEqualTo("map_search");
             assertThat(function.get("description").toString())
-                    .contains("实时有票")
-                    .contains("缺少 operation")
-                    .contains("origin 和 destination");
+                    .contains("地图出行工具")
+                    .contains("能力：查询地点、路线、周边推荐和路线图");
             Map<?, ?> parameters = (Map<?, ?>) function.get("parameters");
             assertThat(parameters.get("required")).isEqualTo(List.of("operation"));
             Map<?, ?> properties = (Map<?, ?>) parameters.get("properties");

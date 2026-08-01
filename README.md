@@ -679,3 +679,45 @@ MCP Streamable HTTP tools/call 开始，tool=bailian_web_search
 ```
 
 这时微信端仍然会尽量返回联网搜索摘要，不会因为 MCP 临时失败而直接无回复。
+
+## 10. 小红书舆情 Agent
+
+Windows 本地开发建议使用统一启动入口，它会先检查 Docker Desktop 和 Compose 中的 18081 Sidecar，再启动 Spring Boot：
+
+```powershell
+.\run-xhs-local.ps1
+```
+
+项目包含隔离的小红书舆情链路：关键词采集、隐私清洗、结构化语义分析、可解释风险评分、事件聚合、微信主动告警、事件处置审计和自然日日报。
+
+采集由独立 Python 侧车完成，Spring Boot 不直接加载 Spider_XHS，也不提供发布、点赞、关注、删除或私信能力。侧车默认关闭并只监听本机地址。
+
+详细安装、环境变量、安全边界和联调步骤见 [`xhs-sidecar/README.md`](xhs-sidecar/README.md)。核心开关：
+
+```env
+XHS_COLLECTOR_ENABLED=false
+XHS_ANALYSIS_ENABLED=false
+XHS_ALERT_ENABLED=false
+```
+
+生产环境必须配置稳定的 `XHS_AUTHOR_HASH_KEY`、共享的 `XHS_COLLECTOR_API_KEY`，并确保采集行为符合账号授权、平台规则和适用法律。所有查询与日报只代表已采集并完成分析的数据范围。
+
+### 小红书舆情网页管理台
+
+启动项目并进入 CLI 后，使用以下同级命令：
+
+```text
+/xhs start
+/xhs status
+/xhs help
+```
+
+`/xhs start` 会根据 Spring Boot 实际端口生成管理台地址并尝试使用系统浏览器打开。默认地址为：
+
+```text
+http://127.0.0.1:8080/xhs-console/index.html
+```
+
+管理台支持项目与关键词管理、立即采集、任务状态、舆情查询、帖子详情与原帖跳转、风险事件、日报、Word 日报下载、告警规则和系统状态。删除项目属于不可撤销操作，必须在确认弹窗中再次输入完整项目标识，删除时会一并清理该项目的采集、分析、事件、告警和审计数据。
+
+原帖访问使用采集时获得的受限导航链接，并由管理台后端校验后跳转。升级到包含 `V17__add_xhs_post_access_urls.sql` 的版本后，旧帖子需要重新采集才能补齐访问链接；小红书仍可能要求浏览器登录、扫码或使用 App。Word 日报在请求时从数据库实时汇总并在内存中生成，不会默认保存到服务端目录。

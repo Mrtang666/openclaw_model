@@ -1,0 +1,4 @@
+interface:
+  display_name: "微信多媒体工作室"
+  short_description: "处理微信图片、视频、语音、音色和图片生成请求"
+  default_prompt: "Use $wechat-media-studio to handle WeChat image, video, and voice requests."

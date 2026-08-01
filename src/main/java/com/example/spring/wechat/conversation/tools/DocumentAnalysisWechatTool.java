@@ -55,10 +55,10 @@ public class DocumentAnalysisWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "解析用户发送的 PDF、Word、TXT、Markdown、Excel、PPT 等文件，提取摘要、重点、表格或结构化内容。",
-                List.of("当前消息没有文件且上下文没有最近文件时必须追问；大文件只能基于分块摘要回答，不能声称逐字完整阅读。"),
-                List.of("files：当前微信消息中的文件", "question：用户围绕文件提出的问题", "operation：处理方式"),
-                List.of("文件类型", "内容摘要", "关键片段", "针对文件问题的文本回答"));
+                "分析微信会话中的文档并回答相关问题",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

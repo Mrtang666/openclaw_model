@@ -150,31 +150,19 @@ public class CarePlanDraftService {
         authorizationService.require(actor, record.patientUserId(), CarePermissions.PLAN_MANAGE,
                 "CONFIRM_PLAN_DRAFT", "CARE_PLAN_DRAFT", draftId, requestId);
         String finalText = firstNonBlank(record.editedPlan(), record.refinedPlan());
-        List<NotificationTarget> patientTargets = identityRepository.listUserNotificationTargetsByRole(
-                record.patientUserId(), MedicalRole.PATIENT);
+        List<NotificationTarget> patientTargets = deduplicateTargets(
+                identityRepository.listUserNotificationTargetsByRole(record.patientUserId(), MedicalRole.PATIENT));
         if (patientTargets.isEmpty()) {
             throw new CareException(CareErrorCode.CONFLICT,
                     "患者本人还没有可用的微信登录通道，请先让患者使用 /patient 扫码登录。");
         }
         CarePlan activePlan = publishPlan(actor, record, finalText, requestId);
-        String patientContent = """
-                【新的照护方案】
-                医生：%s
-                患者：%s（%s）
-                计划编号：%d
-
-                %s
-                """.formatted(actor.displayName(), record.patientName(), record.patientCode(), activePlan.id(), finalText).strip();
         int delivered = 0;
         int queued = 0;
-        for (NotificationTarget target : patientTargets) {
-            if (trySendNow(target, patientContent)) {
-                delivered++;
-            } else {
-                enqueue(record.patientUserId(), target, "CARE_PLAN_TO_PATIENT", patientContent);
-                queued++;
-            }
-        }
+        // Do not send the full plan to the patient. Confirm activation now, then send each task at its due time.
+        NotifyCount patientNotifyCount = notifyPatients(record, activePlan, patientTargets);
+        delivered += patientNotifyCount.delivered();
+        queued += patientNotifyCount.queued();
         NotifyCount familyNotifyCount = notifyFamilies(actor, record, activePlan, finalText);
         delivered += familyNotifyCount.delivered();
         queued += familyNotifyCount.queued();
@@ -214,6 +202,27 @@ public class CarePlanDraftService {
         return plan;
     }
 
+    private NotifyCount notifyPatients(
+            DraftRecord record,
+            CarePlan plan,
+            List<NotificationTarget> patientTargets) {
+        String content = "【照护任务已启用】\n"
+                + "医生已确认新的照护方案。系统会在每项任务开始时单独提醒你，"
+                + "并在规定时间后向你确认是否完成。\n"
+                + "计划编号：" + plan.id();
+        int delivered = 0;
+        int queued = 0;
+        for (NotificationTarget target : patientTargets) {
+            if (trySendNow(target, content)) {
+                delivered++;
+            } else {
+                enqueue(record.patientUserId(), target, "CARE_PLAN_TO_PATIENT", content);
+                queued++;
+            }
+        }
+        return new NotifyCount(delivered, queued);
+    }
+
     private NotifyCount notifyFamilies(CareActor actor, DraftRecord record, CarePlan plan, String finalText) {
         Instant now = clock.instant();
         List<NotificationTarget> familyTargets = new ArrayList<>();
@@ -243,7 +252,9 @@ public class CarePlanDraftService {
             if (target == null) {
                 continue;
             }
-            String key = target.userId() + "|" + target.connectionId() + "|" + target.recipientId();
+            // A user can reconnect to the same WeChat account, producing multiple
+            // connection IDs for one recipient. The repository orders newest first.
+            String key = target.userId() + "|" + target.recipientId();
             if (seen.add(key)) {
                 unique.add(target);
             }
@@ -328,6 +339,13 @@ public class CarePlanDraftService {
     private List<CarePlanService.TaskCommand> taskCommands(String text) {
         List<CarePlanService.TaskCommand> tasks = new ArrayList<>();
         String source = clean(text);
+        List<CarePlanTimeParser.TimedTask> timedTasks = timeParser.extractTimedTasks(source);
+        if (!timedTasks.isEmpty()) {
+            for (CarePlanTimeParser.TimedTask task : timedTasks) {
+                addTimedTask(tasks, task);
+            }
+            return List.copyOf(tasks);
+        }
         if (containsAny(source, "喝水", "饮水")) {
             addHydrationTasks(tasks, source);
         }
@@ -466,6 +484,34 @@ public class CarePlanDraftService {
                 null,
                 gracePeriodMinutes,
                 escalationAfterMinutes));
+    }
+
+    private void addTimedTask(List<CarePlanService.TaskCommand> tasks, CarePlanTimeParser.TimedTask timedTask) {
+        if (tasks.size() >= 20) {
+            return;
+        }
+        String title = clean(timedTask.description());
+        if (title.isBlank()) {
+            return;
+        }
+        int followUpMinutes = (int) java.time.Duration.between(timedTask.start(), timedTask.followUp()).toMinutes();
+        if (followUpMinutes <= 0) {
+            return;
+        }
+        int gracePeriodMinutes = Math.min(1_440, followUpMinutes + 30);
+        int escalationAfterMinutes = Math.min(10_080, gracePeriodMinutes + 30);
+        tasks.add(new CarePlanService.TaskCommand(
+                timedTaskType(title), title, title, "DAILY", timedTask.start(), null, null,
+                null, null, followUpMinutes, gracePeriodMinutes, escalationAfterMinutes));
+    }
+
+    private String timedTaskType(String title) {
+        if (containsAny(title, "喝水", "饮水")) return "HYDRATION";
+        if (containsAny(title, "服药", "吃药")) return "MEDICATION_CONFIRMATION";
+        if (containsAny(title, "早操", "散步", "康复", "训练", "锻炼", "活动")) return "REHABILITATION";
+        if (containsAny(title, "早餐", "午餐", "晚餐", "饮食", "进食")) return "MEAL";
+        if (containsAny(title, "睡眠", "入睡", "起床")) return "SLEEP";
+        return "DAILY_CHECKIN";
     }
 
     private String relevantText(String source, String... anchors) {

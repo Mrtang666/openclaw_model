@@ -39,7 +39,7 @@ public class FoodDeliveryWechatTool implements WechatTool {
 
     @Override
     public String description() {
-        return "微信外卖点餐工具：保存和复用配送地址，搜索商家与菜单，维护购物车，预结算，确认下单，发起微信/小程序支付，查询或取消订单";
+        return "微信外卖点餐工具，处理地址、商家菜单、购物车、预结算、下单、支付和订单状态。";
     }
 
     @Override
@@ -78,16 +78,10 @@ public class FoodDeliveryWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "微信内完成配送地址确认、商家和商品选择、订单预览、显式确认下单、支付交接及配送状态查询",
-                List.of(
-                        "保存地址前必须获得用户同意",
-                        "预结算后必须展示地址、商品规格、费用和预计送达时间",
-                        "只有用户明确回复确认下单才能创建真实订单",
-                        "支付密码、指纹和人脸确认必须由用户本人完成",
-                        "微信支付不可用时使用小程序入口，再退化到 H5",
-                        "平台未返回的库存、价格和配送进度不得猜测"),
-                List.of("配送地址", "商家和商品", "必选规格", "真实下单前的明确确认"),
-                List.of("地址列表", "商家和菜单", "订单预览与确认 Token", "支付入口", "订单及配送状态"));
+                "处理微信外卖地址、购物车、订单和支付交接",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

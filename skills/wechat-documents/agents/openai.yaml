@@ -1,0 +1,4 @@
+interface:
+  display_name: "微信文档处理"
+  short_description: "解析、总结、归档并生成微信可回传文档"
+  default_prompt: "Use $wechat-documents to parse or generate documents in WeChat."

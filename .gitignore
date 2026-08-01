@@ -9,3 +9,8 @@ generated-images/
 data/
 .mysql-data/
 .worktrees/
+xhs-sidecar/runtime/
+xhs-sidecar/.venv/
+xhs-sidecar/__pycache__/
+xhs-sidecar/**/__pycache__/
+browser-mcp-sidecar/node_modules/

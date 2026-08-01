@@ -62,13 +62,10 @@ public class ImageUnderstandingWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "当用户围绕图片提问、要求识别图片、总结图片、提取图片文字、比较多张图片或基于图片给建议时使用。",
-                List.of(
-                        "如果当前没有可用图片资源，不能编造图片内容，需要追问用户先发送图片。",
-                        "一次最多处理 5 张图片；超过 5 张时按 5 张一批依次处理并合并结果。",
-                        "回答要先说明识别到的图片内容，再结合用户要求给出结论。"),
-                List.of("instruction：用户对图片的具体处理要求"),
-                List.of("图片内容描述", "图片文字提取结果", "基于图片的分析建议"));
+                "理解微信图片并按用户要求提取或分析",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

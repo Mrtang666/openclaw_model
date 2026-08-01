@@ -59,10 +59,10 @@ public class WeatherWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "查询中国城市实时天气和预报，并结合用户问题生成出门、穿衣、通勤等建议。",
-                List.of("只能查询城市级天气；缺少城市名时必须追问；不要把区县、完整地址或省份当作 city 参数。"),
-                List.of("city：用户要查询的城市名", "question：用户关于天气的原始问题"),
-                List.of("天气说明文本", "生活建议文本"));
+                "查询城市天气并返回天气说明和生活建议",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

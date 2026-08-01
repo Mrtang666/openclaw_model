@@ -47,10 +47,10 @@ public class NetdiskSearchWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "搜索当前用户自己的百度网盘文件。",
-                List.of("只能访问当前微信用户已授权的网盘；未授权时必须先返回授权链接。"),
-                List.of("query：搜索内容"),
-                List.of("搜索结果 JSON/文本"));
+                "搜索当前用户授权的百度网盘文件",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

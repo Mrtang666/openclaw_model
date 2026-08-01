@@ -1,0 +1,10 @@
+{
+  "tools": [
+    "image_understanding",
+    "image_generation",
+    "video_understand",
+    "voice_recognition",
+    "voice_synthesis",
+    "voice_style"
+  ]
+}

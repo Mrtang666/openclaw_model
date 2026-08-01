@@ -172,8 +172,8 @@ public class CareAgentWechatTool implements WechatTool {
     private String status(CareActor actor, WechatToolRequest request) {
         if (actor.role() == MedicalRole.PATIENT) {
             CareWebLinkService.CareWebSessionLink link = linkService.createForWechatSession(
-                    request.sessionKey(), "/caregiver/status");
-            return link.url();
+                    request.sessionKey(), "/patient/tasks");
+            return "今日任务与打卡：\n" + link.url();
         }
 
         List<MedicalUser> patients = authorizationService.listAccessiblePatients(actor, CarePermissions.STATUS_READ);
@@ -355,6 +355,12 @@ public class CareAgentWechatTool implements WechatTool {
                 if (patient.userCode().equalsIgnoreCase(code) || patient.displayName().contains(code)) {
                     return patient;
                 }
+            }
+        }
+        String text = userText == null ? "" : userText;
+        for (MedicalUser patient : patients) {
+            if (!patient.displayName().isBlank() && text.contains(patient.displayName())) {
+                return patient;
             }
         }
         return patients.get(0);

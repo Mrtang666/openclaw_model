@@ -94,6 +94,25 @@ class WechatBotServiceTests {
     }
 
     @Test
+    void sendsProactiveTextThroughSpecifiedRunningConnection() throws Exception {
+        FakeWechatClient client = new FakeWechatClient(1);
+        WechatBotService service = new WechatBotService(() -> client, mock(AgentService.class));
+
+        service.start();
+        String connectionId = service.managerSnapshot().connections().get(0).connectionId();
+        client.loginFuture.complete(new WechatLoginInfo("bot-1"));
+        awaitRunning(service);
+
+        boolean sent = service.sendProactiveText(connectionId, "user@im.wechat", "主动告警");
+
+        assertThat(sent).isTrue();
+        assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
+        assertThat(client.sentToUserId).isEqualTo("user@im.wechat");
+        assertThat(new ArrayList<>(client.sentTexts)).containsExactly("主动告警");
+        service.stop();
+    }
+
+    @Test
     void refreshesReminderRecipientBindingWhenAWechatMessageArrives() throws Exception {
         FakeWechatClient client = new FakeWechatClient(1);
         WechatConversationService conversationService = mock(WechatConversationService.class);
@@ -123,6 +142,37 @@ class WechatBotServiceTests {
                 anyString(),
                 anyString(),
                 any());
+        service.stop();
+    }
+
+    @Test
+    void rejectsProactiveTextForUnknownConnection() {
+        FakeWechatClient client = new FakeWechatClient();
+        WechatBotService service = new WechatBotService(() -> client, mock(AgentService.class));
+
+        assertThat(service.sendProactiveText("missing", "user@im.wechat", "主动告警")).isFalse();
+        assertThat(client.sentTexts).isEmpty();
+        service.stop();
+    }
+
+    @Test
+    void sendsProactiveFileThroughSpecifiedRunningConnection() throws Exception {
+        FakeWechatClient client = new FakeWechatClient(1);
+        WechatBotService service = new WechatBotService(() -> client, mock(AgentService.class));
+
+        service.start();
+        String connectionId = service.managerSnapshot().connections().get(0).connectionId();
+        client.loginFuture.complete(new WechatLoginInfo("bot-1"));
+        awaitRunning(service);
+
+        boolean sent = service.sendProactiveFile(
+                connectionId, "user@im.wechat", "docx".getBytes(), "report.docx", "舆情报告");
+
+        assertThat(sent).isTrue();
+        assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
+        assertThat(client.sentFiles).hasSize(1);
+        assertThat(client.sentFiles.peek().fileName()).isEqualTo("report.docx");
+        assertThat(client.sentFiles.peek().caption()).isEqualTo("舆情报告");
         service.stop();
     }
 
@@ -186,6 +236,14 @@ class WechatBotServiceTests {
         assertThat(chunks).isNotEmpty();
         assertThat(chunks).allMatch(chunk -> chunk.length() <= 800);
         assertThat(String.join("", chunks)).isEqualTo(longReply);
+    }
+
+    private void awaitRunning(WechatBotService service) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        while (service.status().state() != WechatBotState.RUNNING && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        assertThat(service.status().state()).isEqualTo(WechatBotState.RUNNING);
     }
 
     @Test

@@ -76,13 +76,10 @@ public class ImageGenerationWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "根据用户文本提示词生成图片，也可以结合最近图片上下文生成改图提示词。",
-                List.of(
-                        "如果用户明确说先优化提示词或等待确认，则不能直接生成图片。",
-                        "如果用户要求修改图片但上下文没有最近图片描述，需要先追问用户发送图片或补充参考内容。",
-                        "不要把流程性文字写进最终图片提示词。"),
-                List.of("prompt：最终图片需求", "optimize_prompt：是否先优化提示词", "wait_for_approval：是否等待用户确认"),
-                List.of("优化后的图片提示词", "生成后的图片"));
+                "生成图片或先优化图片提示词",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

@@ -28,6 +28,7 @@ public class CareTaskRepository {
             nullableLong(rs, "completed_by_user_id"), instant(rs.getTimestamp("completed_at")),
             rs.getString("result_note"), rs.getInt("snooze_count"),
             instant(rs.getTimestamp("reminder_enqueued_at")),
+            instant(rs.getTimestamp("follow_up_enqueued_at")),
             instant(rs.getTimestamp("overdue_notified_at")), rs.getString("idempotency_key"),
             rs.getLong("version"), rs.getInt("grace_period_minutes"),
             rs.getInt("escalation_after_minutes"), instant(rs.getTimestamp("created_at")),
@@ -35,7 +36,7 @@ public class CareTaskRepository {
 
     private static final String SELECT = """
             SELECT i.*,t.title AS task_title,t.instructions AS task_instructions,t.task_type,
-                   t.grace_period_minutes,t.escalation_after_minutes
+                   t.follow_up_after_minutes,t.grace_period_minutes,t.escalation_after_minutes
             FROM medical_care_task_instances i
             JOIN medical_care_task_templates t ON t.id=i.task_template_id
             """;
@@ -91,6 +92,15 @@ public class CareTaskRepository {
                 """, Long.class, timestamp(now), limit);
     }
 
+    public List<CareTaskInstance> findReadyForFollowUp(Instant now, int limit) {
+        return jdbc.query(SELECT + """
+                WHERE i.status='PENDING' AND i.reminder_enqueued_at IS NOT NULL
+                  AND i.follow_up_enqueued_at IS NULL
+                  AND TIMESTAMPADD(MINUTE,t.follow_up_after_minutes,i.due_at)<=?
+                ORDER BY i.due_at,i.id LIMIT ?
+                """, MAPPER, timestamp(now), limit);
+    }
+
     public List<CareTaskInstance> findReadyForOverdueNotification(Instant now, int limit) {
         return jdbc.query(SELECT + """
                 WHERE i.status='OVERDUE' AND i.overdue_notified_at IS NULL
@@ -104,6 +114,14 @@ public class CareTaskRepository {
                 UPDATE medical_care_task_instances
                 SET reminder_enqueued_at=?,updated_at=?
                 WHERE id=? AND reminder_enqueued_at IS NULL AND status='PENDING'
+                """, timestamp(now), timestamp(now), taskId);
+    }
+
+    public void markFollowUpEnqueued(long taskId, Instant now) {
+        jdbc.update("""
+                UPDATE medical_care_task_instances
+                SET follow_up_enqueued_at=?,updated_at=?
+                WHERE id=? AND follow_up_enqueued_at IS NULL AND status='PENDING'
                 """, timestamp(now), timestamp(now), taskId);
     }
 
@@ -165,7 +183,7 @@ public class CareTaskRepository {
         int changed = jdbc.update("""
                 UPDATE medical_care_task_instances
                 SET status='PENDING',due_at=?,snooze_count=snooze_count+1,reminder_enqueued_at=NULL,
-                    overdue_notified_at=NULL,version=version+1,updated_at=?
+                    follow_up_enqueued_at=NULL,overdue_notified_at=NULL,version=version+1,updated_at=?
                 WHERE id=? AND version=? AND status IN ('PENDING','OVERDUE')
                 """, timestamp(newDueAt), timestamp(now), taskId, expectedVersion);
         if (changed == 1) {
@@ -189,6 +207,7 @@ public class CareTaskRepository {
             if (changed == 1) {
                 recordEvent(taskId, actorUserId, "CANCELLED", reason, null, null, now);
             }
+            cancelQueuedNotifications(taskId, now);
         }
     }
 
@@ -200,8 +219,8 @@ public class CareTaskRepository {
                 """, Long.class, planId, timestamp(now));
         for (Long taskId : taskIds) {
             int changed = jdbc.update("""
-                    UPDATE medical_care_task_instances
-                    SET status='PENDING',reminder_enqueued_at=NULL,overdue_notified_at=NULL,
+                UPDATE medical_care_task_instances
+                SET status='PENDING',reminder_enqueued_at=NULL,follow_up_enqueued_at=NULL,overdue_notified_at=NULL,
                         version=version+1,updated_at=?
                     WHERE id=? AND status='CANCELLED' AND due_at>?
                     """, timestamp(now), taskId, timestamp(now));
@@ -225,6 +244,17 @@ public class CareTaskRepository {
                 VALUES (?,?,?,?,?,?,?)
                 """, taskId, actorUserId, eventType, clean(note), nullableTimestamp(previousDueAt),
                 nullableTimestamp(currentDueAt), timestamp(now));
+    }
+
+    private void cancelQueuedNotifications(long taskId, Instant now) {
+        jdbc.update("""
+                UPDATE medical_notifications
+                SET status='CANCELLED',locked_at=NULL,
+                    last_error='任务已被新版照护方案替换',updated_at=?
+                WHERE status IN ('PENDING','PROCESSING')
+                  AND notification_type IN ('CARE_TASK_DUE','CARE_TASK_FOLLOW_UP','CARE_TASK_OVERDUE')
+                  AND idempotency_key LIKE CONCAT('task:', ?, ':%')
+                """, timestamp(now), taskId);
     }
 
     private static String instanceKey(long templateId, LocalDate scheduledFor) {

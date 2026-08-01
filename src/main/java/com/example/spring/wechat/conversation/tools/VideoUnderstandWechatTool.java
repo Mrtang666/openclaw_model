@@ -49,13 +49,10 @@ public class VideoUnderstandWechatTool implements WechatTool {
     @Override
     public WechatToolCapability capability() {
         return new WechatToolCapability(
-                "当用户发送视频并要求描述、分析、提取关键信息或围绕视频提问时使用。",
-                List.of(
-                        "必须有当前会话里的视频输入，不能凭空描述视频。",
-                        "主要理解画面内容；如果模型无法处理音频，不要声称已听懂视频声音。",
-                        "视频过大或模型不支持当前视频格式时，需要给出明确失败原因。"),
-                List.of("videos：当前微信消息或会话中缓存的视频", "action：处理方式", "custom_prompt：用户具体问题"),
-                List.of("视频内容描述", "关键事件摘要", "针对用户问题的视频分析结论"));
+                "理解微信视频并回答内容相关问题",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Override

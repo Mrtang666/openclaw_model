@@ -151,12 +151,14 @@ public class CareTaskScheduler {
 
     private String dueReminderContent(CareTaskInstance task) {
         return """
-                【任务提醒】
                 现在请完成：%s
-                %s
 
                 完成后请回复：完成 #%d
-                """.formatted(task.title(), instructions(task), task.id()).strip();
+                """.formatted(reminderTitle(task), task.id()).strip();
+    }
+
+    private String reminderTitle(CareTaskInstance task) {
+        return task.title().replaceFirst("\\s+\\d{1,2}:\\d{2}$", "").strip();
     }
 
     private String followUpContent(CareTaskInstance task) {
@@ -167,11 +169,6 @@ public class CareTaskScheduler {
                 已完成请回复：完成 #%d
                 未完成请回复：未完成 #%d
                 """.formatted(task.title(), task.id(), task.id()).strip();
-    }
-
-    private String instructions(CareTaskInstance task) {
-        String value = task.instructions() == null ? "" : task.instructions().strip();
-        return value.isBlank() || value.equals(task.title()) ? "" : "\n" + value;
     }
 
     private List<NotificationTarget> patientTargets(long patientUserId) {

@@ -17,5 +17,9 @@ public record XhsReportScheduleRequest(
         List<String> emailRecipients,
         String wechatConnectionId,
         String wechatRecipientId,
-        boolean enabled) {
+        boolean enabled,
+        boolean negativeEmailEnabled,
+        int negativeEmailMinimumRiskScore,
+        boolean negativeEmailHighRiskOnly,
+        int negativeEmailCooldownMinutes) {
 }

@@ -2,6 +2,8 @@ package com.example.spring.wechat.bot;
 
 import com.example.spring.agent.AgentService;
 import com.example.spring.wechat.adapter.WechatClient;
+import com.example.spring.wechat.bot.concurrency.WechatConcurrencyProperties;
+import com.example.spring.wechat.bot.multiclient.ClawBotConnectionProperties;
 import com.example.spring.wechat.conversation.WechatConversationService;
 import com.example.spring.wechat.image.generation.model.ImageGenerationResult;
 import com.example.spring.wechat.model.WechatIncomingMessage;
@@ -9,6 +11,7 @@ import com.example.spring.wechat.model.WechatLoginInfo;
 import com.example.spring.wechat.login.WechatLoginPageProperties;
 import com.example.spring.wechat.login.WechatLoginPageSessionService;
 import com.example.spring.wechat.login.WechatLoginPageUrlService;
+import com.example.spring.wechat.reminder.service.ReminderRecipientBindingService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 
@@ -26,9 +29,11 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 
 class WechatBotServiceTests {
 
@@ -83,8 +88,7 @@ class WechatBotServiceTests {
 
         assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
         assertThat(client.sentToUserId).isEqualTo("user@im.wechat");
-        assertThat(new ArrayList<>(client.sentTexts)).hasSize(1);
-        assertThat(new ArrayList<>(client.sentTexts).get(0)).isEqualTo("南京天气结果");
+        assertThat(new ArrayList<>(client.sentTexts)).containsExactly("南京天气结果");
         assertThat(service.status().state()).isEqualTo(WechatBotState.RUNNING);
         service.stop();
     }
@@ -105,6 +109,39 @@ class WechatBotServiceTests {
         assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
         assertThat(client.sentToUserId).isEqualTo("user@im.wechat");
         assertThat(new ArrayList<>(client.sentTexts)).containsExactly("主动告警");
+        service.stop();
+    }
+
+    @Test
+    void refreshesReminderRecipientBindingWhenAWechatMessageArrives() throws Exception {
+        FakeWechatClient client = new FakeWechatClient(1);
+        WechatConversationService conversationService = mock(WechatConversationService.class);
+        when(conversationService.handleWechat(anyString(), any()))
+                .thenReturn(WechatReply.text("你好"));
+        @SuppressWarnings("unchecked")
+        ObjectProvider<WechatConversationService> provider = mock(ObjectProvider.class);
+        when(provider.getObject()).thenReturn(conversationService);
+        ReminderRecipientBindingService bindingService = mock(ReminderRecipientBindingService.class);
+        WechatBotService service = new WechatBotService(
+                () -> client,
+                provider,
+                null,
+                null,
+                new ClawBotConnectionProperties(),
+                new WechatConcurrencyProperties(),
+                bindingService);
+
+        service.start();
+        client.loginFuture.complete(new WechatLoginInfo("bot-1"));
+        client.updates.add(List.of(new WechatIncomingMessage("user@im.wechat", "你好")));
+
+        assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
+        verify(bindingService).bind(
+                eq("bot-1"),
+                eq("user@im.wechat"),
+                anyString(),
+                anyString(),
+                any());
         service.stop();
     }
 
@@ -136,6 +173,34 @@ class WechatBotServiceTests {
         assertThat(client.sentFiles).hasSize(1);
         assertThat(client.sentFiles.peek().fileName()).isEqualTo("report.docx");
         assertThat(client.sentFiles.peek().caption()).isEqualTo("舆情报告");
+        service.stop();
+    }
+
+    @Test
+    void forwardsRequestedMedicalRoleToConversationService() throws Exception {
+        FakeWechatClient client = new FakeWechatClient(1);
+        WechatConversationService conversationService = mock(WechatConversationService.class);
+        when(conversationService.handleWechat(anyString(), any(), eq("PATIENT")))
+                .thenReturn(WechatReply.text("患者模式回复"));
+        @SuppressWarnings("unchecked")
+        ObjectProvider<WechatConversationService> provider = mock(ObjectProvider.class);
+        when(provider.getObject()).thenReturn(conversationService);
+        WechatBotService service = new WechatBotService(
+                () -> client,
+                provider,
+                null,
+                null,
+                new ClawBotConnectionProperties(),
+                new WechatConcurrencyProperties(),
+                null);
+
+        service.start("PATIENT");
+        client.loginFuture.complete(new WechatLoginInfo("bot-patient"));
+        client.updates.add(List.of(new WechatIncomingMessage("patient@im.wechat", "我今天有点累")));
+
+        assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
+        assertThat(new ArrayList<>(client.sentTexts)).containsExactly("患者模式回复");
+        verify(conversationService).handleWechat(anyString(), any(), eq("PATIENT"));
         service.stop();
     }
 

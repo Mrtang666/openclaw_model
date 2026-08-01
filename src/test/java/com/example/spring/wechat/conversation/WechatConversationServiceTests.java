@@ -31,6 +31,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -50,6 +51,30 @@ import org.mockito.ArgumentCaptor;
 import com.example.spring.wechat.conversation.intent.WeatherIntentParser;
 
 class WechatConversationServiceTests {
+
+    @Test
+    void appliesRoleModeToDirectChatPrompts() {
+        ChatService chatService = mock(ChatService.class);
+        WeatherService weatherService = mock(WeatherService.class);
+        List<String> prompts = new ArrayList<>();
+        doAnswer(invocation -> {
+            prompts.add(invocation.getArgument(0));
+            com.example.spring.agent.ReplyEmitter emitter = invocation.getArgument(1);
+            emitter.emit("收到");
+            return null;
+        }).when(chatService).streamReply(anyString(), any());
+        WechatConversationService service = new WechatConversationService(
+                chatService, weatherService, new WeatherIntentParser());
+
+        service.handleWechat("clawbot:p:patient", new WechatIncomingMessage("patient", "我感觉有点累"), "PATIENT");
+        service.handleWechat("clawbot:c:caregiver", new WechatIncomingMessage("caregiver", "需要关注哪些事情"), "CAREGIVER");
+        service.handleWechat("clawbot:d:doctor", new WechatIncomingMessage("doctor", "汇总患者状态"), "DOCTOR");
+
+        assertThat(prompts).hasSize(3);
+        assertThat(prompts.get(0)).contains("当前对话模式：患者端").contains("温和、清晰、简短");
+        assertThat(prompts.get(1)).contains("当前对话模式：家属端").contains("患者近期变化");
+        assertThat(prompts.get(2)).contains("当前对话模式：医生端").contains("专业、克制、结构化");
+    }
 
     @Test
     void routesNormalConversationToChatModel() {

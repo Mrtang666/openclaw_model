@@ -33,19 +33,19 @@ public class DocumentArchiveService {
     private final Path storageRoot;
 
     public DocumentArchiveService() {
-        this(null, Path.of("data", "wechat", "documents"));
+        this(null, Path.of("data", "downloads", "wechat", "documents"));
     }
 
     @Autowired
     public DocumentArchiveService(
             ObjectProvider<JdbcTemplate> jdbcTemplateProvider,
-            @Value("${wechat.document.storage-dir:data/wechat/documents}") String storageRoot) {
+            @Value("${wechat.document.storage-dir:data/downloads/wechat/documents}") String storageRoot) {
         this(jdbcTemplateProvider == null ? null : jdbcTemplateProvider.getIfAvailable(), Path.of(storageRoot));
     }
 
     private DocumentArchiveService(JdbcTemplate jdbcTemplate, Path storageRoot) {
         this.jdbcTemplate = jdbcTemplate;
-        this.storageRoot = storageRoot == null ? Path.of("data", "wechat", "documents") : storageRoot;
+        this.storageRoot = storageRoot == null ? Path.of("data", "downloads", "wechat", "documents") : storageRoot;
     }
 
     public void archive(String wechatUserId, WechatIncomingFile file, ParsedDocument parsed) {

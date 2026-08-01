@@ -639,11 +639,13 @@ public class FunctionCallingAgentLoop {
 
                 当前可用图片资源：%d 张。若用户是在询问、分析、总结、提取或修改这些图片，请调用图片相关工具；不要假装已经看过图片。
                 当前可用文件资源：%d 个。若用户说“这个文件、这份文件、刚才的文件、附件”等，请调用文件/邮件相关工具，并优先使用当前可用文件；不要猜测或编造 file_path。
+                当前可用视频资源：%d 个。若用户是在询问、分析、总结或提取这些视频，请调用视频相关工具；不要假装已经看过视频。
                 """.formatted(
                 request.historyText().isBlank() ? "无" : request.historyText(),
                 request.userText(),
                 request.images().size(),
-                request.files().size());
+                request.files().size(),
+                request.videos().size());
     }
 
     private String structuredUserPrompt(FunctionCallingAgentRequest request) {
@@ -664,7 +666,15 @@ public class FunctionCallingAgentLoop {
                 .append(System.lineSeparator())
                 .append("当前可用图片资源：")
                 .append(request.images().size())
-                .append(" 张。若用户是在询问、分析、总结、提取或修改这些图片，请调用图片相关工具；不要假装已经看过图片。");
+                .append(" 张。若用户是在询问、分析、总结、提取或修改这些图片，请调用图片相关工具；不要假装已经看过图片。")
+                .append(System.lineSeparator())
+                .append("当前可用文件资源：")
+                .append(request.files().size())
+                .append(" 个。若用户说“这个文件、这份文件、刚才的文件、附件”等，请调用文件/邮件相关工具，并优先使用当前可用文件；不要猜测或编造 file_path。")
+                .append(System.lineSeparator())
+                .append("当前可用视频资源：")
+                .append(request.videos().size())
+                .append(" 个。若用户是在询问、分析、总结或提取这些视频，请调用视频相关工具；不要假装已经看过视频。");
         return prompt.toString();
     }
 

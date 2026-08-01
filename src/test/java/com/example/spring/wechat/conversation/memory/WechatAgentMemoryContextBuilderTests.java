@@ -57,4 +57,29 @@ class WechatAgentMemoryContextBuilderTests {
                 .contains("format")
                 .contains("image resources");
     }
+
+    @Test
+    void boundsContextButKeepsClarificationAndCurrentResources() {
+        String longText = "0123456789".repeat(80);
+        WechatConversationMemory memory = WechatConversationMemory.empty(10, longText);
+        for (int index = 0; index < 8; index++) {
+            memory.record("user-" + index + " " + longText, "assistant-" + index + " " + longText);
+        }
+        memory.recordUserImage("image request", longText);
+        memory.recordFile("current-file.pdf", "PDF", longText);
+        memory.recordWeatherCity("Hangzhou");
+        memory.recordPendingClarification(
+                "make a report",
+                "Which format do you want?",
+                "document_generation",
+                List.of("format", "title"));
+
+        String context = new WechatAgentMemoryContextBuilder(320).build(memory, "current-file.pdf " + longText);
+
+        assertThat(context.length()).isLessThanOrEqualTo(320);
+        assertThat(context)
+                .contains("pending_clarification")
+                .contains("resource_context")
+                .contains("上下文已截断");
+    }
 }

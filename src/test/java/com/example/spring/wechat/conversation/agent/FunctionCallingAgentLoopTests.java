@@ -14,6 +14,11 @@ import com.example.spring.wechat.conversation.tools.WechatTool;
 import com.example.spring.wechat.conversation.tools.WechatToolParameter;
 import com.example.spring.wechat.conversation.tools.WechatToolRegistry;
 import com.example.spring.wechat.conversation.tools.WechatToolRequest;
+import com.example.spring.wechat.model.ImageSourceType;
+import com.example.spring.wechat.model.VideoSourceType;
+import com.example.spring.wechat.model.WechatIncomingFile;
+import com.example.spring.wechat.model.WechatIncomingImage;
+import com.example.spring.wechat.model.WechatIncomingVideo;
 import com.example.spring.wechat.image.generation.model.ImageGenerationResult;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -321,6 +326,51 @@ class FunctionCallingAgentLoopTests {
                     assertThat(message.content()).contains("知识库检索结果");
                     assertThat(message.content()).contains("[知识1]");
                     assertThat(message.content()).contains("项目流程是什么");
+                });
+    }
+
+    @Test
+    void includesAllAvailableResourceCountsInFirstUserPrompt() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        WechatToolRegistry registry = new WechatToolRegistry(List.of(new FakeWeatherTool()));
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(client, registry, 5);
+        when(client.chat(anyList(), anyList())).thenReturn(Optional.of(new FunctionCallingModelResponse("ok", List.of())));
+
+        loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "Summarize the current resources",
+                "recent history",
+                List.of(new WechatIncomingFile("file-ref", "report.pdf", "application/pdf", new byte[]{1}, 1L, "", "")),
+                List.of(new WechatIncomingImage(ImageSourceType.WECHAT_ATTACHMENT, "image-ref")),
+                List.of(new WechatIncomingVideo(
+                        VideoSourceType.WECHAT_ATTACHMENT,
+                        "video-ref",
+                        new byte[]{2},
+                        "video/mp4",
+                        "clip.mp4",
+                        1L,
+                        1_000,
+                        "",
+                        "",
+                        "")),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                })).orElseThrow();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<FunctionCallingMessage>> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(client).chat(messagesCaptor.capture(), anyList());
+
+        assertThat(messagesCaptor.getValue())
+                .anySatisfy(message -> {
+                    assertThat(message.role()).isEqualTo("user");
+                    assertThat(message.content())
+                            .contains("当前可用图片资源：1 张")
+                            .contains("当前可用文件资源：1 个")
+                            .contains("当前可用视频资源：1 个");
                 });
     }
 

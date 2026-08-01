@@ -46,6 +46,18 @@ public class ClawBotManagementController {
         }
     }
 
+    public ResponseEntity<?> addConnection() {
+        try {
+            ClawBotConnectionSnapshot connection = botService.addConnection();
+            return ResponseEntity.status(HttpStatus.CREATED)
+                    .cacheControl(CacheControl.noStore())
+                    .body(connection);
+        } catch (IllegalStateException exception) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of("message", exception.getMessage()));
+        }
+    }
+
     @DeleteMapping("/connections/{connectionId}")
     public ResponseEntity<Void> stopConnection(@PathVariable String connectionId) {
         return botService.stopConnection(connectionId)

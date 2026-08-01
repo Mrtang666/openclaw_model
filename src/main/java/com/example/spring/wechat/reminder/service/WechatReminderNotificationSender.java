@@ -14,6 +14,8 @@ public class WechatReminderNotificationSender implements ReminderNotificationSen
 
     @Override
     public void sendText(String connectionId, String recipientId, String text) {
-        wechatBotService.sendProactiveText(connectionId, recipientId, text);
+        if (!wechatBotService.sendProactiveText(connectionId, recipientId, text)) {
+            throw new IllegalStateException("提醒对应的微信连接当前不可用，请在 Bot 登录后重试");
+        }
     }
 }

@@ -95,6 +95,7 @@ const planDraft = {
 
 let selectedPatientId = "P001";
 let livePatients = [];
+let caregiverRefreshTimer;
 
 const routes = {
     "/patient/tasks": renderPatientTasks,
@@ -281,7 +282,6 @@ async function hydratePatientStatus(patient, kind) {
     patient.risk = status.urgentAlertCount > 0 ? "URGENT" : status.openAlertCount > 0 ? "ATTENTION" : "NORMAL";
     patient.riskLabel = status.urgentAlertCount > 0 ? "异常告警" : status.openAlertCount > 0 ? "需要关注" : "状态平稳";
     patient.lastUpdate = status.generatedAt ? new Date(status.generatedAt).toLocaleString() : "刚刚";
-    patient.summary = `近 7 天打卡 ${status.checkInCount} 次，未处理告警 ${status.openAlertCount} 个，紧急告警 ${status.urgentAlertCount} 个，待确认记忆 ${status.pendingMemoryCount} 条。`;
     const plans = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/plans`).catch(() => []);
     const activePlan = (plans || []).find((plan) => plan.status === "ACTIVE")
         || (plans || []).find((plan) => ["APPROVED", "WAITING_REVIEW", "DRAFT"].includes(plan.status));
@@ -308,6 +308,7 @@ async function hydratePatientStatus(patient, kind) {
         id: task.id,
         version: task.version ?? 0,
         statusCode: String(task.status || "").toUpperCase(),
+        taskType: String(task.taskType || "").toUpperCase(),
         title: normalizePlanText(task.title || `任务 ${task.id}`) || `任务 ${task.id}`,
         status: taskStatusLabel(task.status),
         detail: normalizePlanText(taskDetailText(task)),
@@ -321,14 +322,36 @@ async function hydratePatientStatus(patient, kind) {
         time: alert.createdAt ? new Date(alert.createdAt).toLocaleString() : "刚刚",
         detail: alert.description || alert.status || "请查看告警详情"
     }));
+    synchronizePatientTaskSummary(patient, status);
     patient.checkins = (checkins || []).map((item) => ({
         time: item.submittedAt ? new Date(item.submittedAt).toLocaleString() : item.checkinDate,
         title: item.incidentType || "每日打卡",
         detail: item.originalText || `睡眠：${item.sleepStatus || "-"}，饮水：${item.hydrationStatus || "-"}`
     }));
-    patient.taskDone = patient.tasks.filter((task) => task.statusCode === "COMPLETED").length;
-    patient.taskTotal = patient.tasks.length;
     return patient;
+}
+
+function synchronizePatientTaskSummary(patient, status) {
+    const tasks = patient.tasks || [];
+    const completed = tasks.filter((task) => task.statusCode === "COMPLETED").length;
+    const overdue = tasks.filter((task) => task.statusCode === "OVERDUE").length;
+    const pending = tasks.filter((task) => task.statusCode === "PENDING").length;
+    patient.taskDone = completed;
+    patient.taskTotal = tasks.length;
+
+    const hydrationTask = tasks.find((task) => task.taskType === "HYDRATION" || task.title.includes("喝水") || task.title.includes("饮水"));
+    const safetyTask = tasks.find((task) => task.taskType === "DAILY_CHECKIN" || task.title.includes("安全") || task.title.includes("平安"));
+    patient.water = hydrationTask ? taskStatusLabel(hydrationTask.statusCode) : "今日无饮水任务";
+    patient.safety = safetyTask ? taskStatusLabel(safetyTask.statusCode) : "今日无安全确认";
+
+    if (overdue > 0 && status.urgentAlertCount === 0) {
+        patient.risk = "ATTENTION";
+        patient.riskLabel = "任务超时";
+    }
+    const taskSummary = tasks.length
+        ? `今日任务 ${tasks.length} 项，已完成 ${completed} 项，待完成 ${pending} 项，超时 ${overdue} 项。`
+        : "今日暂无待执行任务。";
+    patient.summary = `${taskSummary} 未处理告警 ${status.openAlertCount} 个，紧急告警 ${status.urgentAlertCount} 个，待确认记忆 ${status.pendingMemoryCount} 条。`;
 }
 
 function backendUnavailableMessage(error) {
@@ -629,6 +652,16 @@ async function renderCaregiverStatus() {
     if (contactButton) {
         contactButton.addEventListener("click", () => contactDoctor(patient));
     }
+    scheduleCaregiverStatusRefresh();
+}
+
+function scheduleCaregiverStatusRefresh() {
+    clearTimeout(caregiverRefreshTimer);
+    caregiverRefreshTimer = window.setTimeout(() => {
+        if (currentRouteInfo().path === "/caregiver/status") {
+            void renderCaregiverStatus();
+        }
+    }, 30_000);
 }
 
 async function renderDoctorSwitcher() {

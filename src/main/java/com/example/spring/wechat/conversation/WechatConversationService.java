@@ -1,9 +1,8 @@
 package com.example.spring.wechat.conversation;
 
 import com.example.spring.agent.ReplyEmitter;
-import com.example.spring.agent.goal.AgentGoalEvaluationStatus;
-import com.example.spring.agent.goal.AgentGoalHandle;
 import com.example.spring.agent.goal.AgentGoalService;
+import com.example.spring.agent.goal.AgentGoalTracker;
 import com.example.spring.chat.ChatService;
 import com.example.spring.chat.ChatServiceException;
 import com.example.spring.wechat.image.generation.model.ImageGenerationRequest;
@@ -199,56 +198,6 @@ public class WechatConversationService {
                         || part.hasImage()
                         || part.hasVoice()
                         || part.hasFile()));
-    }
-
-    private Optional<AgentGoalHandle> startAgentGoal(String sessionKey, String text) {
-        if (agentGoalService == null) {
-            return Optional.empty();
-        }
-        return agentGoalService.startWechatGoal(sessionKey, text);
-    }
-
-    private void completeAgentGoal(Optional<AgentGoalHandle> handle, WechatReply reply) {
-        if (agentGoalService == null || handle.isEmpty()) {
-            return;
-        }
-        agentGoalService.complete(handle.get(), replySummary(reply));
-    }
-
-    private void failAgentGoal(Optional<AgentGoalHandle> handle, String reason) {
-        if (agentGoalService == null || handle.isEmpty()) {
-            return;
-        }
-        agentGoalService.fail(handle.get(), reason);
-    }
-
-    private void recordAgentGoalStep(
-            Optional<AgentGoalHandle> handle,
-            String toolName,
-            Map<String, String> arguments,
-            String resultSummary,
-            String status) {
-        if (agentGoalService == null || handle.isEmpty()) {
-            return;
-        }
-        agentGoalService.recordToolStep(handle.get(), toolName, arguments, resultSummary, status);
-    }
-
-    private void recordAgentGoalEvaluation(
-            Optional<AgentGoalHandle> handle,
-            AgentGoalEvaluationStatus status,
-            String reasoning) {
-        if (agentGoalService == null || handle.isEmpty()) {
-            return;
-        }
-        agentGoalService.recordEvaluation(handle.get(), "rule-based", status, reasoning);
-    }
-
-    private void recordAgentGoalReviewAction(Optional<AgentGoalHandle> handle, String reason) {
-        if (agentGoalService == null || handle.isEmpty()) {
-            return;
-        }
-        agentGoalService.recordFailureReviewAction(handle.get(), reason);
     }
 
     private String replySummary(WechatReply reply) {
@@ -903,7 +852,7 @@ public class WechatConversationService {
         }
 
         if (isFunctionCallingMode() && functionCallingAgentLoop != null) {
-            Optional<AgentGoalHandle> goalHandle = startAgentGoal(sessionKey, text);
+            AgentGoalTracker goalTracker = AgentGoalTracker.start(agentGoalService, sessionKey, text);
             try {
                 Optional<WechatReply> loopReply = functionCallingAgentLoop.run(new FunctionCallingAgentRequest(
                         sessionKey,
@@ -915,64 +864,8 @@ public class WechatConversationService {
                         List.of(),
                         (userText, prompt) -> memoryFor(sessionKey).recordPendingImagePrompt(userText, prompt),
                         (userText, prompt) -> memoryFor(sessionKey).recordImage(userText, prompt),
-                        /*
                         (toolName, arguments, resultSummary, status) -> {
-                            recordAgentGoalStep(goalHandle, toolName, arguments, resultSummary, status);
-                            if (!DEFAULT_SESSION_KEY.equals(sessionKey)) {
-                                wechatMemoryService.recordToolExecution(
-                                        sessionKey,
-                                        toolName,
-                                        arguments,
-                                        resultSummary,
-                                        status,
-                                        java.time.Instant.now());
-                            }
-                        }));
-                if (loopReply.isPresent() && hasReplyContent(loopReply.get())) {
-                    rememberPlannedReply(sessionKey, text, loopReply.get());
-                    completeAgentGoal(goalHandle, loopReply.get());
-                    recordAgentGoalEvaluation(
-                            goalHandle,
-                            AgentGoalEvaluationStatus.PASSED,
-                            "reply contains user-visible content");
-                    return loopReply;
-                }
-                failAgentGoal(goalHandle, "Function Calling Agent Loop 未返回可用回复");
-                recordAgentGoalEvaluation(
-                        goalHandle,
-                        AgentGoalEvaluationStatus.FAILED,
-                        "Function Calling Agent Loop returned no user-visible reply");
-                recordAgentGoalReviewAction(
-                        goalHandle,
-                        "Function Calling Agent Loop returned no user-visible reply");
-            } catch (RuntimeException exception) {
-                failAgentGoal(goalHandle, "Function Calling Agent Loop 执行失败：" + rootMessage(exception));
-                recordAgentGoalEvaluation(
-                        goalHandle,
-                        AgentGoalEvaluationStatus.FAILED,
-                        "Function Calling Agent Loop execution failed: " + rootMessage(exception));
-                recordAgentGoalReviewAction(
-                        goalHandle,
-                        "Function Calling Agent Loop execution failed: " + rootMessage(exception));
-                throw exception;
-                                    status,
-                                    java.time.Instant.now());
-                            }
-                        },
-                        conversationMode));
-                if (loopReply.isPresent() && hasReplyContent(loopReply.get())) {
-                    rememberPlannedReply(sessionKey, text, loopReply.get());
-                    return loopReply;
-                }
-            } catch (ChatServiceException exception) {
-                log.warn("Function Calling 不可用，降级到后续对话流程，userId={}, error={}",
-                        sessionKey, rootMessage(exception));
-            }
-        }
-
-                        */
-                        (toolName, arguments, resultSummary, status) -> {
-                            recordAgentGoalStep(goalHandle, toolName, arguments, resultSummary, status);
+                            goalTracker.recordToolStep(toolName, arguments, resultSummary, status);
                             if (!DEFAULT_SESSION_KEY.equals(sessionKey)) {
                                 wechatMemoryService.recordToolExecution(
                                         sessionKey,
@@ -986,33 +879,20 @@ public class WechatConversationService {
                         conversationMode));
                 if (loopReply.isPresent() && hasReplyContent(loopReply.get())) {
                     rememberPlannedReply(sessionKey, text, loopReply.get());
-                    completeAgentGoal(goalHandle, loopReply.get());
-                    recordAgentGoalEvaluation(
-                            goalHandle,
-                            AgentGoalEvaluationStatus.PASSED,
-                            "reply contains user-visible content");
+                    goalTracker.succeed(replySummary(loopReply.get()));
                     return loopReply;
                 }
-                failAgentGoal(goalHandle, "Function Calling Agent Loop returned no user-visible reply");
-                recordAgentGoalEvaluation(
-                        goalHandle,
-                        AgentGoalEvaluationStatus.FAILED,
-                        "Function Calling Agent Loop returned no user-visible reply");
-                recordAgentGoalReviewAction(
-                        goalHandle,
+                goalTracker.fail(
+                        "Function Calling Agent Loop 未返回可用回复",
                         "Function Calling Agent Loop returned no user-visible reply");
             } catch (ChatServiceException exception) {
+                String reason = "Function Calling Agent Loop execution failed: " + rootMessage(exception);
+                goalTracker.fail("Function Calling Agent Loop 执行失败：" + rootMessage(exception), reason);
                 log.warn("Function Calling unavailable; falling back to normal conversation, userId={}, error={}",
                         sessionKey, rootMessage(exception));
             } catch (RuntimeException exception) {
-                failAgentGoal(goalHandle, "Function Calling Agent Loop execution failed: " + rootMessage(exception));
-                recordAgentGoalEvaluation(
-                        goalHandle,
-                        AgentGoalEvaluationStatus.FAILED,
-                        "Function Calling Agent Loop execution failed: " + rootMessage(exception));
-                recordAgentGoalReviewAction(
-                        goalHandle,
-                        "Function Calling Agent Loop execution failed: " + rootMessage(exception));
+                String reason = "Function Calling Agent Loop execution failed: " + rootMessage(exception);
+                goalTracker.fail("Function Calling Agent Loop 执行失败：" + rootMessage(exception), reason);
                 throw exception;
             }
         }

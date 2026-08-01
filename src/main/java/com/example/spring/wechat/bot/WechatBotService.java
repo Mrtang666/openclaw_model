@@ -266,25 +266,20 @@ public class WechatBotService {
      * Sends a system-initiated text message through the same logged-in connection that received the user message.
      * Reminder tasks persist this connection identifier so multi-client sessions do not cross-send notifications.
      */
-    public boolean sendProactiveText(String connectionId, String userId, String text) {
-        if (connectionId == null || connectionId.isBlank()
-                || userId == null || userId.isBlank()
-                || text == null || text.isBlank()) {
-            return false;
+    public void sendProactiveTextOrThrow(String connectionId, String userId, String text) {
+        if (connectionId == null || connectionId.isBlank() || userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("主动消息缺少微信连接或接收用户");
         }
         ClientRuntime runtime = runtimes.get(connectionId.strip());
         if (runtime == null || runtime.stopRequested || runtime.state != WechatBotState.RUNNING) {
-            return false;
+            throw new IllegalStateException("提醒对应的微信连接当前不可用，请在 Bot 登录后重试");
         }
         try {
             sendReplyChunks(runtime.client, userId.strip(), text);
             runtime.lastActivityAt = Instant.now();
-            return true;
         } catch (RuntimeException exception) {
             runtime.lastError = rootMessage(exception);
-            log.warn("微信主动消息发送失败，connectionId={}, userId={}, error={}",
-                    connectionId, userId, rootMessage(exception));
-            return false;
+            throw exception;
         }
     }
 
@@ -340,6 +335,30 @@ public class WechatBotService {
                 dispatcher == null ? 0 : dispatcher.activeTasks(),
                 dispatcher == null ? 0 : dispatcher.queuedTasks(),
                 connections);
+    }
+
+    public boolean sendProactiveText(String connectionId, String userId, String text) {
+        if (connectionId == null || connectionId.isBlank()
+                || userId == null || userId.isBlank()
+                || text == null || text.isBlank()) {
+            return false;
+        }
+        ClientRuntime runtime = runtimes.get(connectionId.strip());
+        if (runtime == null || runtime.state != WechatBotState.RUNNING || runtime.stopRequested) {
+            return false;
+        }
+        try {
+            for (String chunk : splitForWechat(text)) {
+                runtime.client.sendText(userId.strip(), chunk);
+            }
+            runtime.lastActivityAt = Instant.now();
+            return true;
+        } catch (IOException | RuntimeException exception) {
+            runtime.lastError = "主动消息发送失败：" + rootMessage(exception);
+            log.warn("微信主动消息发送失败，connectionId={}, userId={}, error={}",
+                    connectionId, userId, rootMessage(exception));
+            return false;
+        }
     }
 
     public boolean sendProactiveFile(String connectionId, String userId, byte[] bytes,

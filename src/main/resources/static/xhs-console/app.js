@@ -295,14 +295,45 @@ async function renderOpinions() {
     <label>最低风险分<input name="minimumRiskScore" type="number" min="0" max="100" value="0"></label>
     <button class="button primary" type="submit">查询</button></form></div></section><section id="opinion-results" class="panel"><div class="loading-state">正在加载数据...</div></section>`;
   const form = document.querySelector("#opinion-filter");
+  const dateControls = document.createElement("div");
+  dateControls.className = "full option-row opinion-date-controls";
+  dateControls.innerHTML = `<label>发布时间起始<input name="publishedFrom" type="datetime-local"></label><label>发布时间结束<input name="publishedTo" type="datetime-local"></label><label>排序字段<select name="sortBy"><option value="publishedAt">发布时间</option><option value="riskScore">风险分</option><option value="analyzedAt">分析时间</option><option value="likedCount">点赞数</option><option value="commentCount">评论数</option></select></label><label>排序方向<select name="sortDirection"><option value="DESC">降序</option><option value="ASC">升序</option></select></label><button class="button secondary" type="button" data-opinion-range="today">今日</button><button class="button secondary" type="button" data-opinion-range="7d">近7天</button><button class="button secondary" type="button" data-opinion-reset="true">重置日期</button>`;
+  form.appendChild(dateControls);
+  dateControls.querySelectorAll("[data-opinion-range]").forEach(button => button.addEventListener("click", () => setOpinionRange(form, button.dataset.opinionRange)));
+  dateControls.querySelector("[data-opinion-reset]").addEventListener("click", () => {
+    form.elements.publishedFrom.value = "";
+    form.elements.publishedTo.value = "";
+    form.elements.sortBy.value = "publishedAt";
+    form.elements.sortDirection.value = "DESC";
+    loadOpinions(new FormData(form));
+  });
   form.addEventListener("submit", event => { event.preventDefault(); loadOpinions(new FormData(form)); });
   await loadOpinions(new FormData(form));
+}
+
+function setOpinionRange(form, range) {
+  const end = new Date();
+  const start = new Date(end);
+  if (range === "today") start.setHours(0, 0, 0, 0);
+  else start.setDate(start.getDate() - 6);
+  form.elements.publishedFrom.value = toDateTimeLocal(start);
+  form.elements.publishedTo.value = toDateTimeLocal(end);
+  loadOpinions(new FormData(form));
+}
+
+function toDateTimeLocal(value) {
+  const pad = number => String(number).padStart(2, "0");
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}T${pad(value.getHours())}:${pad(value.getMinutes())}`;
+}
+
+function isoDateTime(value) {
+  return value ? new Date(value).toISOString() : "";
 }
 
 async function loadOpinions(data) {
   const results = document.querySelector("#opinion-results");
   try {
-    const rows = await api(`/opinions${query({ projectKey: state.projectKey, keyword: data.get("keyword"), sentiment: data.get("sentiment"), minimumRiskScore: data.get("minimumRiskScore"), limit: 100 })}`);
+    const rows = await api(`/opinions${query({ projectKey: state.projectKey, keyword: data.get("keyword"), sentiment: data.get("sentiment"), minimumRiskScore: data.get("minimumRiskScore"), publishedFrom: isoDateTime(data.get("publishedFrom")), publishedTo: isoDateTime(data.get("publishedTo")), sortBy: data.get("sortBy") || "publishedAt", sortDirection: data.get("sortDirection") || "DESC", limit: 100 })}`);
     results.innerHTML = `<div class="panel-header"><h2>分析结果</h2><span class="muted">${rows.length} 条</span></div><div class="table-wrap">${rows.length ? `<table><thead><tr><th>风险</th><th>情感</th><th>帖子标题</th><th>作者</th><th>互动</th><th>发布时间</th><th>原帖</th></tr></thead><tbody>${rows.map(row => `<tr data-post="${row.postId}"><td><span class="tag ${riskClass(row.riskLevel)}">${row.riskScore} · ${riskLabel(row.riskLevel)}</span></td><td><span class="tag ${String(row.sentiment).toLowerCase()}">${sentimentLabel(row.sentiment)}</span></td><td class="title-cell"><button class="button text" data-detail="${row.postId}">${escapeHtml(row.title || "无标题")}</button></td><td>${escapeHtml(row.authorDisplayName)}</td><td>${row.likedCount} 赞 · ${row.commentCount} 评</td><td>${formatDate(row.publishedAt)}</td><td><a class="button text" href="${postOpenUrl(row.postId)}" target="_blank" rel="noopener noreferrer">打开原帖</a></td></tr>`).join("")}</tbody></table>` : empty("没有符合条件的舆情数据")}</div>`;
     results.querySelectorAll("[data-detail]").forEach(button => button.addEventListener("click", () => openPost(button.dataset.detail)));
   } catch (error) { results.innerHTML = empty(error.message); }
@@ -444,7 +475,12 @@ async function renderScheduledReports() {
       <div class="panel-header"><h2>运行历史</h2><span class="muted">运行中的任务会自动刷新</span></div>
       <div class="table-wrap">${runs.length ? scheduledRunTable(runs) : empty("暂无报告运行记录")}</div>
     </section>`;
-  document.querySelector("#scheduled-report-form").addEventListener("submit", createScheduledReport);
+  const scheduledForm = document.querySelector("#scheduled-report-form");
+  const negativeSettings = document.createElement("div");
+  negativeSettings.className = "full option-row negative-email-settings";
+  negativeSettings.innerHTML = `<label><input name="negativeEmailEnabled" type="checkbox"> 发现负面帖子后立即发送邮件</label><label>最低风险分<input name="negativeEmailMinimumRiskScore" type="number" min="0" max="100" value="60"></label><label><input name="negativeEmailHighRiskOnly" type="checkbox"> 仅高风险帖子</label><label>重复发送冷却（分钟）<input name="negativeEmailCooldownMinutes" type="number" min="1" max="1440" value="30"></label><span class="muted full">使用上方邮箱接收人；邮件包含帖子分析摘要、风险证据和 Word 附件。</span>`;
+  scheduledForm.querySelector(".form-actions").before(negativeSettings);
+  scheduledForm.addEventListener("submit", createScheduledReport);
   content.querySelectorAll("[data-report-run]").forEach(button => button.addEventListener("click", () => runScheduledReport(button)));
   content.querySelectorAll("[data-report-toggle]").forEach(button => button.addEventListener("click", () => toggleScheduledReport(button, schedules)));
   content.querySelectorAll("[data-report-delete]").forEach(button => button.addEventListener("click", () => deleteScheduledReport(button)));
@@ -494,6 +530,10 @@ async function createScheduledReport(event) {
       collectionLimit: Number(data.get("collectionLimit")), topPostLimit: Number(data.get("topPostLimit")),
       emailRecipients: splitEmails(data.get("emails")), wechatConnectionId: data.get("wechatConnectionId"),
       wechatRecipientId: data.get("wechatRecipientId"), enabled: true,
+      negativeEmailEnabled: Boolean(data.get("negativeEmailEnabled")),
+      negativeEmailMinimumRiskScore: Number(data.get("negativeEmailMinimumRiskScore")),
+      negativeEmailHighRiskOnly: Boolean(data.get("negativeEmailHighRiskOnly")),
+      negativeEmailCooldownMinutes: Number(data.get("negativeEmailCooldownMinutes")),
     }) });
     showNotice("定时报告计划已创建", true);
     await renderScheduledReports();
@@ -535,7 +575,11 @@ function schedulePayload(item, enabled) {
     dayOfWeek: item.dayOfWeek, dayOfMonth: item.dayOfMonth, timezone: item.timezone, formats: item.formats,
     collectBeforeReport: item.collectBeforeReport, collectionLimit: item.collectionLimit,
     topPostLimit: item.topPostLimit, emailRecipients: item.emailRecipients,
-    wechatConnectionId: item.wechatConnectionId, wechatRecipientId: item.wechatRecipientId, enabled };
+    wechatConnectionId: item.wechatConnectionId, wechatRecipientId: item.wechatRecipientId, enabled,
+    negativeEmailEnabled: Boolean(item.negativeEmailEnabled),
+    negativeEmailMinimumRiskScore: item.negativeEmailMinimumRiskScore || 60,
+    negativeEmailHighRiskOnly: Boolean(item.negativeEmailHighRiskOnly),
+    negativeEmailCooldownMinutes: item.negativeEmailCooldownMinutes || 30 };
 }
 
 function scheduleFrequency(item) {

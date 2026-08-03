@@ -9,6 +9,7 @@ generated-images/
 data/
 .mysql-data/
 .worktrees/
+.superpowers/
 xhs-sidecar/runtime/
 xhs-sidecar/.venv/
 xhs-sidecar/__pycache__/

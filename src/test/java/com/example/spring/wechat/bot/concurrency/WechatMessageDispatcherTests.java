@@ -6,10 +6,13 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class WechatMessageDispatcherTests {
 
@@ -58,6 +61,36 @@ class WechatMessageDispatcherTests {
             assertThat(finished.await(2, TimeUnit.SECONDS)).isTrue();
             assertThat(order).containsExactly(1, 2, 3);
             assertThat(maxConcurrent).hasValue(1);
+        }
+    }
+
+    @Test
+    void closeDropsQueuedWorkWithoutGoingNegativeOrRescheduling() throws Exception {
+        WechatConcurrencyProperties properties = properties(2);
+        AtomicBoolean secondRan = new AtomicBoolean();
+        try (WechatMessageDispatcher dispatcher = new WechatMessageDispatcher(properties)) {
+            CountDownLatch firstStarted = new CountDownLatch(1);
+            CountDownLatch releaseFirst = new CountDownLatch(1);
+
+            dispatcher.submit(new ConversationKey("connection-a", "user-a"), () -> {
+                firstStarted.countDown();
+                await(releaseFirst);
+            });
+            dispatcher.submit(new ConversationKey("connection-a", "user-a"), () -> secondRan.set(true));
+
+            assertThat(firstStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            dispatcher.close();
+            dispatcher.close();
+            releaseFirst.countDown();
+            Thread.sleep(200);
+
+            assertThat(secondRan).isFalse();
+            assertThat(dispatcher.queuedTasks()).isZero();
+            assertThat(dispatcher.mailboxCount()).isZero();
+            assertThat(dispatcher.activeTasks()).isZero();
+            assertThatThrownBy(() -> dispatcher.submit(new ConversationKey("connection-a", "user-a"), () -> {
+            }))
+                    .isInstanceOf(RejectedExecutionException.class);
         }
     }
 

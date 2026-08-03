@@ -1,0 +1,11 @@
+{
+  "tools": [
+    "reminder_cancel",
+    "reminder_complete",
+    "reminder_create",
+    "reminder_create_after",
+    "reminder_list",
+    "reminder_snooze",
+    "reminder_update"
+  ]
+}

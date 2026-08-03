@@ -15,9 +15,11 @@ public record AgentRunDiagnosticTraceView(
         String finalReplySummary,
         Instant startedAt,
         Instant completedAt,
+        List<AgentRunDiagnosticPhaseView> phases,
         List<AgentRunDiagnosticStepView> steps) {
 
     public AgentRunDiagnosticTraceView {
+        phases = phases == null ? List.of() : List.copyOf(phases);
         steps = steps == null ? List.of() : List.copyOf(steps);
     }
 }

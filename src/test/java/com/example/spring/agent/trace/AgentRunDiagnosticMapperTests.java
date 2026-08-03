@@ -22,10 +22,15 @@ class AgentRunDiagnosticMapperTests {
         assertThat(diagnostic.finalReplySummary()).contains("password=[REDACTED]");
         assertThat(diagnostic.steps()).hasSize(1);
         AgentRunDiagnosticStepView step = diagnostic.steps().get(0);
+        assertThat(step.stepPhase()).isEqualTo(AgentRunStepPhase.TOOL);
         assertThat(step.inputSummary()).contains("api_key=[REDACTED]");
         assertThat(step.outputSummary()).contains("b***@example.com");
         assertThat(step.metadataJson()).contains("\"secret\":\"[REDACTED]\"");
         assertThat(step.metadataJson()).doesNotContain("top-secret");
+        assertThat(diagnostic.phases()).hasSize(1);
+        assertThat(diagnostic.phases().get(0).phase()).isEqualTo(AgentRunStepPhase.TOOL);
+        assertThat(diagnostic.phases().get(0).startStepIndex()).isEqualTo(1);
+        assertThat(diagnostic.phases().get(0).endStepIndex()).isEqualTo(1);
     }
 
     @Test

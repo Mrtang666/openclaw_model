@@ -8,13 +8,19 @@ import java.util.List;
 public class AgentRunDiagnosticMapper {
 
     private final AgentTraceRedactionPolicy redactionPolicy;
+    private final AgentRunPhaseClassifier phaseClassifier;
 
     public AgentRunDiagnosticMapper() {
-        this(new AgentTraceRedactionPolicy());
+        this(new AgentTraceRedactionPolicy(), new AgentRunPhaseClassifier());
     }
 
     AgentRunDiagnosticMapper(AgentTraceRedactionPolicy redactionPolicy) {
+        this(redactionPolicy, new AgentRunPhaseClassifier());
+    }
+
+    AgentRunDiagnosticMapper(AgentTraceRedactionPolicy redactionPolicy, AgentRunPhaseClassifier phaseClassifier) {
         this.redactionPolicy = redactionPolicy == null ? new AgentTraceRedactionPolicy() : redactionPolicy;
+        this.phaseClassifier = phaseClassifier == null ? new AgentRunPhaseClassifier() : phaseClassifier;
     }
 
     public AgentRunDiagnosticTraceView toDiagnostic(AgentRunTraceView trace) {
@@ -36,6 +42,7 @@ public class AgentRunDiagnosticMapper {
                 redact(trace.finalReplySummary()),
                 trace.startedAt(),
                 trace.completedAt(),
+                phaseClassifier.phases(trace.steps()),
                 steps);
     }
 
@@ -62,6 +69,7 @@ public class AgentRunDiagnosticMapper {
                 step.stepId(),
                 step.stepIndex(),
                 step.stepType(),
+                phaseClassifier.classify(step.stepType()),
                 step.roundNumber(),
                 step.toolName(),
                 step.status(),

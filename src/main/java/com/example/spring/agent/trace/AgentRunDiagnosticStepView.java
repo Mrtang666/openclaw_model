@@ -6,6 +6,7 @@ public record AgentRunDiagnosticStepView(
         long stepId,
         int stepIndex,
         AgentRunStepType stepType,
+        AgentRunStepPhase stepPhase,
         Integer roundNumber,
         String toolName,
         AgentRunStepStatus status,

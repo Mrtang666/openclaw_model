@@ -200,6 +200,14 @@ class WechatMemoryMaintenanceSchedulerTests {
                 argThat(value -> value != null && value > 0),
                 argThat((WechatConversationMemory memory) -> memory.snapshot().size() == 2),
                 eq("用户正在准备杭州旅行，并希望获得简洁建议。"));
+        verify(memoryGraphMaintenanceService).ingestLongTermMemories(
+                eq("graph-user"),
+                argThat(value -> value != null && value > 0),
+                argThat(transcript -> transcript != null
+                        && transcript.contains("travel question 1")
+                        && transcript.contains("travel answer 1")
+                        && transcript.contains("travel question 2")
+                        && transcript.contains("travel answer 2")));
     }
 
     @Test

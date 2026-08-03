@@ -681,13 +681,15 @@ public class WechatConversationService {
         boolean planning = containsAny(text,
                 "\u5236\u5b9a\u8ba1\u5212", "\u65e5\u5e38\u8ba1\u5212", "\u7167\u62a4\u8ba1\u5212",
                 "\u5236\u5b9a\u65b9\u6848", "\u7167\u62a4\u65b9\u6848", "\u7ed9\u60a3\u8005\u5b89\u6392",
-                "\u4e3a\u60a3\u8005\u5236\u5b9a", "\u7ed9\u60a3\u8005\u5236\u5b9a");
+                "\u4e3a\u60a3\u8005\u5236\u5b9a", "\u7ed9\u60a3\u8005\u5236\u5b9a", "\u65b0\u8ba1\u5212", "\u65b0\u65b9\u6848",
+                "\u5b89\u6392\u8ba1\u5212", "\u5b89\u6392\u65b9\u6848");
         if (planning) {
             return true;
         }
-        return text.contains("\u5236\u5b9a")
+        return (text.contains("\u5236\u5b9a") || text.contains("\u5b89\u6392"))
                 && containsAny(text, "\u8ba1\u5212", "\u65b9\u6848", "\u4efb\u52a1")
-                && containsAny(text, "\u60a3\u8005", "\u75c5\u4eba", "\u559d\u6c34", "\u996e\u6c34", "\u670d\u836f", "\u5b89\u5168", "\u6253\u5361");
+                && (containsAny(text, "\u60a3\u8005", "\u75c5\u4eba", "\u559d\u6c34", "\u996e\u6c34", "\u670d\u836f", "\u5b89\u5168", "\u6253\u5361")
+                || text.contains("\u4e00\u4e2a") || text.contains("\u65b0\u7684") || text.contains("\u65b0"));
     }
 
     private String directCareAction(String text) {

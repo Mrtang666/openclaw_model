@@ -104,7 +104,8 @@ const routes = {
     "/caregiver/status": renderCaregiverStatus,
     "/doctor/patients": renderDoctorSwitcher,
     "/doctor/detail": renderDoctorDetail,
-    "/doctor/alerts-review": renderAlertsAndReview
+    "/doctor/alerts-review": renderAlertsAndReview,
+    "/doctor/consultation": renderDoctorConsultation
 };
 
 const routeRoles = {
@@ -114,7 +115,8 @@ const routeRoles = {
     "/bind/doctor": ["DOCTOR", "NURSE", "THERAPIST", "DIETITIAN"],
     "/doctor/patients": ["DOCTOR", "NURSE", "THERAPIST", "DIETITIAN"],
     "/doctor/detail": ["DOCTOR", "NURSE", "THERAPIST", "DIETITIAN"],
-    "/doctor/alerts-review": ["DOCTOR", "NURSE", "THERAPIST", "DIETITIAN"]
+    "/doctor/alerts-review": ["DOCTOR", "NURSE", "THERAPIST", "DIETITIAN"],
+    "/doctor/consultation": ["DOCTOR", "NURSE", "THERAPIST", "DIETITIAN"]
 };
 
 function root() {
@@ -870,26 +872,30 @@ async function renderAlertsAndReview() {
     let urgentPatients = [];
     let draftList = [];
     let draftDetail = null;
-    let notice = "";
+    let consultationList = [];
+    const notices = [];
     try {
-        await loadPatients("clinical");
-        await Promise.all(livePatients.map((patient) => hydratePatientStatus(patient, "clinical").catch(() => patient)));
-        urgentPatients = livePatients.filter((patient) => patient.alerts.length > 0);
         draftList = await careApi(`${apiPrefix("clinical")}/plan-drafts`);
         const routeDraftId = routeParams().get("draftId");
         const selectedId = routeDraftId || draftList.find((draft) => draft.status === "待审核")?.id || draftList[0]?.id || "";
         if (selectedId) {
             draftDetail = await careApi(`${apiPrefix("clinical")}/plan-drafts/${selectedId}`);
+            consultationList = await careApi(`${apiPrefix("clinical")}/plan-drafts/${selectedId}/consultations`).catch(() => []);
         }
     } catch (error) {
-        notice = backendUnavailableMessage(error);
-        urgentPatients = [];
-        draftList = [];
+        notices.push(`<div class="message warn">方案草稿暂时无法读取：${escapeHtml(error.message)}</div>`);
+    }
+    try {
+        await loadPatients("clinical");
+        await Promise.all(livePatients.map((patient) => hydratePatientStatus(patient, "clinical").catch(() => patient)));
+        urgentPatients = livePatients.filter((patient) => patient.alerts.length > 0);
+    } catch (error) {
+        notices.push(`<div class="message info">患者状态和告警暂时无法刷新：${escapeHtml(error.message)}</div>`);
     }
     const activeDraftId = draftDetail?.id || draftList.find((draft) => draft.status === "待审核")?.id || draftList[0]?.id || "";
     root().innerHTML = `
         ${header("告警与审核", "告警中心和方案审核", "", `<button class="button" type="button" data-alert-resolve-attention>批量解决关注告警</button><button class="button primary" type="button" data-draft-confirm-header>确认当前方案</button>`)}
-        ${notice}
+        ${notices.join("")}
         <section class="grid two">
             <div class="card">
                 <h2 class="card-title">告警中心</h2>
@@ -926,7 +932,7 @@ async function renderAlertsAndReview() {
                         </button>
                     `).join("") : `<div class="empty-state">当前没有待审核方案。</div>`}
                 </div>
-                ${draftDetail ? draftDetailPanel(draftDetail) : ""}
+                ${draftDetail ? draftDetailPanel(draftDetail, consultationList) : ""}
             </div>
         </section>
     `;
@@ -934,7 +940,7 @@ async function renderAlertsAndReview() {
     bindAlertActions(urgentPatients);
 }
 
-function draftDetailPanel(draft) {
+function draftDetailPanel(draft, consultations = []) {
     return `
         <div class="draft-detail">
             <div class="list-item">
@@ -963,10 +969,33 @@ function draftDetailPanel(draft) {
                 <textarea id="draft-final-plan" rows="10">${escapeHtml(draft.editedPlan || draft.refinedPlan || "")}</textarea>
             </div>
             <div class="toolbar" style="margin-top: 14px;">
+                <button class="button" type="button" data-draft-consult ${draft.editable ? "" : "disabled"}>联系其他医生</button>
                 <button class="button" type="button" data-draft-save ${draft.editable ? "" : "disabled"}>保存修改</button>
                 <button class="button primary" type="button" data-draft-confirm>${draft.editable ? "确认并发送给患者" : "同步任务详情"}</button>
             </div>
+            ${consultationAdvicePanel(consultations)}
             ${draft.confirmedAt ? `<div class="message success" style="margin-top: 12px;">已发送给患者：${new Date(draft.confirmedAt).toLocaleString()}</div>` : ""}
+        </div>
+    `;
+}
+
+function consultationAdvicePanel(consultations) {
+    if (!consultations.length) return "";
+    return `
+        <div class="field" style="margin-top: 16px;">
+            <label>其他医生建议</label>
+            <div class="list">
+                ${consultations.map((item) => `
+                    <div class="list-item">
+                        <div class="list-row">
+                            <div class="item-title">${escapeHtml(item.consultantDisplayName || "医生")}</div>
+                            <span class="badge ${item.status === "SUBMITTED" ? "green" : "amber"}">${item.status === "SUBMITTED" ? "已建议" : "待回复"}</span>
+                        </div>
+                        <div class="item-meta">${item.submittedAt ? new Date(item.submittedAt).toLocaleString() : "已发送会诊请求"}</div>
+                        ${item.advice ? `<div class="message info" style="margin-top: 8px;">${escapeHtml(item.advice)}</div>` : ""}
+                    </div>
+                `).join("")}
+            </div>
         </div>
     `;
 }
@@ -983,6 +1012,10 @@ function bindDraftActions(draft) {
         });
     }
     if (!draft) return;
+    const consultButton = document.querySelector("[data-draft-consult]");
+    if (consultButton) {
+        consultButton.addEventListener("click", () => openConsultationModal(draft));
+    }
     const saveButton = document.querySelector("[data-draft-save]");
     const confirmButton = document.querySelector("[data-draft-confirm]");
     if (saveButton) {
@@ -1064,6 +1097,132 @@ function bindAlertActions(patients) {
         } catch (error) {
             window.alert(error.message);
             resolveAttentionButton.disabled = false;
+        }
+    });
+}
+
+async function openConsultationModal(draft) {
+    let doctors;
+    try {
+        doctors = await careApi(`${apiPrefix("clinical")}/plan-drafts/${draft.id}/consultation-candidates`);
+    } catch (error) {
+        window.alert(error.message);
+        return;
+    }
+    const overlay = document.createElement("div");
+    overlay.className = "modal-backdrop";
+    overlay.innerHTML = `
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="consultation-title">
+            <div class="modal-header">
+                <div>
+                    <div class="eyebrow">方案会诊</div>
+                    <h2 id="consultation-title">联系其他医生</h2>
+                </div>
+                <button class="button icon-button" type="button" data-modal-close aria-label="关闭">×</button>
+            </div>
+            <div class="message info">选择后，其他医生只能查看本次方案并提交建议，不能修改方案或发送给患者。</div>
+            <div class="field">
+                <label for="consultation-doctors">会诊医生</label>
+                <select id="consultation-doctors" multiple size="${Math.max(2, Math.min(5, doctors.length || 2))}">
+                    ${(doctors || []).map((doctor) => `<option value="${doctor.id}">${escapeHtml(doctor.displayName)} · ${escapeHtml(doctor.userCode)}</option>`).join("") || "<option disabled>暂无其他已绑定医生</option>"}
+                </select>
+            </div>
+            <div class="field">
+                <label for="consultation-note">希望重点咨询的问题</label>
+                <textarea id="consultation-note" rows="4" placeholder="例如：请重点评估提醒频率和风险提示是否合适。"></textarea>
+            </div>
+            <div class="toolbar modal-actions">
+                <button class="button" type="button" data-modal-close>取消</button>
+                <button class="button primary" type="button" data-modal-submit ${doctors?.length ? "" : "disabled"}>发送会诊</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelectorAll("[data-modal-close]").forEach((button) => button.addEventListener("click", close));
+    overlay.addEventListener("click", (event) => {
+        if (event.target === overlay) close();
+    });
+    overlay.querySelector("[data-modal-submit]")?.addEventListener("click", async () => {
+        const selected = Array.from(overlay.querySelector("#consultation-doctors").selectedOptions)
+            .map((option) => Number(option.value)).filter((id) => Number.isFinite(id));
+        if (!selected.length) {
+            window.alert("请至少选择一名会诊医生。");
+            return;
+        }
+        const submit = overlay.querySelector("[data-modal-submit]");
+        submit.disabled = true;
+        try {
+            const result = await careApi(`${apiPrefix("clinical")}/plan-drafts/${draft.id}/consultations`, {
+                method: "POST",
+                body: JSON.stringify({
+                    doctorUserIds: selected,
+                    note: overlay.querySelector("#consultation-note").value.trim()
+                })
+            });
+            close();
+            window.alert(`已向 ${result.createdCount} 名医生发起会诊，及时送达 ${result.deliveredCount} 名，排队 ${result.queuedCount} 名。`);
+            await renderAlertsAndReview();
+        } catch (error) {
+            submit.disabled = false;
+            window.alert(error.message);
+        }
+    });
+}
+
+async function renderDoctorConsultation() {
+    const consultationId = routeParams().get("consultationId");
+    let detail;
+    let notice = "";
+    try {
+        if (!consultationId) throw new Error("缺少会诊请求编号");
+        detail = await careApi(`${apiPrefix("clinical")}/consultations/${encodeURIComponent(consultationId)}`);
+    } catch (error) {
+        notice = `<div class="message warn">${escapeHtml(error.message)}</div>`;
+    }
+    root().innerHTML = `
+        ${header("医生会诊", detail ? `${escapeHtml(detail.patientName)} · 方案会诊` : "方案会诊", "仅查看方案并提交建议，不能修改或发送患者任务。", `<a class="button" href="#/doctor/alerts-review">返回方案审核</a>`)}
+        ${notice}
+        ${detail ? `
+            <section class="grid two">
+                <div class="card">
+                    <h2 class="card-title">本次方案</h2>
+                    <div class="list">
+                        <div class="list-item"><div class="item-title">患者</div><div class="item-meta">${escapeHtml(detail.patientName)} · ${escapeHtml(detail.patientCode)}</div></div>
+                        <div class="list-item"><div class="item-title">发起医生</div><div class="item-meta">${escapeHtml(detail.initiatorDisplayName)}</div></div>
+                        <div class="list-item"><div class="item-title">方案标题</div><div class="item-meta">${escapeHtml(detail.title)}</div></div>
+                    </div>
+                    <div class="field" style="margin-top: 14px;"><label>医生重点问题</label><div class="message info">${escapeHtml(detail.note || detail.doctorInput || "请结合方案内容提出专业建议")}</div></div>
+                    <div class="field"><label>发送内容（只读）</label><div class="plan-textbox">${escapeHtml(detail.planText)}</div></div>
+                </div>
+                <div class="card">
+                    <h2 class="card-title">提交会诊建议</h2>
+                    ${detail.advice ? `<div class="message success">已提交建议：${escapeHtml(detail.advice)}</div>` : ""}
+                    <div class="field"><label for="consultation-advice">专业建议</label><textarea id="consultation-advice" rows="12" ${detail.editable ? "" : "disabled"} placeholder="填写对方案的风险、频率、执行方式等建议"></textarea></div>
+                    <button class="button primary" type="button" data-consultation-submit ${detail.editable ? "" : "disabled"}>提交建议</button>
+                </div>
+            </section>
+        ` : ""}
+    `;
+    const submit = document.querySelector("[data-consultation-submit]");
+    if (!submit || !detail) return;
+    submit.addEventListener("click", async () => {
+        const advice = document.querySelector("#consultation-advice").value.trim();
+        if (!advice) {
+            window.alert("请填写会诊建议。");
+            return;
+        }
+        submit.disabled = true;
+        try {
+            await careApi(`${apiPrefix("clinical")}/consultations/${encodeURIComponent(detail.id)}/advice`, {
+                method: "POST",
+                body: JSON.stringify({ advice })
+            });
+            window.alert("建议已提交，已返还给发起医生。");
+            await renderDoctorConsultation();
+        } catch (error) {
+            submit.disabled = false;
+            window.alert(error.message);
         }
     });
 }

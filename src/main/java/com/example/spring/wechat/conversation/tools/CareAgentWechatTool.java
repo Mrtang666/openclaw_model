@@ -416,7 +416,7 @@ public class CareAgentWechatTool implements WechatTool {
         if (!request.argument("plan_text").isBlank()) {
             return true;
         }
-        boolean explicitDraft = containsAny(text, "方案", "计划", "提醒", "定时", "制定", "重新制定", "调整", "发布");
+        boolean explicitDraft = containsAny(text, "方案", "计划", "提醒", "定时", "制定", "重新制定", "调整", "发布", "安排");
         if (explicitDraft) {
             return true;
         }

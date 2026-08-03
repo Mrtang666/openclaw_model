@@ -16,9 +16,10 @@
 - 每日、每周和一次性任务生成；
 - 任务完成、延后、超时及家属升级提醒；
 - 患者状态摘要；
-- 敏感访问审计。
+- 敏感访问审计；
+- 微信内会话链接和 `frontend/medical-console/` 静态控制台。
 
-本阶段不提供诊断、处方、药量调整、医院 HIS 接入、设备定位和前端页面。
+本阶段不提供诊断、处方、药量调整、医院 HIS 接入和设备定位。项目已提供基础医疗控制台静态页面，但它不替代医院系统、临床工作站或医疗设备平台。
 
 ## 2. 配置
 
@@ -43,6 +44,9 @@ V13__create_medical_identity_tables.sql
 V14__create_medical_care_record_tables.sql
 V15__create_medical_alert_notification_tables.sql
 V16__create_medical_care_plan_task_tables.sql
+V17__create_medical_login_sessions.sql
+V18__allow_medical_wechat_bindings_per_role_user.sql
+V19__add_care_task_follow_up_notifications.sql
 ```
 
 应用启动时由 Flyway 自动执行。不要手工修改已经执行过的迁移文件。

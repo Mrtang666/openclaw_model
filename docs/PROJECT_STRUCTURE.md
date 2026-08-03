@@ -1,248 +1,150 @@
-# OpenClaw 项目结构说明
+# OpenClaw 当前项目结构
 
-本文档用于说明当前项目的主要包结构、每个模块的职责，以及旧版 `prompt-json` 模式和新版 `function-calling` 模式的区别。
+> 本文按当前工作区的代码组织说明模块边界。完整功能、流程图、工具清单和数据模型见 [PROJECT_FEATURES_AND_FLOWS.md](PROJECT_FEATURES_AND_FLOWS.md)。
 
-## 1. 总体流程
-
-```text
-微信 / CLI 输入
-  -> 会话编排层
-  -> 工具规划层
-      -> legacy prompt-json 模式
-      -> function-calling 模式
-  -> 工具注册中心
-  -> 天气 / 图片 / 语音 / 文件 / 普通聊天等工具
-  -> 外部 API
-  -> 返回微信或 CLI
-```
-
-## 2. 根包
+## 根目录
 
 ```text
-com.example.spring
-  └─ AgentClawApplication.java
+openclaw_model/
+├─ src/                         Spring Boot 主程序、资源和测试
+├─ frontend/medical-console/    患者、家属与医护照护控制台静态页面
+├─ skills/                      运行时 Agent 业务指令与工具映射
+├─ browser-mcp-sidecar/         Docker 浏览器自动化 Sidecar
+├─ xhs-sidecar/                 Python 小红书只读采集 Sidecar
+├─ docs/                        运行、接口、业务与结构文档
+├─ data/                        运行期生成文件与本地归档（不提交）
+├─ .env.example                 环境变量模板
+└─ pom.xml                      Maven 依赖、Java 17、Spring Boot 3.4.7
 ```
 
-- `AgentClawApplication`：Spring Boot 启动类。
-
-## 3. CLI 入口
+## 主程序包
 
 ```text
-agent/
-cli/
-cli/command/
+src/main/java/com/example/spring/
+├─ AgentClawApplication.java    Spring Boot 启动入口与调度启用
+├─ agent/                       CLI 对话服务、Agent 目标与人工复盘
+├─ chat/                        DashScope/兼容 Chat Completions 客户端
+├─ cli/                         ConsoleRunner、命令注册、分发与格式化
+├─ config/                      .env 加载、配置检查、密钥脱敏
+├─ skill/                       Skill 扫描、解析、工具映射与 Prompt 注入
+├─ tool/                        通用工具与 Function Calling / legacy 协议
+├─ weather/                     高德天气 Client、模型与服务
+├─ wechat/                      微信入口及全部业务域
+└─ xhs/                         小红书采集、分析、告警、报告、控制台
 ```
 
-- `agent/AgentService`：CLI 默认大模型对话入口。
-- `agent/ReplyEmitter`：流式输出接口。
-- `cli/ConsoleRunner`：控制台输入循环。
-- `cli/command/core`：命令接口、命令注册、命令分发、错误格式化。
-- `cli/command/impl`：`help`、`version`、`status`、`weather`、`wechat` 等命令实现。
-
-说明：CLI 端不再保留图片生成命令，图片生成只保留在微信端工具里。
-
-## 4. 文本大模型
+## 微信模块
 
 ```text
-chat/
-  ├─ ChatClient.java
-  ├─ ChatReply.java
-  ├─ ChatService.java
-  ├─ ChatServiceException.java
-  └─ DashScopeChatClient.java
+wechat/
+├─ adapter/                     WechatClient 抽象和 iLink SDK 适配
+├─ bot/                         多连接生命周期、用户邮箱队列、接收与发送
+├─ login/                       扫码页、连接管理、登录 session
+├─ model/                       统一入站消息和媒体模型
+├─ conversation/                消息编排、医疗对话模式、Agent 循环、RAG、53 个工具
+├─ memory/                      MySQL 会话记忆、摘要、偏好与 fallback
+├─ knowledge/                   知识入库、切块、Embedding、Qdrant 检索
+├─ document/                    文件检测、解析、分块、归档、文档生成
+├─ image/                       图片理解、归档、引用解析和图片生成
+├─ voice/                       ASR、TTS、音色偏好与 ffmpeg 转码
+├─ web/                         网页阅读、缓存、MCP 搜索与资源上下文
+├─ browser/                     Chrome DevTools MCP Client、URL/动作安全策略
+├─ email/                       SMTP 文本/附件发送、IMAP 查询和附件下载
+├─ reminder/                    提醒任务、收件人绑定、调度、重试和微信推送
+├─ report/                      微信长回复 HTML 报告、公共链接和 TTL 清理
+├─ netdisk/                     百度网盘 OAuth、MCP、授权与待完成动作
+├─ map/                         地点、路线、多点规划、静态地图
+├─ taxi/                        起终点确认、报价、订单状态和取消
+├─ food/                        外卖地址、菜单、购物车、预结算、订单和支付交接
+├─ commerce/                    选购建议与快递物流
+├─ travel/                      美团酒旅官方 CLI 适配
+├─ news/                        天行新闻查询、会话分页和缓存
+├─ payment/                     微信支付回调与退款入口
+└─ care/                        医疗照护身份、授权、记录、签到、计划、任务、告警和 API
 ```
 
-- `ChatService`：项目内调用文本大模型的统一入口。
-- `DashScopeChatClient`：阿里百炼兼容 OpenAI Chat Completions 的客户端。
+### 对话和工具边界
 
-## 5. 工具协议层
+`WechatConversationService` 负责把记忆、RAG、媒体和用户消息封装为 `FunctionCallingAgentRequest`；`FunctionCallingAgentLoop` 负责模型循环、重复调用抑制、参数校验和工具结果回传；`WechatToolRegistry` 再分发到领域服务。医疗对话模式只影响表达和安全提示，权限仍由照护领域服务强制执行。
 
 ```text
-tool/
-  ├─ AgentTool.java
-  ├─ ToolRegistry.java
-  ├─ WeatherTool.java
-  └─ protocol/
-      ├─ ConversationToolPlanner.java
-      ├─ ConversationIntentDecision.java
-      ├─ ConfigurableConversationToolPlanner.java
-      ├─ legacy/
-      │   ├─ ToolCall.java
-      │   ├─ ToolPlan.java
-      │   ├─ ToolCallPlanParser.java
-      │   └─ ToolCallPlanner.java
-      ├─ function/
-      │   ├─ DashScopeFunctionCallingClient.java
-      │   ├─ FunctionCallingMessage.java
-      │   ├─ FunctionCallingToolCall.java
-      │   ├─ FunctionCallingModelResponse.java
-      │   ├─ FunctionCallingResponseParser.java
-      │   ├─ FunctionCallingToolPlanner.java
-      │   └─ FunctionCallingToolSchemaConverter.java
-      └─ validation/
-          ├─ ToolCallValidator.java
-          └─ ToolCallValidationResult.java
+WechatBotService
+  -> WechatConversationService
+  -> FunctionCallingAgentLoop
+  -> WechatToolRegistry
+  -> <domain service / external client>
 ```
 
-- `ConversationToolPlanner`：统一工具规划接口。
-- `ConfigurableConversationToolPlanner`：根据 `agent.tool-calling.mode` 切换规划模式。
-- `legacy/`：旧版 JSON 规划模式。模型输出 JSON，Java 解析后执行工具。
-- `function/`：新版 Function Calling 模式。模型返回标准 `tool_calls`，Java 执行工具后把 tool message 回传模型。
-- `validation/`：工具调用参数校验，负责拦截缺少必填参数、枚举值非法等问题。
-
-## 6. 微信会话编排
+## 医疗照护模块
 
 ```text
-wechat/conversation/
-  ├─ WechatConversationService.java
-  ├─ agent/
-  │   ├─ FunctionCallingAgentLoop.java
-  │   ├─ FunctionCallingAgentRequest.java
-  │   └─ AgentToolExecutionResult.java
-  ├─ memory/
-  │   └─ WechatAgentMemoryContextBuilder.java
-  ├─ intent/
-  │   └─ WeatherIntentParser.java
-  └─ tools/
-      ├─ WechatTool.java
-      ├─ WechatToolCapability.java
-      ├─ WechatToolDefinition.java
-      ├─ WechatToolParameter.java
-      ├─ WechatToolRegistry.java
-      ├─ WechatToolRequest.java
-      ├─ ChatWechatTool.java
-      ├─ WeatherWechatTool.java
-      ├─ MapWechatTool.java
-      ├─ LogisticsTrackWechatTool.java
-      ├─ ShoppingAdviceWechatTool.java
-      ├─ ImageGenerationWechatTool.java
-      ├─ DocumentAnalysisWechatTool.java
-      ├─ DocumentGenerationWechatTool.java
-      ├─ VoiceRecognitionWechatTool.java
-      ├─ VoiceSynthesisWechatTool.java
-      └─ VoiceStyleWechatTool.java
+wechat/care/
+├─ config/                      CARE_* 配置与任务策略
+├─ model/                       身份、关系、记录、计划、任务、告警、通知模型
+├─ repository/                  医疗身份、记录、计划、任务、告警、通知和审计 SQL
+├─ rules/                       确定性安全规则引擎
+├─ service/                     授权、可信记忆、签到、计划、任务、报告、通知和会话链接
+├─ scheduler/                   照护任务生成/到期、通知投递
+└─ web/                         `/api/care/v1` 患者、家属、临床端 REST Controller
 ```
 
-- `WechatConversationService`：微信端核心编排层，负责处理文本、图片、语音、文件、上下文、工具调用和最终回复。
-- `agent/FunctionCallingAgentLoop`：标准 Agent Function Calling 循环。
-- `memory/WechatAgentMemoryContextBuilder`：把滚动摘要、最近对话、媒体记忆、工具状态拼成大模型上下文。
-- `tools/WechatToolCapability`：描述工具能力边界，包括能做什么、不能做什么、缺什么要追问、输出什么。
-- `tools/WechatToolRegistry`：微信端工具注册中心。
+- `CareAuthorizationService` 与 `CarePermissions`：患者关系、角色、最小权限和有效期校验。
+- `CareMemoryService`：保留原始记录及确认状态，防止推测成为可信事实。
+- `SafetyRuleEngine`：跌倒、迷路、明确紧急求助等确定性规则。
+- `CarePlanService` / `CareTaskService`：版本化计划审核、激活、暂停、完成及任务生成。
+- `CareNotificationScheduler`：投递待发送照护通知并进行重试。
 
-## 7. 微信平台适配
+医疗前端在 `frontend/medical-console/`；专项说明见 [PATIENT_CARE_COORDINATION_AGENT.md](PATIENT_CARE_COORDINATION_AGENT.md) 和 [CARE_BACKEND_API.md](CARE_BACKEND_API.md)。
+
+## 小红书舆情模块
 
 ```text
-wechat/adapter/
-wechat/adapter/ilink/
-wechat/bot/
-wechat/model/
+xhs/
+├─ source/                       Sidecar HTTP 契约、Job 轮询、采集状态
+├─ ingestion/                    导入、清洗、伪匿名化和采集协调
+├─ analysis/                     语义分析、情绪、风险评分、事件聚合
+├─ incident/                     事件状态流转和审计
+├─ alert/                        规则、事件、投递和微信通知
+├─ report/                       日报、DOCX/XLSX 和报表 artifact
+├─ schedule/                     定时报表、投递、清理、负面舆情邮件
+├─ console/                      `/api/xhs-console` 控制台 API 与授权
+├─ repository/                   MySQL 持久化实现
+└─ config/                       采集、分析、告警、控制台、报表配置
 ```
 
-- `adapter/WechatClient`：微信客户端抽象接口。
-- `adapter/ilink/IlinkWechatClient`：iLink SDK 适配层，负责登录、收消息、下载附件、发送文本/图片/语音/文件。
-- `bot/WechatBotService`：微信 Bot 生命周期和消息处理队列。
-- `model/WechatIncomingMessage`：统一封装微信文本、图片、语音、文件消息。
+采集逻辑位于 `xhs-sidecar/`，与 Java 主进程隔离，只提供已授权账号的只读搜索采集 Job。
 
-## 8. 领域工具能力
-
-### 天气
+## 资源、迁移与前端
 
 ```text
-weather/
-  ├─ client/
-  ├─ model/
-  └─ service/
+src/main/resources/
+├─ application.properties         Spring 配置与环境变量占位
+├─ db/migration/                  当前 32 个 Flyway 迁移
+└─ static/
+   ├─ wechat-login/               扫码登录页面
+   └─ xhs-console/                舆情管理台页面
 ```
 
-- 使用高德天气 API。
-- 微信端通过 `WeatherWechatTool` 暴露为工具。
+| 版本范围 | 域 |
+| --- | --- |
+| V1-V5 | 会话记忆、文件、图片、知识库和网页缓存 |
+| V6-V9 | 百度网盘、支付、打车 |
+| V10-V11 | 提醒任务、收件人、提醒增强 |
+| V12 | 外卖点餐 |
+| V13-V19 | 医疗身份、照护记录、告警、计划、任务与医疗登录 |
+| V20-V23 | Agent 目标、步骤、评估与复盘 |
+| V25-V33 | 小红书舆情基础、分析、告警、访问链接、定时报表、负面报告邮件 |
 
-### 图片
+`V24` 以及旧编号的小红书迁移不在当前工作区；升级已有环境前应先核对 Flyway 历史表并备份。
 
-```text
-wechat/image/
-wechat/image/generation/
-```
+## Skills、Sidecar 和测试
 
-- `wechat/image`：图片理解。
-- `wechat/image/generation`：图片生成。
-- 微信端通过 `ImageGenerationWechatTool` 作为工具调用。
+`skills/*/SKILL.md` 是模型的业务规则来源，`skill.json` 将 Skill 与 Java 工具映射。SkillManager 只负责加载与注入提示词，不执行工具。
 
-### 语音
+| 组件 | 位置 | 用途 |
+| --- | --- | --- |
+| Browser MCP Sidecar | `browser-mcp-sidecar/` | Docker 中运行 Chromium，提供受限制的页面打开、读取、点击、输入、截图和重置。 |
+| XHS Sidecar | `xhs-sidecar/` | Python 中隔离 Spider_XHS，提供只读搜索采集 Job。 |
+| 医疗控制台 | `frontend/medical-console/` | 患者、家属、医生的 Web 控制台静态资源。 |
 
-```text
-wechat/voice/recognition/
-wechat/voice/synthesis/
-wechat/voice/style/
-```
-
-- `recognition`：ASR，语音转文字。
-- `synthesis`：TTS，文字转语音。
-- `style`：音色候选、试听、确认、偏好保存。
-
-### 文件
-
-```text
-wechat/document/
-  ├─ model/
-  └─ service/
-```
-
-- 支持文件类型检测、解析、分块、摘要、归档和文档生成。
-- 微信端通过 `DocumentAnalysisWechatTool` 和 `DocumentGenerationWechatTool` 作为工具调用。
-
-## 9. 微信记忆
-
-```text
-wechat/memory/
-  ├─ config/
-  ├─ fallback/
-  ├─ model/
-  ├─ scheduler/
-  └─ service/
-```
-
-- `WechatMemoryService`：微信记忆统一接口。
-- `MySqlWechatMemoryService`：MySQL 持久化实现。
-- `InMemoryWechatMemoryFallback`：数据库不可用时的内存兜底。
-- `WechatMemoryMaintenanceScheduler`：过期数据清理和摘要维护。
-- 当前上下文保留策略由 `wechat.memory.*` 配置控制。
-
-## 10. 配置文件
-
-```text
-src/main/resources/application.properties
-.env.example
-```
-
-- `application.properties`：按 MySQL、Agent、微信记忆、天气、DashScope 文本、图片、语音、日志分组。
-- `.env.example`：本地环境变量示例，不包含真实密钥。
-
-## 11. 数据库迁移
-
-```text
-src/main/resources/db/migration/
-  ├─ V1__create_wechat_memory_tables.sql
-  └─ V2__create_wechat_document_tables.sql
-
-docs/
-  ├─ DATABASE_SETUP.md
-  └─ sql/create_database.sql
-```
-
-- `V1`：微信记忆、消息、工具调用日志表。
-- `V2`：微信文件元数据、文件分块、文档生成记录表。
-- `DATABASE_SETUP.md`：给合作者看的本地 MySQL 初始化说明。
-- `create_database.sql`：只负责创建 `openclaw` 和 `openclaw_test` 空数据库，业务表仍由 Flyway 自动创建。
-
-## 12. 常用验证命令
-
-```powershell
-mvn -q test
-```
-
-聚焦验证 Function Calling 和工具协议：
-
-```powershell
-mvn -q "-Dtest=WechatAgentMemoryContextBuilderTests,WechatToolRegistryTests,FunctionCallingToolSchemaConverterTests,ConfigurableConversationToolPlannerTests,FunctionCallingAgentLoopTests" test
-```
+测试重点位于 `src/test/java/com/example/spring/wechat/` 下的 `conversation/`、`reminder/`、`care/`、`email/`、`report/` 和 `bot/`；小红书测试位于 `src/test/java/com/example/spring/xhs/`。

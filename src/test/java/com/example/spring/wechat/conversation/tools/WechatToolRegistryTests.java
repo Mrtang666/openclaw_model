@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class WechatToolRegistryTests {
 
@@ -34,6 +35,22 @@ class WechatToolRegistryTests {
                             });
                 });
         assertThat(registry.execute("fake_tool", sampleRequest("hello")).text()).isEqualTo("fake: hello");
+    }
+
+    @Test
+    void rejectsBlankToolNames() {
+        assertThatThrownBy(() -> new WechatToolRegistry(List.of(new NamedFakeWechatTool("   "))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("微信工具名称不能为空");
+    }
+
+    @Test
+    void rejectsDuplicateToolNamesWithConflictingName() {
+        assertThatThrownBy(() -> new WechatToolRegistry(List.of(
+                        new NamedFakeWechatTool("duplicate"),
+                        new NamedFakeWechatTool("duplicate"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("duplicate");
     }
 
     private WechatToolRequest sampleRequest(String value) {
@@ -88,6 +105,35 @@ class WechatToolRegistryTests {
         @Override
         public WechatReply execute(WechatToolRequest request) {
             return WechatReply.text("fake: " + request.argument("value"));
+        }
+    }
+
+    private static final class NamedFakeWechatTool implements WechatTool {
+
+        private final String name;
+
+        private NamedFakeWechatTool(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public String name() {
+            return name;
+        }
+
+        @Override
+        public String description() {
+            return "测试工具";
+        }
+
+        @Override
+        public List<String> arguments() {
+            return List.of();
+        }
+
+        @Override
+        public WechatReply execute(WechatToolRequest request) {
+            return WechatReply.text("ok");
         }
     }
 }

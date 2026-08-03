@@ -2,6 +2,7 @@ package com.example.spring.wechat.memory;
 
 import org.junit.jupiter.api.Test;
 
+import com.example.spring.wechat.memory.model.ConversationTurn;
 import com.example.spring.wechat.memory.model.WechatConversationMemory;
 import java.lang.reflect.Method;
 import java.util.List;
@@ -60,5 +61,30 @@ class WechatConversationMemoryTests {
         assertThat(restored.pendingClarificationToolName()).hasValue("document_generation");
         assertThat(restored.pendingClarificationMissingFields()).containsExactly("format", "title");
         assertThat(restored.pendingClarificationQuestion()).hasValue("Which format?");
+    }
+
+    @Test
+    void restoredImageAnchorBeyondLoadedWindowUsesAvailableRecentTurns() {
+        WechatConversationMemory memory = WechatConversationMemory.empty(2);
+        memory.applyState(new WechatConversationMemory.State(
+                "old image",
+                null,
+                null,
+                null,
+                null,
+                null,
+                List.of(),
+                null,
+                null,
+                null,
+                null,
+                50));
+        memory.replaceTurns(List.of(
+                new ConversationTurn("first", "answer-1"),
+                new ConversationTurn("second", "answer-2")));
+
+        assertThat(memory.recentImageContextTurns(2))
+                .extracting(ConversationTurn::userText)
+                .containsExactly("first", "second");
     }
 }

@@ -177,7 +177,8 @@ public class WechatConversationMemory {
             return List.of();
         }
         List<ConversationTurn> values = new ArrayList<>(turns);
-        int imageStart = Math.max(0, lastImagePromptTurnCount - 1);
+        int persistedImageStart = Math.max(0, lastImagePromptTurnCount - 1);
+        int imageStart = persistedImageStart > values.size() ? 0 : persistedImageStart;
         int recentStart = Math.max(0, values.size() - maxTurns);
         return List.copyOf(values.subList(Math.max(imageStart, recentStart), values.size()));
     }

@@ -1,6 +1,7 @@
 package com.example.spring.wechat.memory.service;
 
 import com.example.spring.chat.ChatService;
+import com.example.spring.wechat.context.MemoryGraphMaintenanceService;
 import com.example.spring.wechat.memory.config.WechatMemoryProperties;
 import com.example.spring.wechat.memory.fallback.InMemoryWechatMemoryFallback;
 import com.example.spring.wechat.memory.model.ConversationTurn;
@@ -48,18 +49,21 @@ public class MySqlWechatMemoryService implements WechatMemoryService {
     private final WechatMemoryProperties properties;
     private final InMemoryWechatMemoryFallback fallback;
     private final ChatService chatService;
+    private final MemoryGraphMaintenanceService memoryGraphMaintenanceService;
 
     public MySqlWechatMemoryService(
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
             WechatMemoryProperties properties,
             InMemoryWechatMemoryFallback fallback,
-            ChatService chatService) {
+            ChatService chatService,
+            MemoryGraphMaintenanceService memoryGraphMaintenanceService) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.properties = properties;
         this.fallback = fallback;
         this.chatService = chatService;
+        this.memoryGraphMaintenanceService = memoryGraphMaintenanceService;
     }
 
     @Override
@@ -542,6 +546,7 @@ public class MySqlWechatMemoryService implements WechatMemoryService {
                     summary.strip(),
                     newCoveredMessageId,
                     Timestamp.from(now));
+            maintainMemoryGraphWindow(conversationId, summary.strip());
             return true;
         } catch (RuntimeException exception) {
             log.warn("微信会话摘要生成失败，conversationId={}, error={}",
@@ -630,6 +635,38 @@ public class MySqlWechatMemoryService implements WechatMemoryService {
                     .append('\n');
         }
         return prompt.toString();
+    }
+
+    private void maintainMemoryGraphWindow(long conversationId, String summary) {
+        if (memoryGraphMaintenanceService == null || summary == null || summary.isBlank()) {
+            return;
+        }
+        try {
+            conversationOwner(conversationId).ifPresent(owner ->
+                    memoryGraphMaintenanceService.maintainConversationWindow(
+                            owner.wechatUserId(),
+                            conversationId,
+                            loadMemory(owner.userId(), conversationId),
+                            summary));
+        } catch (RuntimeException exception) {
+            log.warn("Memory Graph 会话窗口维护失败，conversationId={}, error={}",
+                    conversationId, rootMessage(exception));
+        }
+    }
+
+    private Optional<ConversationOwner> conversationOwner(long conversationId) {
+        List<ConversationOwner> owners = jdbcTemplate.query(
+                """
+                        SELECT u.id, u.wechat_user_id
+                        FROM conversations c
+                        JOIN users u ON u.id = c.user_id
+                        WHERE c.id = ?
+                        """,
+                (resultSet, rowNumber) -> new ConversationOwner(
+                        resultSet.getLong(1),
+                        resultSet.getString(2)),
+                conversationId);
+        return owners.stream().findFirst();
     }
 
     private Optional<WechatConversationMemory.State> loadState(long conversationId) {
@@ -740,5 +777,8 @@ public class MySqlWechatMemoryService implements WechatMemoryService {
     }
 
     private record MessageRow(long id, String role, String content) {
+    }
+
+    private record ConversationOwner(long userId, String wechatUserId) {
     }
 }

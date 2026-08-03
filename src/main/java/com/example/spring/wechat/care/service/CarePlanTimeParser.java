@@ -26,7 +26,7 @@ public class CarePlanTimeParser {
     private static final Pattern POINT_TIME = Pattern.compile(
             "(?<period>" + PERIOD + ")?\\s*(?<hour>\\d{1,2}|零|一|二|三|四|五|六|七|八|九|十|十一|十二|十三|十四|十五|十六|十七|十八|十九|二十|二十一|二十二|二十三|两)\\s*点\\s*(?:(?<half>半)|(?<minute>\\d{1,2})\\s*分?)?");
     private static final Pattern INTERVAL_HOURS = Pattern.compile("每\\s*(\\d{1,2})\\s*(?:个)?\\s*小时");
-    private static final String CLOCK = "(?:(?:" + PERIOD + ")?\\s*(?:\\d{1,2}(?:\\s*[:：.]\\s*\\d{1,2})?|"
+    private static final String CLOCK = "(?:(?:" + PERIOD + ")?\\s*(?:\\d{1,2}(?:(?:\\s*[:：.]\\s*\\d{1,2})|\\s*点\\s*(?:半|\\d{1,2}\\s*分?)?)?|"
             + "[零一二三四五六七八九十两]+\\s*点\\s*(?:半|\\d{1,2}\\s*分?)?))";
     private static final Pattern TIME_RANGE = Pattern.compile(
             "(?<start>" + CLOCK + ")\\s*(?:到|至|~|～|—|-)\\s*(?<end>" + CLOCK + ")");

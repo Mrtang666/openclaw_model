@@ -57,8 +57,6 @@ class CareTaskSchedulerTests {
         when(identities.listUserNotificationTargetsByRole(1L, MedicalRole.PATIENT))
                 .thenReturn(List.of(new NotificationTarget(1L, "connection", "recipient")));
         when(tasks.findReadyForFollowUp(NOW, 100)).thenReturn(List.of());
-        when(identities.listUserNotificationTargetsByRole(1L, com.example.spring.wechat.care.model.MedicalRole.PATIENT))
-                .thenReturn(List.of(new NotificationTarget(1L, "connection", "recipient")));
         when(tasks.findReadyToMarkOverdue(NOW, 100)).thenReturn(List.of());
         when(tasks.findReadyForOverdueNotification(NOW, 100)).thenReturn(List.of());
         CareTaskScheduler scheduler = new CareTaskScheduler(

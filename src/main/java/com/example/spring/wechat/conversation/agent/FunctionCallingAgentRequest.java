@@ -37,12 +37,38 @@ public record FunctionCallingAgentRequest(
             String sessionKey,
             String userText,
             String historyText,
+            String ragContext,
             List<WechatIncomingFile> files,
             List<WechatIncomingImage> images,
             List<WechatIncomingVideo> videos,
             WechatToolRequest.PendingImagePromptRecorder pendingImagePromptRecorder,
             WechatToolRequest.GeneratedImageRecorder generatedImageRecorder,
             ToolExecutionRecorder toolExecutionRecorder) {
+        this(
+                sessionKey,
+                userText,
+                historyText,
+                ragContext,
+                files,
+                images,
+                videos,
+                pendingImagePromptRecorder,
+                generatedImageRecorder,
+                toolExecutionRecorder,
+                WechatConversationMode.GENERAL);
+    }
+
+    public FunctionCallingAgentRequest(
+            String sessionKey,
+            String userText,
+            String historyText,
+            List<WechatIncomingFile> files,
+            List<WechatIncomingImage> images,
+            List<WechatIncomingVideo> videos,
+            WechatToolRequest.PendingImagePromptRecorder pendingImagePromptRecorder,
+            WechatToolRequest.GeneratedImageRecorder generatedImageRecorder,
+            ToolExecutionRecorder toolExecutionRecorder,
+            WechatConversationMode conversationMode) {
         this(
                 sessionKey,
                 userText,
@@ -54,7 +80,7 @@ public record FunctionCallingAgentRequest(
                 pendingImagePromptRecorder,
                 generatedImageRecorder,
                 toolExecutionRecorder,
-                WechatConversationMode.GENERAL);
+                conversationMode);
     }
 
     public FunctionCallingAgentRequest(

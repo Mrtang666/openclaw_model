@@ -8,6 +8,7 @@ import com.example.spring.wechat.care.service.CarePlanService;
 import com.example.spring.wechat.care.service.CareReportService;
 import com.example.spring.wechat.care.service.CareTaskService;
 import com.example.spring.wechat.care.service.DailyCheckInService;
+import com.example.spring.wechat.care.service.HealthRecordService;
 import com.example.spring.wechat.care.service.SafetyAlertService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
 import java.time.Instant;
+import java.math.BigDecimal;
 import java.util.Set;
 
 @RestController
@@ -32,6 +34,7 @@ public class ClinicalCareController {
     private final CareReportService reportService;
     private final CareMemoryService memoryService;
     private final DailyCheckInService checkInService;
+    private final HealthRecordService healthRecordService;
     private final SafetyAlertService alertService;
     private final CarePlanService planService;
     private final CarePlanDraftService draftService;
@@ -43,6 +46,7 @@ public class ClinicalCareController {
             CareReportService reportService,
             CareMemoryService memoryService,
             DailyCheckInService checkInService,
+            HealthRecordService healthRecordService,
             SafetyAlertService alertService,
             CarePlanService planService,
             CarePlanDraftService draftService,
@@ -52,6 +56,7 @@ public class ClinicalCareController {
         this.reportService = reportService;
         this.memoryService = memoryService;
         this.checkInService = checkInService;
+        this.healthRecordService = healthRecordService;
         this.alertService = alertService;
         this.planService = planService;
         this.draftService = draftService;
@@ -140,6 +145,28 @@ public class ClinicalCareController {
             @PathVariable long patientId, @RequestParam(defaultValue = "50") int limit) {
         Context context = context(authorization, requestId);
         return CareApiResponse.success(alertService.list(context.actor(), patientId, limit, context.traceId()), context.traceId());
+    }
+
+    @PostMapping("/patients/{patientId}/health-records")
+    public CareApiResponse<?> recordHealth(
+            @RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable long patientId,
+            @RequestBody HealthRecordRequest request) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(healthRecordService.record(
+                context.actor(), patientId, request.toCommand(context.traceId()), "CLINICAL_WEB"), context.traceId());
+    }
+
+    @GetMapping("/patients/{patientId}/health-records")
+    public CareApiResponse<?> healthRecords(
+            @RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable long patientId,
+            @RequestParam(defaultValue = "50") int limit) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(healthRecordService.list(
+                context.actor(), patientId, limit, context.traceId()), context.traceId());
     }
 
     @PostMapping("/alerts/{alertId}/acknowledge")
@@ -341,6 +368,20 @@ public class ClinicalCareController {
     }
 
     public record AlertResolveRequest(long version, boolean falseAlarm, String note) {
+    }
+
+    public record HealthRecordRequest(
+            String category,
+            BigDecimal primaryValue,
+            BigDecimal secondaryValue,
+            String unit,
+            String recordText,
+            Instant occurredAt,
+            String idempotencyKey) {
+        HealthRecordService.RecordCommand toCommand(String requestId) {
+            return new HealthRecordService.RecordCommand(category, primaryValue, secondaryValue, unit,
+                    recordText, occurredAt, idempotencyKey, requestId);
+        }
     }
 
     public record PlanVersionRequest(long version) {

@@ -33,6 +33,4 @@
 - 医生端：`GET /api/care/v1/clinical/patients/{patientId}/status`
 - 医生端：`POST /api/care/v1/clinical/plans/{planId}/review`
 - 医生端：`POST /api/care/v1/clinical/plans/{planId}/activate`
-- 患者端：`POST /api/care/v1/patient/access-grants`
-
 前端只负责展示和交互，患者关系、身份权限、敏感数据访问必须由后端校验。

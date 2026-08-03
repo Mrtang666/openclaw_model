@@ -15,6 +15,7 @@ import com.example.spring.wechat.care.service.CarePermissions;
 import com.example.spring.wechat.care.service.CarePlanDraftService;
 import com.example.spring.wechat.care.service.CareTaskInteractionService;
 import com.example.spring.wechat.care.service.CareWebLinkService;
+import com.example.spring.wechat.care.service.HealthRecordService;
 import com.example.spring.wechat.reminder.service.ReminderNotificationSender;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
@@ -23,6 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Instant;
+import java.math.BigDecimal;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
@@ -38,6 +40,7 @@ public class CareAgentWechatTool implements WechatTool {
     private final CareWebLinkService linkService;
     private final CarePlanDraftService draftService;
     private final CareTaskInteractionService taskInteractionService;
+    private final HealthRecordService healthRecordService;
     private final CareNotificationRepository notificationRepository;
     private final ObjectProvider<ReminderNotificationSender> notificationSenderProvider;
     private final ChatService chatService;
@@ -50,6 +53,7 @@ public class CareAgentWechatTool implements WechatTool {
             CareWebLinkService linkService,
             CarePlanDraftService draftService,
             CareTaskInteractionService taskInteractionService,
+            HealthRecordService healthRecordService,
             CareNotificationRepository notificationRepository,
             ObjectProvider<ReminderNotificationSender> notificationSenderProvider,
             ChatService chatService,
@@ -59,6 +63,7 @@ public class CareAgentWechatTool implements WechatTool {
         this.linkService = linkService;
         this.draftService = draftService;
         this.taskInteractionService = taskInteractionService;
+        this.healthRecordService = healthRecordService;
         this.notificationRepository = notificationRepository;
         this.notificationSenderProvider = notificationSenderProvider;
         this.chatService = chatService;
@@ -84,7 +89,7 @@ public class CareAgentWechatTool implements WechatTool {
     public List<WechatToolParameter> parameters() {
         return List.of(
                 WechatToolParameter.optionalEnum("action", "操作类型", List.of(
-                        "status", "bind", "contact_doctor", "doctor_workspace", "plan_draft", "plan_confirm", "task_response", "whoami", "rename"), "status"),
+                        "status", "bind", "contact_doctor", "doctor_workspace", "plan_draft", "plan_confirm", "task_response", "health_record", "whoami", "rename"), "status"),
                 WechatToolParameter.optionalString("patient_code", "患者编号，例如 PAT-12345678；绑定或指定患者时填写", "PAT-12345678"),
                 WechatToolParameter.optionalString("message", "联系医生时要发送的消息", "患者今天头晕，请医生关注。"),
                 WechatToolParameter.optionalString("plan_text", "医生输入的原始照护方案要求", "每天提醒患者喝水三次，晚上确认安全。"),
@@ -99,6 +104,7 @@ public class CareAgentWechatTool implements WechatTool {
                         "当前微信用户未通过 /patient、/caregiver、/doctor 登录时，提示先登录。",
                         "家属和医生没有绑定患者时，返回对应绑定页面链接。",
                         "患者状态详情通过 Web 链接展示，不在微信里展开敏感详情。",
+                        "患者发送血压、血糖、体温、心率、血氧、体重或症状时，使用 health_record 记录一项健康信息。",
                         "联系医生只发给已绑定到同一患者且有计划管理权限的医生。",
                         "医生方案草稿只做专业化整理，不自动激活任务，必须由医生在页面确认。"),
                 List.of("action：用户想做什么；patient_code：绑定患者或指定患者时需要；message：联系医生时需要"),
@@ -131,6 +137,7 @@ public class CareAgentWechatTool implements WechatTool {
                 case "plan_draft" -> WechatReply.text(planDraft(actor, request));
                 case "plan_confirm" -> WechatReply.text(confirmPlanDraft(actor, request.sessionKey()));
                 case "task_response" -> WechatReply.text(taskResponse(actor, request));
+                case "health_record" -> WechatReply.text(recordHealth(actor, request));
                 case "rename" -> WechatReply.text(renameNickname(actor, request));
                 default -> WechatReply.text(status(actor, request));
             };
@@ -187,7 +194,7 @@ public class CareAgentWechatTool implements WechatTool {
 
     private String bindLink(CareActor actor, String sessionKey) {
         if (actor.role() == MedicalRole.PATIENT) {
-            return "患者端用于接收任务和授权关系。请把你的患者编号发给家属或医生：\n" + actor.userCode();
+            return "患者端用于接收任务。请把你的患者编号发给家属或医生：\n" + actor.userCode();
         }
         String route = actor.role().isClinical() ? "/bind/doctor" : "/bind/caregiver";
         String label = actor.role().isClinical() ? "医生绑定患者" : "家属绑定患者";
@@ -309,6 +316,25 @@ public class CareAgentWechatTool implements WechatTool {
         return taskInteractionService.processReply(actor, request.userText(), traceId()).message();
     }
 
+    private String recordHealth(CareActor actor, WechatToolRequest request) {
+        if (actor.role() != MedicalRole.PATIENT) {
+            return "健康数据请在已绑定患者的照护页面中录入。";
+        }
+        ParsedHealthRecord parsed = parseHealthRecord(request.userText());
+        if (parsed == null) {
+            return "可直接告诉我一项健康记录，例如：血压 145/92、体温 38.2、血氧 93，或“今天头晕胸闷”。";
+        }
+        HealthRecordService.RecordResult result = healthRecordService.record(actor, actor.userId(),
+                new HealthRecordService.RecordCommand(parsed.category(), parsed.primaryValue(), parsed.secondaryValue(),
+                        parsed.unit(), parsed.text(), null, healthIdempotency(request), traceId()),
+                "PATIENT_WECHAT");
+        if (result.alert() != null) {
+            return "已记录：" + parsed.label() + "。系统已生成" + result.alert().severity().name()
+                    + "级告警" + (result.alert().severity().name().equals("URGENT") ? "，并已通知绑定医生。" : "，请按要求继续观察。");
+        }
+        return "已记录：" + parsed.label() + "。";
+    }
+
     private String refinePlan(MedicalUser patient, String rawPlan) {
         String text = rawPlan == null ? "" : rawPlan.strip();
         if (text.isBlank()) {
@@ -373,6 +399,7 @@ public class CareAgentWechatTool implements WechatTool {
             return action;
         }
         if (CareTaskInteractionService.looksLikeTaskReply(text)) return "task_response";
+        if (role == MedicalRole.PATIENT && parseHealthRecord(text) != null) return "health_record";
         if (containsAny(text, "我是谁", "当前身份", "身份")) return "whoami";
         if (containsAny(text, "绑定", "新增患者", "添加患者")) return "bind";
         if (containsAny(text, "联系医生", "通知医生", "告诉医生", "紧急", "发给医生")) return "contact_doctor";
@@ -427,6 +454,54 @@ public class CareAgentWechatTool implements WechatTool {
             if (text.contains(needle)) return true;
         }
         return false;
+    }
+
+    private ParsedHealthRecord parseHealthRecord(String text) {
+        if (text == null || text.isBlank()) return null;
+        String value = text.strip();
+        java.util.regex.Matcher pressure = java.util.regex.Pattern
+                .compile("(?:血压)?\\s*(\\d{2,3})\\s*[/／]\\s*(\\d{2,3})").matcher(value);
+        if (pressure.find()) return new ParsedHealthRecord("BLOOD_PRESSURE", new BigDecimal(pressure.group(1)),
+                new BigDecimal(pressure.group(2)), "mmHg", value, "血压 " + pressure.group(1) + "/" + pressure.group(2));
+        ParsedHealthRecord single = parseSingle(value, "血糖", "BLOOD_GLUCOSE", "mmol/L", "血糖");
+        if (single != null) return single;
+        single = parseSingle(value, "体温", "TEMPERATURE", "°C", "体温");
+        if (single != null) return single;
+        single = parseSingle(value, "血氧", "OXYGEN_SATURATION", "%", "血氧");
+        if (single != null) return single;
+        single = parseSingle(value, "心率", "HEART_RATE", "bpm", "心率");
+        if (single != null) return single;
+        single = parseSingle(value, "体重", "WEIGHT", "kg", "体重");
+        if (single != null) return single;
+        if (containsAny(value, "服药", "吃药", "漏服")) {
+            return new ParsedHealthRecord("MEDICATION", null, null, "", value, value);
+        }
+        if (containsAny(value, "头晕", "胸痛", "胸闷", "呼吸困难", "无法呼吸", "昏迷", "救命", "不舒服", "不安全", "安全异常", "疼")) {
+            return new ParsedHealthRecord("SYMPTOM", null, null, "", value, value);
+        }
+        return null;
+    }
+
+    private ParsedHealthRecord parseSingle(String text, String keyword, String category, String unit, String label) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile(keyword + "\\s*(\\d+(?:\\.\\d+)?)").matcher(text);
+        if (!matcher.find()) return null;
+        return new ParsedHealthRecord(category, new BigDecimal(matcher.group(1)), null, unit, text,
+                label + " " + matcher.group(1) + unit);
+    }
+
+    private record ParsedHealthRecord(
+            String category, BigDecimal primaryValue, BigDecimal secondaryValue, String unit, String text, String label) {
+    }
+
+    private String healthIdempotency(WechatToolRequest request) {
+        try {
+            String raw = request.sessionKey() + ":" + request.userText() + ":" + (clock.instant().getEpochSecond() / 60);
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8));
+            return "wechat-health:" + HexFormat.of().formatHex(digest, 0, 16);
+        } catch (Exception exception) {
+            return "wechat-health:" + request.sessionKey() + ":" + (clock.instant().getEpochSecond() / 60);
+        }
     }
 
     private String firstNonBlank(String... values) {

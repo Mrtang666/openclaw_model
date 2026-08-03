@@ -110,6 +110,17 @@ public class SafetyAlertRepository {
         return changed == 1;
     }
 
+    @Transactional
+    public SafetyAlert escalate(long alertId, String evidenceText, Instant now) {
+        int changed = jdbc.update("""
+                UPDATE medical_safety_alerts
+                SET severity='URGENT',status='ESCALATED',evidence_text=?,version=version+1,updated_at=?
+                WHERE id=? AND status IN ('OPEN','ACKNOWLEDGED')
+                """, clean(evidenceText), timestamp(now), alertId);
+        if (changed == 1) recordEvent(alertId, null, "ESCALATED", evidenceText, now);
+        return findById(alertId).orElseThrow();
+    }
+
     public int countOpen(long patientUserId) {
         return count(patientUserId, "status IN ('OPEN','ACKNOWLEDGED','ESCALATED')");
     }

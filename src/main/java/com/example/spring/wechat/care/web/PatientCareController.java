@@ -1,12 +1,12 @@
 package com.example.spring.wechat.care.web;
 
 import com.example.spring.wechat.care.model.CareActor;
-import com.example.spring.wechat.care.service.CareAuthorizationService;
 import com.example.spring.wechat.care.service.CareMemoryService;
 import com.example.spring.wechat.care.service.CarePlanService;
 import com.example.spring.wechat.care.service.CareReportService;
 import com.example.spring.wechat.care.service.CareTaskService;
 import com.example.spring.wechat.care.service.DailyCheckInService;
+import com.example.spring.wechat.care.service.HealthRecordService;
 import com.example.spring.wechat.care.service.SafetyAlertService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -20,16 +20,16 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.util.Set;
+import java.math.BigDecimal;
 
 @RestController
 @RequestMapping("/api/care/v1/patient")
 public class PatientCareController {
 
     private final CareApiSupport apiSupport;
-    private final CareAuthorizationService authorizationService;
     private final CareMemoryService memoryService;
     private final DailyCheckInService checkInService;
+    private final HealthRecordService healthRecordService;
     private final SafetyAlertService alertService;
     private final CareReportService reportService;
     private final CarePlanService planService;
@@ -37,17 +37,17 @@ public class PatientCareController {
 
     public PatientCareController(
             CareApiSupport apiSupport,
-            CareAuthorizationService authorizationService,
             CareMemoryService memoryService,
             DailyCheckInService checkInService,
+            HealthRecordService healthRecordService,
             SafetyAlertService alertService,
             CareReportService reportService,
             CarePlanService planService,
             CareTaskService taskService) {
         this.apiSupport = apiSupport;
-        this.authorizationService = authorizationService;
         this.memoryService = memoryService;
         this.checkInService = checkInService;
+        this.healthRecordService = healthRecordService;
         this.alertService = alertService;
         this.reportService = reportService;
         this.planService = planService;
@@ -119,16 +119,25 @@ public class PatientCareController {
                 context.actor(), context.actor().userId(), limit, context.traceId()), context.traceId());
     }
 
-    @PostMapping("/access-grants")
-    public CareApiResponse<?> grantAccess(
+    @PostMapping("/health-records")
+    public CareApiResponse<?> recordHealth(
             @RequestHeader("Authorization") String authorization,
             @RequestHeader(value = "X-Request-Id", required = false) String requestId,
-            @RequestBody AccessGrantRequest request) {
+            @RequestBody HealthRecordRequest request) {
         Context context = context(authorization, requestId);
-        return CareApiResponse.success(authorizationService.grantRelation(
-                context.actor(), new CareAuthorizationService.GrantCommand(
-                        request.viewerUserCode(), request.relationRole(), request.relationLabel(),
-                        request.permissions(), request.expiresAt(), context.traceId())), context.traceId());
+        return CareApiResponse.success(healthRecordService.record(
+                context.actor(), context.actor().userId(), request.toCommand(context.traceId()), "PATIENT_WEB"),
+                context.traceId());
+    }
+
+    @GetMapping("/health-records")
+    public CareApiResponse<?> healthRecords(
+            @RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @RequestParam(defaultValue = "50") int limit) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(healthRecordService.list(
+                context.actor(), context.actor().userId(), limit, context.traceId()), context.traceId());
     }
 
     @GetMapping("/plans")
@@ -216,12 +225,18 @@ public class PatientCareController {
             String idempotencyKey) {
     }
 
-    public record AccessGrantRequest(
-            String viewerUserCode,
-            String relationRole,
-            String relationLabel,
-            Set<String> permissions,
-            Instant expiresAt) {
+    public record HealthRecordRequest(
+            String category,
+            BigDecimal primaryValue,
+            BigDecimal secondaryValue,
+            String unit,
+            String recordText,
+            Instant occurredAt,
+            String idempotencyKey) {
+        HealthRecordService.RecordCommand toCommand(String requestId) {
+            return new HealthRecordService.RecordCommand(category, primaryValue, secondaryValue, unit,
+                    recordText, occurredAt, idempotencyKey, requestId);
+        }
     }
 
     public record TaskActionRequest(long version, String note) {

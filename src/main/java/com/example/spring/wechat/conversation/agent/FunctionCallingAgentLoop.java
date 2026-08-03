@@ -114,7 +114,7 @@ public class FunctionCallingAgentLoop {
             DashScopeFunctionCallingClient client,
             WechatToolRegistry toolRegistry,
             int maxLoopRounds) {
-        this(client, toolRegistry, new ToolCallValidator(), null,
+        this(client, toolRegistry, new ToolCallValidator(), (SkillManager) null,
                 maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
     }
 
@@ -124,7 +124,7 @@ public class FunctionCallingAgentLoop {
             int maxLoopRounds,
             Clock clock,
             String defaultTimezone) {
-        this(client, toolRegistry, new ToolCallValidator(), null,
+        this(client, toolRegistry, new ToolCallValidator(), (SkillManager) null,
                 maxLoopRounds, clock, defaultTimezone);
     }
 

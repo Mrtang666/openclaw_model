@@ -226,7 +226,7 @@ async function renderPatientTasks() {
         <section class="grid two">
             <div class="card">
                 <h2 class="card-title">今日任务</h2>
-                ${taskList(patient, { interactive: true, showDetail: true, showTime: true })}
+                ${taskList(patient, { interactive: true, showTime: true })}
             </div>
             <div class="card">
                 <h2 class="card-title">完成情况</h2>
@@ -282,29 +282,13 @@ async function hydratePatientStatus(patient, kind) {
     patient.risk = status.urgentAlertCount > 0 ? "URGENT" : status.openAlertCount > 0 ? "ATTENTION" : "NORMAL";
     patient.riskLabel = status.urgentAlertCount > 0 ? "异常告警" : status.openAlertCount > 0 ? "需要关注" : "状态平稳";
     patient.lastUpdate = status.generatedAt ? new Date(status.generatedAt).toLocaleString() : "刚刚";
-    const plans = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/plans`).catch(() => []);
-    const activePlan = (plans || []).find((plan) => plan.status === "ACTIVE")
-        || (plans || []).find((plan) => ["APPROVED", "WAITING_REVIEW", "DRAFT"].includes(plan.status));
-    patient.planDetails = activePlan
-        ? await careApi(`${apiPrefix(kind)}/plans/${activePlan.id}`).catch(() => ({
-            plan: activePlan,
-            version: null,
-            tasks: []
-        }))
-        : null;
-    if (patient.planDetails?.version) {
-        patient.plan = patient.planDetails.version.summary
-            || patient.planDetails.version.instructions
-            || patient.planDetails.plan?.title
-            || "当前没有方案说明。";
-    }
     const tasks = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/tasks`).catch(() => []);
     const alerts = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/alerts`).catch(() => []);
-    const checkins = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/checkins`).catch(() => []);
-    const currentPlanTasks = activePlan
-        ? (tasks || []).filter((task) => String(task.planId) === String(activePlan.id))
-        : (tasks || []);
-    patient.tasks = currentPlanTasks.map((task) => ({
+    const checkinRange = recentSevenDayRange();
+    const checkins = await careApi(
+        `${apiPrefix(kind)}/patients/${patient.id}/checkins?from=${checkinRange.from}&to=${checkinRange.to}`
+    ).catch(() => []);
+    patient.tasks = (tasks || []).filter((task) => String(task.status || "").toUpperCase() !== "CANCELLED").map((task) => ({
         id: task.id,
         version: task.version ?? 0,
         statusCode: String(task.status || "").toUpperCase(),
@@ -315,16 +299,19 @@ async function hydratePatientStatus(patient, kind) {
         dueAt: task.dueAt || null,
         completedAt: task.completedAt || null
     }));
-    patient.alerts = (alerts || []).map((alert) => ({
+    patient.alerts = (alerts || []).filter((alert) => ["OPEN", "ACKNOWLEDGED", "ESCALATED"].includes(String(alert.status || "").toUpperCase())).map((alert) => ({
         id: alert.id,
-        title: alert.alertType || "患者告警",
+        version: Number(alert.version || 0),
+        status: String(alert.status || "").toUpperCase(),
+        title: formatAlertTitle(alert.alertType),
         level: alert.severity === "URGENT" || alert.severity === "CRITICAL" ? "urgent" : "attention",
-        time: alert.createdAt ? new Date(alert.createdAt).toLocaleString() : "刚刚",
-        detail: alert.description || alert.status || "请查看告警详情"
+        time: alert.detectedAt ? new Date(alert.detectedAt).toLocaleString() : "刚刚",
+        detail: alert.evidenceText || alert.status || "请查看告警详情"
     }));
     synchronizePatientTaskSummary(patient, status);
     patient.checkins = (checkins || []).map((item) => ({
-        time: item.submittedAt ? new Date(item.submittedAt).toLocaleString() : item.checkinDate,
+        date: item.checkinDate || localDate(item.submittedAt),
+        time: item.submittedAt ? new Date(item.submittedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--",
         title: item.incidentType || "每日打卡",
         detail: item.originalText || `睡眠：${item.sleepStatus || "-"}，饮水：${item.hydrationStatus || "-"}`
     }));
@@ -628,7 +615,7 @@ async function renderCaregiverStatus() {
         patient = patients[0];
     }
     root().innerHTML = `
-        ${header("家属查看", `${patient.name}的今日状态`, "家属端优先展示当天状态、任务完成情况和异常提醒。", `<button class="button primary">联系医生</button>`)}
+        ${header("家属查看", `${patient.name}的今日状态`, "家属端优先展示当天状态、任务完成情况和异常提醒。", `<button class="button" type="button" data-health-record>新增健康记录</button><button class="button primary" type="button" data-contact-doctor>联系医生</button>`)}
         ${notice}
         ${patientTabs()}
         ${summaryGrid(patient)}
@@ -648,10 +635,11 @@ async function renderCaregiverStatus() {
     bindPatientTabs(renderCaregiverStatus);
     bindSummaryJumps();
     bindTaskActions();
-    const contactButton = document.querySelector(".page-header .button.primary");
+    const contactButton = document.querySelector("[data-contact-doctor]");
     if (contactButton) {
         contactButton.addEventListener("click", () => contactDoctor(patient));
     }
+    bindHealthRecordAction(patient, "family", renderCaregiverStatus);
     scheduleCaregiverStatusRefresh();
 }
 
@@ -718,45 +706,175 @@ async function renderDoctorDetail() {
     }
     const patient = selectedPatient();
     root().innerHTML = `
-        ${header("患者详情", `${patient.name} · ${patient.id}`, "集中查看患者基本信息、近期打卡、照护计划和风险提示。", `<a class="button" href="#/doctor/patients">返回患者列表</a><a class="button primary" href="#/doctor/alerts-review">处理告警</a>`)}
+        ${header("患者详情", `${patient.name} · ${patient.id}`, "集中查看患者基本信息、最近 7 天打卡和风险提示。", `<a class="button" href="#/doctor/patients">返回患者列表</a><button class="button" type="button" data-health-record>新增健康记录</button><a class="button primary" href="#/doctor/alerts-review">处理告警</a>`)}
         ${notice}
         ${patientTabs()}
         <section class="detail-layout">
-            <div class="grid">
-                <div class="card">
-                    <h2 class="card-title">基本信息</h2>
-                    ${patientProfile(patient)}
-                </div>
-                <div class="card">
-                    <h2 class="card-title">当前照护方案</h2>
-                    <div class="plan-preview">${patient.plan}</div>
-                </div>
+            <div class="card">
+                <h2 class="card-title">基本信息</h2>
+                ${patientProfile(patient)}
             </div>
             <div class="card">
                 <h2 class="card-title">最近记录</h2>
-                <div class="timeline">
-                    ${patient.checkins.map((item) => `
-                        <div class="timeline-item">
-                            <div class="item-title">${item.time} · ${item.title}</div>
-                            <div class="item-meta">${item.detail}</div>
-                        </div>
-                    `).join("")}
-                </div>
+                ${recentSevenDayCheckins(patient.checkins)}
             </div>
         </section>
     `;
     bindPatientTabs(renderDoctorDetail);
+    bindHealthRecordAction(patient, "clinical", renderDoctorDetail);
+}
+
+function formatAlertTitle(type) {
+    const labels = {
+        BLOOD_PRESSURE_ELEVATED: "血压偏高",
+        BLOOD_PRESSURE_CRITICAL: "血压紧急偏高",
+        TEMPERATURE_ELEVATED: "体温偏高",
+        TEMPERATURE_ELEVATED_URGENT: "体温紧急偏高",
+        HEART_RATE_ABNORMAL: "心率异常",
+        HEART_RATE_CRITICAL: "心率紧急异常",
+        OXYGEN_SATURATION_LOW: "血氧偏低",
+        OXYGEN_SATURATION_CRITICAL: "血氧紧急偏低",
+        BLOOD_GLUCOSE_ELEVATED: "血糖偏高",
+        BLOOD_GLUCOSE_ELEVATED_URGENT: "血糖紧急偏高",
+        EMERGENCY_SYMPTOM_REPORTED: "患者上报紧急症状",
+        TASK_OVERDUE: "照护任务超时"
+    };
+    return labels[type] || type || "患者告警";
+}
+
+function healthCategoryLabel(category) {
+    return {
+        BLOOD_PRESSURE: "血压",
+        BLOOD_GLUCOSE: "血糖",
+        TEMPERATURE: "体温",
+        HEART_RATE: "心率",
+        OXYGEN_SATURATION: "血氧",
+        WEIGHT: "体重",
+        MEDICATION: "用药情况",
+        SYMPTOM: "症状",
+        SAFETY_STATUS: "安全情况",
+        OTHER: "其他"
+    }[category] || category;
+}
+
+function healthFields(category) {
+    if (category === "BLOOD_PRESSURE") {
+        return `<div class="grid two"><div class="field"><label>收缩压（mmHg）<input name="primaryValue" type="number" min="0" step="0.1" required></label></div><div class="field"><label>舒张压（mmHg）<input name="secondaryValue" type="number" min="0" step="0.1" required></label></div></div>`;
+    }
+    if (["MEDICATION", "SYMPTOM", "SAFETY_STATUS", "OTHER"].includes(category)) {
+        return `<div class="field"><label>记录内容<textarea name="recordText" rows="5" required placeholder="填写一项具体情况"></textarea></label></div>`;
+    }
+    const unit = {
+        BLOOD_GLUCOSE: "mmol/L",
+        TEMPERATURE: "°C",
+        HEART_RATE: "bpm",
+        OXYGEN_SATURATION: "%",
+        WEIGHT: "kg"
+    }[category] || "";
+    return `<div class="field"><label>数值${unit ? `（${unit}）` : ""}<input name="primaryValue" type="number" min="0" step="0.1" required></label></div><input type="hidden" name="unit" value="${unit}"><div class="field"><label>补充说明（可选）<textarea name="recordText" rows="3" placeholder="例如测量时间、身体感受"></textarea></label></div>`;
+}
+
+function bindHealthRecordAction(patient, kind, rerender) {
+    const button = document.querySelector("[data-health-record]");
+    if (button) button.addEventListener("click", () => openHealthRecordModal(patient, kind, rerender));
+}
+
+function openHealthRecordModal(patient, kind, rerender) {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-backdrop";
+    overlay.innerHTML = `
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="health-record-title">
+            <div class="modal-header"><div><h2 id="health-record-title">新增健康记录</h2><div class="item-meta">${escapeHtml(patient.name)} · 一次只记录一个项目</div></div><button class="button icon-button" type="button" data-modal-close aria-label="关闭">×</button></div>
+            <div class="field"><label>记录项目<select name="healthCategory"><option value="BLOOD_PRESSURE">血压</option><option value="BLOOD_GLUCOSE">血糖</option><option value="TEMPERATURE">体温</option><option value="HEART_RATE">心率</option><option value="OXYGEN_SATURATION">血氧</option><option value="WEIGHT">体重</option><option value="MEDICATION">用药情况</option><option value="SYMPTOM">症状</option><option value="SAFETY_STATUS">安全情况</option><option value="OTHER">其他</option></select></label></div>
+            <div data-health-fields></div>
+            <div class="toolbar modal-actions"><button class="button" type="button" data-modal-close>取消</button><button class="button primary" type="button" data-health-submit>保存记录</button></div>
+        </div>`;
+    document.body.appendChild(overlay);
+    const category = overlay.querySelector("[name=healthCategory]");
+    const renderFields = () => {
+        overlay.querySelector("[data-health-fields]").innerHTML = healthFields(category.value);
+    };
+    renderFields();
+    category.addEventListener("change", renderFields);
+    overlay.querySelectorAll("[data-modal-close]").forEach((button) => button.addEventListener("click", () => overlay.remove()));
+    overlay.querySelector("[data-health-submit]").addEventListener("click", async () => {
+        const valueOf = (name) => overlay.querySelector(`[name="${name}"]`)?.value || "";
+        const number = (name) => valueOf(name) === "" ? null : Number(valueOf(name));
+        const payload = {
+            category: category.value,
+            primaryValue: number("primaryValue"),
+            secondaryValue: number("secondaryValue"),
+            unit: valueOf("unit") || (category.value === "BLOOD_PRESSURE" ? "mmHg" : ""),
+            recordText: valueOf("recordText"),
+            idempotencyKey: `web-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        };
+        const submit = overlay.querySelector("[data-health-submit]");
+        submit.disabled = true;
+        try {
+            const result = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/health-records`, { method: "POST", body: JSON.stringify(payload) });
+            overlay.remove();
+            window.alert(result.alert ? `记录已保存，并生成${result.alert.severity === "URGENT" ? "紧急" : "关注"}告警。` : "健康记录已保存。");
+            await rerender();
+        } catch (error) {
+            submit.disabled = false;
+            window.alert(error.message);
+        }
+    });
+}
+
+function recentSevenDayCheckins(checkins) {
+    const days = recentSevenDays();
+    const itemsByDate = new Map();
+    (checkins || []).forEach((item) => {
+        const date = item.date || "";
+        if (!itemsByDate.has(date)) itemsByDate.set(date, []);
+        itemsByDate.get(date).push(item);
+    });
+    return `<div class="timeline">${days.map((day) => {
+        const items = itemsByDate.get(day.value) || [];
+        return `
+            <div class="timeline-item">
+                <div class="item-title">${day.label}</div>
+                ${items.length ? items.map((item) => `
+                    <div class="item-meta">${escapeHtml(item.time)} ${escapeHtml(item.title)}：${escapeHtml(item.detail)}</div>
+                `).join("") : '<div class="item-meta">暂无打卡</div>'}
+            </div>
+        `;
+    }).join("")}</div>`;
+}
+
+function recentSevenDayRange() {
+    const days = recentSevenDays();
+    return { from: days[0].value, to: days[days.length - 1].value };
+}
+
+function recentSevenDays() {
+    const today = new Date();
+    return Array.from({ length: 7 }, (_, index) => {
+        const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (6 - index));
+        const value = localDate(date);
+        return { value, label: `${value} 周${["日", "一", "二", "三", "四", "五", "六"][date.getDay()]}` };
+    });
+}
+
+function localDate(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
 }
 
 async function renderAlertsAndReview() {
-    const source = livePatients.length ? livePatients : patients;
-    const urgentPatients = source.filter((patient) => patient.alerts.length > 0);
+    let urgentPatients = [];
     let draftList = [];
     let draftDetail = null;
     let notice = "";
     try {
         await loadPatients("clinical");
-        await hydratePatientStatus(selectedPatient(), "clinical");
+        await Promise.all(livePatients.map((patient) => hydratePatientStatus(patient, "clinical").catch(() => patient)));
+        urgentPatients = livePatients.filter((patient) => patient.alerts.length > 0);
         draftList = await careApi(`${apiPrefix("clinical")}/plan-drafts`);
         const routeDraftId = routeParams().get("draftId");
         const selectedId = routeDraftId || draftList.find((draft) => draft.status === "待审核")?.id || draftList[0]?.id || "";
@@ -765,11 +883,12 @@ async function renderAlertsAndReview() {
         }
     } catch (error) {
         notice = backendUnavailableMessage(error);
+        urgentPatients = [];
         draftList = [];
     }
     const activeDraftId = draftDetail?.id || draftList.find((draft) => draft.status === "待审核")?.id || draftList[0]?.id || "";
     root().innerHTML = `
-        ${header("告警与审核", "告警中心和方案审核", "", `<button class="button">批量忽略低风险</button><button class="button primary">确认当前方案</button>`)}
+        ${header("告警与审核", "告警中心和方案审核", "", `<button class="button" type="button" data-alert-resolve-attention>批量解决关注告警</button><button class="button primary" type="button" data-draft-confirm-header>确认当前方案</button>`)}
         ${notice}
         <section class="grid two">
             <div class="card">
@@ -783,6 +902,10 @@ async function renderAlertsAndReview() {
                                     <div class="item-meta">${alert.time} · ${alert.detail}</div>
                                 </div>
                                 <span class="badge ${alert.level === "urgent" ? "red" : "amber"}">${alert.level === "urgent" ? "紧急" : "关注"}</span>
+                            </div>
+                            <div class="toolbar" style="margin-top: 10px;">
+                                ${alert.status === "OPEN" ? `<button class="button" type="button" data-alert-acknowledge data-alert-id="${alert.id}" data-alert-version="${alert.version}">确认关注</button>` : ""}
+                                <button class="button ${alert.level === "urgent" ? "primary" : ""}" type="button" data-alert-resolve data-alert-id="${alert.id}" data-alert-version="${alert.version}">标记已处理</button>
                             </div>
                         </div>
                     `)).join("") || `<div class="empty-state">当前没有告警。</div>`}
@@ -808,6 +931,7 @@ async function renderAlertsAndReview() {
         </section>
     `;
     bindDraftActions(draftDetail);
+    bindAlertActions(urgentPatients);
 }
 
 function draftDetailPanel(draft) {
@@ -851,6 +975,13 @@ function bindDraftActions(draft) {
     document.querySelectorAll("[data-draft-id]").forEach((button) => {
         button.addEventListener("click", () => selectDraft(button.dataset.draftId));
     });
+    const headerConfirmButton = document.querySelector("[data-draft-confirm-header]");
+    if (headerConfirmButton) {
+        headerConfirmButton.disabled = !draft || !draft.editable;
+        headerConfirmButton.addEventListener("click", () => {
+            document.querySelector("[data-draft-confirm]")?.click();
+        });
+    }
     if (!draft) return;
     const saveButton = document.querySelector("[data-draft-save]");
     const confirmButton = document.querySelector("[data-draft-confirm]");
@@ -884,6 +1015,71 @@ function bindDraftActions(draft) {
                 window.alert(error.message);
             }
         });
+    }
+}
+
+function bindAlertActions(patients) {
+    document.querySelectorAll("[data-alert-acknowledge]").forEach((button) => {
+        button.addEventListener("click", async () => {
+            await updateAlert(button, "acknowledge", {
+                version: Number(button.dataset.alertVersion || 0),
+                note: "医生已确认关注该告警"
+            });
+        });
+    });
+    document.querySelectorAll("[data-alert-resolve]").forEach((button) => {
+        button.addEventListener("click", async () => {
+            await updateAlert(button, "resolve", {
+                version: Number(button.dataset.alertVersion || 0),
+                falseAlarm: false,
+                note: "医生已处理该告警"
+            });
+        });
+    });
+
+    const resolveAttentionButton = document.querySelector("[data-alert-resolve-attention]");
+    if (!resolveAttentionButton) return;
+    const attentionAlerts = patients.flatMap((patient) => patient.alerts)
+        .filter((alert) => alert.level === "attention");
+    resolveAttentionButton.disabled = attentionAlerts.length === 0;
+    resolveAttentionButton.addEventListener("click", async () => {
+        if (!attentionAlerts.length || !window.confirm(`确认将 ${attentionAlerts.length} 条关注告警标记为已处理？`)) return;
+        resolveAttentionButton.disabled = true;
+        try {
+            const results = await Promise.allSettled(attentionAlerts.map((alert) => careApi(
+                `${apiPrefix("clinical")}/alerts/${alert.id}/resolve`, {
+                    method: "POST",
+                    body: JSON.stringify({
+                        version: alert.version,
+                        falseAlarm: false,
+                        note: "医生批量处理关注告警"
+                    })
+                }
+            )));
+            const failed = results.filter((result) => result.status === "rejected").length;
+            if (failed) {
+                window.alert(`${attentionAlerts.length - failed} 条关注告警已处理，${failed} 条处理失败，请刷新后重试。`);
+            }
+            await renderAlertsAndReview();
+        } catch (error) {
+            window.alert(error.message);
+            resolveAttentionButton.disabled = false;
+        }
+    });
+}
+
+async function updateAlert(button, action, payload) {
+    if (button.disabled) return;
+    button.disabled = true;
+    try {
+        await careApi(`${apiPrefix("clinical")}/alerts/${button.dataset.alertId}/${action}`, {
+            method: "POST",
+            body: JSON.stringify(payload)
+        });
+        await renderAlertsAndReview();
+    } catch (error) {
+        button.disabled = false;
+        window.alert(error.message);
     }
 }
 

@@ -95,6 +95,33 @@ class JdbcAgentRunQueryRepositoryTests {
         AgentRunHandle second = writer.createRun("WECHAT", "session-b", "second", "context-2");
         Thread.sleep(5);
         writer.createRun("WECHAT", "other-session", "other", "context-3");
+        writer.appendStep(
+                second,
+                AgentRunStepType.MODEL_ROUND,
+                AgentRunStepStatus.SUCCESS,
+                1,
+                "",
+                "messages=2",
+                "tool_calls=[weather]",
+                Map.of("tool_count", 1));
+        writer.appendStep(
+                second,
+                AgentRunStepType.TOOL_CALL,
+                AgentRunStepStatus.STARTED,
+                1,
+                "weather",
+                "city=hz",
+                "",
+                Map.of());
+        writer.appendStep(
+                second,
+                AgentRunStepType.TOOL_RESULT,
+                AgentRunStepStatus.FAILED,
+                1,
+                "weather",
+                "city=hz",
+                "db down",
+                Map.of());
         writer.completeRun(first, AgentRunStatus.SUCCEEDED, "FINAL_ANSWER", "first-ok");
         writer.completeRun(second, AgentRunStatus.FAILED, "TOOL_FAILURE", "second-failed");
 
@@ -109,6 +136,12 @@ class JdbcAgentRunQueryRepositoryTests {
         assertThat(summary.status()).isEqualTo(AgentRunStatus.FAILED);
         assertThat(summary.stopReason()).isEqualTo("TOOL_FAILURE");
         assertThat(summary.finalReplySummary()).isEqualTo("second-failed");
+        assertThat(summary.stats().totalStepCount()).isEqualTo(3);
+        assertThat(summary.stats().modelRoundCount()).isEqualTo(1);
+        assertThat(summary.stats().toolCallCount()).isEqualTo(1);
+        assertThat(summary.stats().failedStepCount()).isEqualTo(1);
+        assertThat(summary.stats().skippedStepCount()).isZero();
+        assertThat(summary.stats().phaseCount()).isEqualTo(2);
     }
 
     private void assertUsingTestDatabase() {

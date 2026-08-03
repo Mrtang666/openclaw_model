@@ -13,7 +13,8 @@ public record AgentRunSummaryView(
         String stopReason,
         String finalReplySummary,
         Instant startedAt,
-        Instant completedAt) {
+        Instant completedAt,
+        AgentRunDiagnosticStatsView stats) {
 
     public AgentRunSummaryView {
         runKey = clean(runKey);
@@ -23,6 +24,7 @@ public record AgentRunSummaryView(
         contextSummary = clean(contextSummary);
         stopReason = clean(stopReason);
         finalReplySummary = clean(finalReplySummary);
+        stats = stats == null ? AgentRunDiagnosticStatsView.empty() : stats;
     }
 
     private static String clean(String value) {

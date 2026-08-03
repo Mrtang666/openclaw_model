@@ -56,6 +56,10 @@ class AgentRunTraceControllerTests {
                 .andExpect(jsonPath("$.contextSummary").value("context token=[REDACTED]"))
                 .andExpect(jsonPath("$.status").value("SUCCEEDED"))
                 .andExpect(jsonPath("$.finalReplySummary").value("reply password=[REDACTED]"))
+                .andExpect(jsonPath("$.stats.totalStepCount").value(1))
+                .andExpect(jsonPath("$.stats.failedStepCount").value(0))
+                .andExpect(jsonPath("$.stats.skippedStepCount").value(1))
+                .andExpect(jsonPath("$.stats.phaseCount").value(1))
                 .andExpect(jsonPath("$.steps[0].stepIndex").value(1))
                 .andExpect(jsonPath("$.steps[0].stepType").value("POLICY_DECISION"))
                 .andExpect(jsonPath("$.steps[0].stepPhase").value("POLICY"))
@@ -122,6 +126,11 @@ class AgentRunTraceControllerTests {
                 .andExpect(jsonPath("$[0].status").value("FAILED"))
                 .andExpect(jsonPath("$[0].stopReason").value("TOOL_FAILURE"))
                 .andExpect(jsonPath("$[0].finalReplySummary").value("token=[REDACTED]"))
+                .andExpect(jsonPath("$[0].stats.totalStepCount").value(4))
+                .andExpect(jsonPath("$[0].stats.modelRoundCount").value(1))
+                .andExpect(jsonPath("$[0].stats.toolCallCount").value(2))
+                .andExpect(jsonPath("$[0].stats.failedStepCount").value(1))
+                .andExpect(jsonPath("$[0].stats.phaseCount").value(3))
                 .andExpect(content().string(not(containsString("13912345678"))))
                 .andExpect(content().string(not(containsString("carol@example.com"))))
                 .andExpect(content().string(not(containsString("raw-token"))));
@@ -227,6 +236,7 @@ class AgentRunTraceControllerTests {
                 "TOOL_FAILURE",
                 "token=raw-token",
                 Instant.parse("2026-08-03T06:00:00Z"),
-                Instant.parse("2026-08-03T06:00:01Z"));
+                Instant.parse("2026-08-03T06:00:01Z"),
+                new AgentRunDiagnosticStatsView(4, 1, 2, 1, 0, 3));
     }
 }

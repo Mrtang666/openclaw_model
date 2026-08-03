@@ -15,6 +15,7 @@ import java.util.Optional;
 public class JdbcAgentRunQueryRepository implements AgentRunQueryRepository {
 
     private final JdbcTemplate jdbcTemplate;
+    private final AgentRunStatsCalculator statsCalculator = new AgentRunStatsCalculator();
 
     public JdbcAgentRunQueryRepository(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
@@ -39,16 +40,7 @@ public class JdbcAgentRunQueryRepository implements AgentRunQueryRepository {
             return Optional.empty();
         }
         AgentRunSummaryView run = runs.get(0);
-        List<AgentRunStepView> steps = jdbcTemplate.query(
-                """
-                        SELECT id, step_index, step_type, round_number, tool_name, status,
-                               input_summary, output_summary, metadata_json, created_at
-                        FROM agent_run_steps
-                        WHERE run_id = ?
-                        ORDER BY step_index ASC
-                        """,
-                stepMapper(),
-                run.runId());
+        List<AgentRunStepView> steps = findSteps(run.runId());
         return Optional.of(new AgentRunTraceView(
                 run.runId(),
                 run.runKey(),
@@ -81,7 +73,41 @@ public class JdbcAgentRunQueryRepository implements AgentRunQueryRepository {
                         """,
                 runSummaryMapper(),
                 cleanSessionKey,
-                limit);
+                limit).stream()
+                .map(this::withStats)
+                .toList();
+    }
+
+    private AgentRunSummaryView withStats(AgentRunSummaryView run) {
+        if (run == null) {
+            return null;
+        }
+        return new AgentRunSummaryView(
+                run.runId(),
+                run.runKey(),
+                run.channel(),
+                run.sessionKey(),
+                run.userText(),
+                run.contextSummary(),
+                run.status(),
+                run.stopReason(),
+                run.finalReplySummary(),
+                run.startedAt(),
+                run.completedAt(),
+                statsCalculator.stats(findSteps(run.runId())));
+    }
+
+    private List<AgentRunStepView> findSteps(long runId) {
+        return jdbcTemplate.query(
+                """
+                        SELECT id, step_index, step_type, round_number, tool_name, status,
+                               input_summary, output_summary, metadata_json, created_at
+                        FROM agent_run_steps
+                        WHERE run_id = ?
+                        ORDER BY step_index ASC
+                        """,
+                stepMapper(),
+                runId);
     }
 
     private RowMapper<AgentRunSummaryView> runSummaryMapper() {
@@ -96,7 +122,8 @@ public class JdbcAgentRunQueryRepository implements AgentRunQueryRepository {
                 rs.getString("stop_reason"),
                 rs.getString("final_reply_summary"),
                 instant(rs, "started_at"),
-                instant(rs, "completed_at"));
+                instant(rs, "completed_at"),
+                AgentRunDiagnosticStatsView.empty());
     }
 
     private RowMapper<AgentRunStepView> stepMapper() {

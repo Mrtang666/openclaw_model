@@ -9,18 +9,27 @@ public class AgentRunDiagnosticMapper {
 
     private final AgentTraceRedactionPolicy redactionPolicy;
     private final AgentRunPhaseClassifier phaseClassifier;
+    private final AgentRunStatsCalculator statsCalculator;
 
     public AgentRunDiagnosticMapper() {
-        this(new AgentTraceRedactionPolicy(), new AgentRunPhaseClassifier());
+        this(new AgentTraceRedactionPolicy(), new AgentRunPhaseClassifier(), new AgentRunStatsCalculator());
     }
 
     AgentRunDiagnosticMapper(AgentTraceRedactionPolicy redactionPolicy) {
-        this(redactionPolicy, new AgentRunPhaseClassifier());
+        this(redactionPolicy, new AgentRunPhaseClassifier(), new AgentRunStatsCalculator());
     }
 
     AgentRunDiagnosticMapper(AgentTraceRedactionPolicy redactionPolicy, AgentRunPhaseClassifier phaseClassifier) {
+        this(redactionPolicy, phaseClassifier, new AgentRunStatsCalculator(phaseClassifier));
+    }
+
+    AgentRunDiagnosticMapper(
+            AgentTraceRedactionPolicy redactionPolicy,
+            AgentRunPhaseClassifier phaseClassifier,
+            AgentRunStatsCalculator statsCalculator) {
         this.redactionPolicy = redactionPolicy == null ? new AgentTraceRedactionPolicy() : redactionPolicy;
         this.phaseClassifier = phaseClassifier == null ? new AgentRunPhaseClassifier() : phaseClassifier;
+        this.statsCalculator = statsCalculator == null ? new AgentRunStatsCalculator(this.phaseClassifier) : statsCalculator;
     }
 
     public AgentRunDiagnosticTraceView toDiagnostic(AgentRunTraceView trace) {
@@ -42,6 +51,7 @@ public class AgentRunDiagnosticMapper {
                 redact(trace.finalReplySummary()),
                 trace.startedAt(),
                 trace.completedAt(),
+                statsCalculator.stats(trace.steps()),
                 phaseClassifier.phases(trace.steps()),
                 steps);
     }
@@ -61,7 +71,8 @@ public class AgentRunDiagnosticMapper {
                 summary.stopReason(),
                 redact(summary.finalReplySummary()),
                 summary.startedAt(),
-                summary.completedAt());
+                summary.completedAt(),
+                summary.stats());
     }
 
     private AgentRunDiagnosticStepView toDiagnostic(AgentRunStepView step) {

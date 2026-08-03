@@ -13,5 +13,10 @@ public record AgentRunDiagnosticSummaryView(
         String stopReason,
         String finalReplySummary,
         Instant startedAt,
-        Instant completedAt) {
+        Instant completedAt,
+        AgentRunDiagnosticStatsView stats) {
+
+    public AgentRunDiagnosticSummaryView {
+        stats = stats == null ? AgentRunDiagnosticStatsView.empty() : stats;
+    }
 }

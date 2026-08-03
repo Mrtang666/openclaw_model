@@ -20,6 +20,10 @@ class AgentRunDiagnosticMapperTests {
         assertThat(diagnostic.userText()).doesNotContain("alice@example.com", "13812345678");
         assertThat(diagnostic.contextSummary()).contains("token=[REDACTED]");
         assertThat(diagnostic.finalReplySummary()).contains("password=[REDACTED]");
+        assertThat(diagnostic.stats().totalStepCount()).isEqualTo(1);
+        assertThat(diagnostic.stats().toolCallCount()).isZero();
+        assertThat(diagnostic.stats().failedStepCount()).isZero();
+        assertThat(diagnostic.stats().phaseCount()).isEqualTo(1);
         assertThat(diagnostic.steps()).hasSize(1);
         AgentRunDiagnosticStepView step = diagnostic.steps().get(0);
         assertThat(step.stepPhase()).isEqualTo(AgentRunStepPhase.TOOL);
@@ -42,6 +46,12 @@ class AgentRunDiagnosticMapperTests {
         assertThat(diagnostic.userText()).contains("139****5678");
         assertThat(diagnostic.contextSummary()).contains("c***@example.com");
         assertThat(diagnostic.finalReplySummary()).contains("token=[REDACTED]");
+        assertThat(diagnostic.stats().totalStepCount()).isEqualTo(3);
+        assertThat(diagnostic.stats().modelRoundCount()).isEqualTo(1);
+        assertThat(diagnostic.stats().toolCallCount()).isEqualTo(1);
+        assertThat(diagnostic.stats().failedStepCount()).isEqualTo(1);
+        assertThat(diagnostic.stats().skippedStepCount()).isZero();
+        assertThat(diagnostic.stats().phaseCount()).isEqualTo(2);
         assertThat(diagnostic.userText()).doesNotContain("13912345678");
         assertThat(diagnostic.contextSummary()).doesNotContain("carol@example.com");
         assertThat(diagnostic.finalReplySummary()).doesNotContain("raw-token");
@@ -85,6 +95,7 @@ class AgentRunDiagnosticMapperTests {
                 "TOOL_FAILURE",
                 "token=raw-token",
                 Instant.parse("2026-08-03T06:00:00Z"),
-                Instant.parse("2026-08-03T06:00:01Z"));
+                Instant.parse("2026-08-03T06:00:01Z"),
+                new AgentRunDiagnosticStatsView(3, 1, 1, 1, 0, 2));
     }
 }

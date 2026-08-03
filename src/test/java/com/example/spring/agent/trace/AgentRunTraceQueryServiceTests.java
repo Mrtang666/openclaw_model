@@ -100,6 +100,7 @@ class AgentRunTraceQueryServiceTests {
                 "",
                 "",
                 Instant.parse("2026-08-03T06:00:00Z"),
-                null);
+                null,
+                AgentRunDiagnosticStatsView.empty());
     }
 }

@@ -14,6 +14,9 @@ import java.util.Optional;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -32,8 +35,15 @@ class AgentRunTraceControllerTests {
     @MockBean
     private AgentRunTraceQueryService queryService;
 
+    @MockBean
+    private AgentTraceAccessPolicy accessPolicy;
+
+    @MockBean
+    private AgentTraceAccessAuditService auditService;
+
     @Test
     void findsRunByRunKey() throws Exception {
+        allowAccessWithoutConfiguredKey();
         when(queryService.findRun("agent-run-1")).thenReturn(Optional.of(traceView("agent-run-1")));
 
         mockMvc.perform(get("/api/agent-runs/agent-run-1"))
@@ -56,22 +66,37 @@ class AgentRunTraceControllerTests {
                 .andExpect(content().string(not(containsString("sk-live-123"))))
                 .andExpect(content().string(not(containsString("top-secret"))));
 
+        verify(accessPolicy).authorize("");
+        verify(auditService).record(argThat(event ->
+                "anonymous".equals(event.actor())
+                        && "FIND_RUN".equals(event.action())
+                        && "RUN".equals(event.targetType())
+                        && "agent-run-1".equals(event.targetKey())
+                        && event.allowed()
+                        && "API_KEY_NOT_CONFIGURED".equals(event.reason())));
         verify(queryService).findRun("agent-run-1");
     }
 
     @Test
     void returnsNotFoundWhenRunDoesNotExist() throws Exception {
+        allowAccessWithoutConfiguredKey();
         when(queryService.findRun("missing-run")).thenReturn(Optional.empty());
 
         mockMvc.perform(get("/api/agent-runs/missing-run"))
                 .andExpect(status().isNotFound())
                 .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")));
 
+        verify(auditService).record(argThat(event ->
+                "FIND_RUN".equals(event.action())
+                        && "RUN".equals(event.targetType())
+                        && "missing-run".equals(event.targetKey())
+                        && event.allowed()));
         verify(queryService).findRun("missing-run");
     }
 
     @Test
     void findsRecentRunsBySessionKey() throws Exception {
+        allowAccessWithoutConfiguredKey();
         when(queryService.findRecentRuns("session-a", 5))
                 .thenReturn(List.of(summaryView("agent-run-2")));
 
@@ -92,16 +117,51 @@ class AgentRunTraceControllerTests {
                 .andExpect(content().string(not(containsString("carol@example.com"))))
                 .andExpect(content().string(not(containsString("raw-token"))));
 
+        verify(accessPolicy).authorize("");
+        verify(auditService).record(argThat(event ->
+                "FIND_RECENT_RUNS".equals(event.action())
+                        && "SESSION".equals(event.targetType())
+                        && "session-a".equals(event.targetKey())
+                        && event.allowed()));
         verify(queryService).findRecentRuns("session-a", 5);
     }
 
     @Test
     void usesDefaultLimitForRecentRuns() throws Exception {
+        allowAccessWithoutConfiguredKey();
         mockMvc.perform(get("/api/agent-runs").param("sessionKey", "session-a"))
                 .andExpect(status().isOk())
                 .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")));
 
         verify(queryService).findRecentRuns("session-a", 20);
+    }
+
+    @Test
+    void returnsForbiddenAndAuditsWhenAccessDenied() throws Exception {
+        when(accessPolicy.authorize("bad-key"))
+                .thenReturn(new AgentTraceAccessDecision(false, "API_KEY_MISMATCH"));
+
+        mockMvc.perform(get("/api/agent-runs/agent-run-1")
+                        .header("X-OpenClaw-Diagnostic-Key", "bad-key")
+                        .header("X-OpenClaw-Actor", "ops")
+                        .header(HttpHeaders.USER_AGENT, "JUnit"))
+                .andExpect(status().isForbidden())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")));
+
+        verify(auditService).record(argThat(event ->
+                "ops".equals(event.actor())
+                        && "FIND_RUN".equals(event.action())
+                        && "RUN".equals(event.targetType())
+                        && "agent-run-1".equals(event.targetKey())
+                        && !event.allowed()
+                        && "API_KEY_MISMATCH".equals(event.reason())
+                        && "JUnit".equals(event.userAgent())));
+        verify(queryService, never()).findRun(anyString());
+    }
+
+    private void allowAccessWithoutConfiguredKey() {
+        when(accessPolicy.authorize(""))
+                .thenReturn(new AgentTraceAccessDecision(true, "API_KEY_NOT_CONFIGURED"));
     }
 
     private AgentRunTraceView traceView(String runKey) {

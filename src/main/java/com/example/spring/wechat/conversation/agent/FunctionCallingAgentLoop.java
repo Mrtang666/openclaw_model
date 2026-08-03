@@ -6,6 +6,10 @@ import com.example.spring.tool.protocol.function.FunctionCallingModelResponse;
 import com.example.spring.tool.protocol.function.FunctionCallingToolCall;
 import com.example.spring.tool.protocol.validation.ToolCallValidationResult;
 import com.example.spring.tool.protocol.validation.ToolCallValidator;
+import com.example.spring.agent.trace.AgentRunHandle;
+import com.example.spring.agent.trace.AgentRunStatus;
+import com.example.spring.agent.trace.AgentRunStepStatus;
+import com.example.spring.agent.trace.AgentRunTraceService;
 import com.example.spring.skill.SkillDefinition;
 import com.example.spring.skill.SkillManager;
 import com.example.spring.wechat.bot.WechatReply;
@@ -88,6 +92,7 @@ public class FunctionCallingAgentLoop {
     private final WechatToolRegistry toolRegistry;
     private final ToolCallValidator toolCallValidator;
     private final SkillManager skillManager;
+    private final AgentRunTraceService traceService;
     private final int maxLoopRounds;
     private final Clock clock;
     private final ZoneId defaultZoneId;
@@ -98,11 +103,13 @@ public class FunctionCallingAgentLoop {
             WechatToolRegistry toolRegistry,
             ToolCallValidator toolCallValidator,
             ObjectProvider<SkillManager> skillManagerProvider,
+            ObjectProvider<AgentRunTraceService> traceServiceProvider,
             @Value("${agent.tool-calling.max-loop-rounds:5}") int maxLoopRounds,
             Clock clock,
             @Value("${reminder.default-timezone:Asia/Shanghai}") String defaultTimezone) {
         this(client, toolRegistry, toolCallValidator,
                 skillManagerProvider == null ? null : skillManagerProvider.getIfAvailable(),
+                traceServiceProvider == null ? null : traceServiceProvider.getIfAvailable(),
                 maxLoopRounds, clock, defaultTimezone);
     }
 
@@ -111,7 +118,16 @@ public class FunctionCallingAgentLoop {
             WechatToolRegistry toolRegistry,
             int maxLoopRounds) {
         this(client, toolRegistry, new ToolCallValidator(), (SkillManager) null,
-                maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
+                null, maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
+    }
+
+    FunctionCallingAgentLoop(
+            DashScopeFunctionCallingClient client,
+            WechatToolRegistry toolRegistry,
+            int maxLoopRounds,
+            AgentRunTraceService traceService) {
+        this(client, toolRegistry, new ToolCallValidator(), (SkillManager) null,
+                traceService, maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
     }
 
     FunctionCallingAgentLoop(
@@ -121,7 +137,7 @@ public class FunctionCallingAgentLoop {
             Clock clock,
             String defaultTimezone) {
         this(client, toolRegistry, new ToolCallValidator(), (SkillManager) null,
-                maxLoopRounds, clock, defaultTimezone);
+                null, maxLoopRounds, clock, defaultTimezone);
     }
 
     FunctionCallingAgentLoop(
@@ -131,7 +147,7 @@ public class FunctionCallingAgentLoop {
             SkillManager skillManager,
             int maxLoopRounds) {
         this(client, toolRegistry, toolCallValidator, skillManager,
-                maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
+                null, maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
     }
 
     private FunctionCallingAgentLoop(
@@ -139,6 +155,7 @@ public class FunctionCallingAgentLoop {
             WechatToolRegistry toolRegistry,
             ToolCallValidator toolCallValidator,
             SkillManager skillManager,
+            AgentRunTraceService traceService,
             int maxLoopRounds,
             Clock clock,
             String defaultTimezone) {
@@ -146,6 +163,7 @@ public class FunctionCallingAgentLoop {
         this.toolRegistry = toolRegistry;
         this.toolCallValidator = toolCallValidator;
         this.skillManager = skillManager;
+        this.traceService = traceService;
         this.maxLoopRounds = Math.max(1, maxLoopRounds);
         this.clock = clock;
         this.defaultZoneId = ZoneId.of(defaultTimezone);
@@ -166,6 +184,7 @@ public class FunctionCallingAgentLoop {
                         + runtimeSystemPrompt(clock.instant(), request.conversationMode(), toolNameSet(toolDefinitions)),
                 userPrompt(request),
                 request.historyText());
+        AgentRunHandle traceHandle = startTrace(request);
         log.info("Function Calling Agent Loop 开始，userId={}, text={}",
                 request.sessionKey(), preview(request.userText()));
 
@@ -174,19 +193,23 @@ public class FunctionCallingAgentLoop {
             Optional<FunctionCallingModelResponse> response = client.chat(state.messages(), toolDefinitions);
             if (response.isEmpty()) {
                 log.warn("Function Calling Agent Loop 第{}轮模型无响应，userId={}", round, request.sessionKey());
-                return terminalReply(state, AgentLoopStopReason.MODEL_EMPTY);
+                return terminalReply(state, AgentLoopStopReason.MODEL_EMPTY, traceHandle);
             }
 
             FunctionCallingModelResponse modelResponse = response.get();
             if (!modelResponse.hasToolCalls()) {
                 log.info("Function Calling Agent Loop 第{}轮得到最终回复，userId={}, reply={}",
                         round, request.sessionKey(), preview(modelResponse.content()));
+                recordModelRoundTrace(traceHandle, state, round, "final_answer", 0);
                 state.stop(AgentLoopStopReason.FINAL_ANSWER);
+                completeTrace(traceHandle, AgentRunStatus.SUCCEEDED, state.stopReason(), modelResponse.content());
                 return Optional.of(finalReply(modelResponse.content(), state.visibleParts()));
             }
 
             log.info("Function Calling Agent Loop 第{}轮返回工具调用，userId={}, tools={}",
                     round, request.sessionKey(), toolNames(modelResponse.toolCalls()));
+            recordModelRoundTrace(traceHandle, state, round, "tool_calls=" + toolNames(modelResponse.toolCalls()),
+                    modelResponse.toolCalls().size());
             state.messages().add(FunctionCallingMessage.assistantToolCalls(modelResponse.toolCalls()));
             for (FunctionCallingToolCall toolCall : modelResponse.toolCalls()) {
                 ToolCallValidationResult validation = toolCallValidator.validate(toolCall, toolDefinitions);
@@ -194,10 +217,18 @@ public class FunctionCallingAgentLoop {
                     AgentToolExecutionResult validationFailure = invalidToolCallResult(request, toolCall, validation);
                     state.messages().add(FunctionCallingMessage.tool(toolCall.id(), validationFailure.modelText()));
                     state.recordToolFailure(toolCall.name(), validationFailure.modelText());
+                    recordToolResultTrace(
+                            traceHandle,
+                            round,
+                            toolCall.name(),
+                            AgentRunStepStatus.FAILED,
+                            String.valueOf(toolCall.arguments()),
+                            validationFailure.modelText());
                     continue;
                 }
 
                 Map<String, String> arguments = argumentsWithPreviousResult(toolCall, state.previousToolResult());
+                recordToolCallTrace(traceHandle, round, toolCall.name(), String.valueOf(arguments));
                 String toolSignature = toolCallSignature(toolCall.name(), arguments);
                 Optional<String> cachedToolResult = state.successfulToolResult(toolSignature);
                 if (cachedToolResult.isPresent()) {
@@ -207,6 +238,8 @@ public class FunctionCallingAgentLoop {
                     state.messages().add(FunctionCallingMessage.tool(toolCall.id(), skippedResult));
                     recordToolExecution(request, toolCall, skippedResult, "SKIPPED_DUPLICATE");
                     state.recordSkippedToolCall(toolCall.name(), skippedResult);
+                    recordToolResultTrace(traceHandle, round, toolCall.name(), AgentRunStepStatus.SKIPPED,
+                            String.valueOf(arguments), skippedResult);
                     continue;
                 }
 
@@ -219,6 +252,8 @@ public class FunctionCallingAgentLoop {
                     state.messages().add(FunctionCallingMessage.tool(toolCall.id(), skippedResult));
                     recordToolExecution(request, toolCall, skippedResult, "SKIPPED_DUPLICATE");
                     state.recordSkippedToolCall(toolCall.name(), skippedResult);
+                    recordToolResultTrace(traceHandle, round, toolCall.name(), AgentRunStepStatus.SKIPPED,
+                            String.valueOf(arguments), skippedResult);
                     continue;
                 }
 
@@ -229,16 +264,21 @@ public class FunctionCallingAgentLoop {
                     state.messages().add(FunctionCallingMessage.tool(toolCall.id(), skippedResult));
                     recordToolExecution(request, toolCall, skippedResult, "SKIPPED_RAG");
                     state.recordSkippedToolCall(toolCall.name(), skippedResult);
+                    recordToolResultTrace(traceHandle, round, toolCall.name(), AgentRunStepStatus.SKIPPED,
+                            String.valueOf(arguments), skippedResult);
                     continue;
                 }
 
                 AgentToolExecutionResult toolResult = executeTool(
                         request, toolCall, state.rollingHistory(), state.previousToolResult());
                 state.messages().add(FunctionCallingMessage.tool(toolCall.id(), toolResult.modelText()));
+                recordToolResultTrace(traceHandle, round, toolCall.name(), traceStatus(toolResult.status()),
+                        String.valueOf(arguments), toolResult.modelText());
                 if (endsAgentTurnAfterExecution(toolCall.name())) {
                     // Side-effecting and provider-owned tools return their authoritative result
                     // directly, avoiding duplicate actions or rewritten provider responses.
                     state.stop(AgentLoopStopReason.SPECIAL_TOOL_DONE);
+                    completeTrace(traceHandle, AgentRunStatus.SUCCEEDED, state.stopReason(), toolResult.modelText());
                     if (!toolResult.visibleParts().isEmpty()) {
                         return Optional.of(WechatReply.ordered(toolResult.visibleParts()));
                     }
@@ -248,6 +288,7 @@ public class FunctionCallingAgentLoop {
                     state.recordToolFailure(toolCall.name(), toolResult.modelText());
                     if ("map_search".equals(toolCall.name()) && requiresUserClarification(toolResult.modelText())) {
                         state.stop(AgentLoopStopReason.NEEDS_CLARIFICATION);
+                        completeTrace(traceHandle, AgentRunStatus.STOPPED, state.stopReason(), toolResult.modelText());
                         return Optional.of(WechatReply.text(toolResult.modelText()));
                     }
                 }
@@ -257,6 +298,7 @@ public class FunctionCallingAgentLoop {
                     String failedSignature = toolFailureSignature(toolCall.name(), arguments, toolResult.errorMessage());
                     if (!state.addFailedToolSignature(failedSignature) && !state.hasVisibleParts()) {
                         state.stop(AgentLoopStopReason.TOOL_FAILURE);
+                        completeTrace(traceHandle, AgentRunStatus.FAILED, state.stopReason(), state.lastToolFailure());
                         return Optional.of(WechatReply.text(state.lastToolFailure()));
                     }
                 } else if (!toolResult.modelText().isBlank()) {
@@ -266,24 +308,102 @@ public class FunctionCallingAgentLoop {
             }
         }
 
-        return terminalReply(state, AgentLoopStopReason.MAX_ROUNDS);
+        return terminalReply(state, AgentLoopStopReason.MAX_ROUNDS, traceHandle);
     }
 
     private Optional<WechatReply> terminalReply(AgentLoopState state, AgentLoopStopReason reason) {
+        return terminalReply(state, reason, AgentRunHandle.noop());
+    }
+
+    private Optional<WechatReply> terminalReply(AgentLoopState state, AgentLoopStopReason reason, AgentRunHandle traceHandle) {
         if (state == null) {
             return Optional.empty();
         }
         state.stop(reason);
         if (state.hasVisibleParts()) {
+            completeTrace(traceHandle, AgentRunStatus.STOPPED, reason, replyMemoryText(state.visibleParts()));
             return Optional.of(WechatReply.ordered(state.visibleParts()));
         }
         if (!state.lastToolFailure().isBlank()) {
+            completeTrace(traceHandle, AgentRunStatus.FAILED, reason, state.lastToolFailure());
             return Optional.of(WechatReply.text(state.lastToolFailure()));
         }
         if (reason == AgentLoopStopReason.MAX_ROUNDS) {
+            completeTrace(traceHandle, AgentRunStatus.STOPPED, reason, MAX_ROUNDS_MESSAGE);
             return Optional.of(WechatReply.text(MAX_ROUNDS_MESSAGE));
         }
+        completeTrace(traceHandle, AgentRunStatus.STOPPED, reason, "");
         return Optional.empty();
+    }
+
+    private AgentRunHandle startTrace(FunctionCallingAgentRequest request) {
+        if (traceService == null || request == null) {
+            return AgentRunHandle.noop();
+        }
+        return traceService.startWechatRun(request.sessionKey(), request.userText(), request.historyText());
+    }
+
+    private void recordModelRoundTrace(
+            AgentRunHandle handle,
+            AgentLoopState state,
+            int round,
+            String outputSummary,
+            int toolCount) {
+        if (traceService == null) {
+            return;
+        }
+        traceService.recordModelRound(
+                handle,
+                round,
+                "messages=" + (state == null ? 0 : state.messages().size()),
+                outputSummary,
+                Map.of("tool_count", toolCount));
+    }
+
+    private void recordToolCallTrace(
+            AgentRunHandle handle,
+            int round,
+            String toolName,
+            String inputSummary) {
+        if (traceService != null) {
+            traceService.recordToolCall(handle, round, toolName, inputSummary);
+        }
+    }
+
+    private void recordToolResultTrace(
+            AgentRunHandle handle,
+            int round,
+            String toolName,
+            AgentRunStepStatus status,
+            String inputSummary,
+            String outputSummary) {
+        if (traceService != null) {
+            traceService.recordToolResult(handle, round, toolName, status, inputSummary, outputSummary);
+        }
+    }
+
+    private void completeTrace(
+            AgentRunHandle handle,
+            AgentRunStatus status,
+            AgentLoopStopReason stopReason,
+            String finalReplySummary) {
+        if (traceService != null) {
+            traceService.complete(
+                    handle,
+                    status,
+                    stopReason == null ? "" : stopReason.name(),
+                    finalReplySummary);
+        }
+    }
+
+    private AgentRunStepStatus traceStatus(String status) {
+        if ("FAILED".equalsIgnoreCase(status)) {
+            return AgentRunStepStatus.FAILED;
+        }
+        if (status != null && status.toUpperCase(java.util.Locale.ROOT).startsWith("SKIPPED")) {
+            return AgentRunStepStatus.SKIPPED;
+        }
+        return AgentRunStepStatus.SUCCESS;
     }
 
     private boolean shouldSkipWebSearchBecauseRagHasEvidence(

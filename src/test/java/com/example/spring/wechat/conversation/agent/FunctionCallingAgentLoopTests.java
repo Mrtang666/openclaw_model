@@ -5,6 +5,10 @@ import com.example.spring.tool.protocol.function.FunctionCallingMessage;
 import com.example.spring.tool.protocol.function.FunctionCallingModelResponse;
 import com.example.spring.tool.protocol.function.FunctionCallingToolCall;
 import com.example.spring.tool.protocol.validation.ToolCallValidator;
+import com.example.spring.agent.trace.AgentRunHandle;
+import com.example.spring.agent.trace.AgentRunStatus;
+import com.example.spring.agent.trace.AgentRunStepStatus;
+import com.example.spring.agent.trace.AgentRunTraceService;
 import com.example.spring.skill.SkillDefinition;
 import com.example.spring.skill.SkillManager;
 import com.example.spring.skill.SkillReference;
@@ -39,6 +43,91 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class FunctionCallingAgentLoopTests {
+
+    @Test
+    void tracesFinalAnswerRun() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        AgentRunTraceService traceService = mock(AgentRunTraceService.class);
+        AgentRunHandle handle = new AgentRunHandle(11L, "run-11");
+        when(traceService.startWechatRun("clawbot:connection-1:wechat-user-1", "你好", "No previous context"))
+                .thenReturn(handle);
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client,
+                new WechatToolRegistry(List.of(new FakeWeatherTool())),
+                5,
+                traceService);
+        when(client.chat(anyList(), anyList())).thenReturn(Optional.of(
+                new FunctionCallingModelResponse("ok", List.of())));
+
+        WechatReply reply = loop.run(request("你好", WechatConversationMode.GENERAL)).orElseThrow();
+
+        assertThat(reply.text()).isEqualTo("ok");
+        verify(traceService).startWechatRun(
+                "clawbot:connection-1:wechat-user-1",
+                "你好",
+                "No previous context");
+        verify(traceService).recordModelRound(
+                handle,
+                1,
+                "messages=2",
+                "final_answer",
+                Map.of("tool_count", 0));
+        verify(traceService).complete(handle, AgentRunStatus.SUCCEEDED, "FINAL_ANSWER", "ok");
+    }
+
+    @Test
+    void tracesToolCallsAndStopReason() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        AgentRunTraceService traceService = mock(AgentRunTraceService.class);
+        AgentRunHandle handle = new AgentRunHandle(12L, "run-12");
+        when(traceService.startWechatRun("user-1", "Is Hangzhou suitable for going out today?", "No previous context"))
+                .thenReturn(handle);
+        WechatToolRegistry registry = new WechatToolRegistry(List.of(new FakeWeatherTool()));
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(client, registry, 5, traceService);
+        when(client.chat(anyList(), anyList()))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "",
+                        List.of(new FunctionCallingToolCall(
+                                "call_weather_1",
+                                "weather",
+                                Map.of("city", "Hangzhou"))))))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "Hangzhou is sunny today.",
+                        List.of())));
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "Is Hangzhou suitable for going out today?",
+                "No previous context",
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                })).orElseThrow();
+
+        assertThat(reply.text()).isEqualTo("Hangzhou is sunny today.");
+        verify(traceService).recordModelRound(
+                handle,
+                1,
+                "messages=2",
+                "tool_calls=[weather]",
+                Map.of("tool_count", 1));
+        verify(traceService).recordToolCall(
+                handle,
+                1,
+                "weather",
+                "{city=Hangzhou}");
+        verify(traceService).recordToolResult(
+                handle,
+                1,
+                "weather",
+                AgentRunStepStatus.SUCCESS,
+                "{city=Hangzhou}",
+                "weather result for Hangzhou: sunny");
+        verify(traceService).complete(handle, AgentRunStatus.SUCCEEDED, "FINAL_ANSWER", "Hangzhou is sunny today.");
+    }
 
     @Test
     void appliesDifferentSystemPromptsForPatientCaregiverAndDoctorModes() {

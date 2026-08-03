@@ -59,6 +59,17 @@ class JdbcAgentRunRepositoryTests {
                 "city=杭州",
                 "杭州晴",
                 Map.of("status", "SUCCESS"));
+        repository.appendStep(
+                handle,
+                AgentRunStepType.POLICY_DECISION,
+                AgentRunStepStatus.SKIPPED,
+                1,
+                "weather",
+                "signature=weather|{city=杭州}",
+                "跳过重复工具调用",
+                Map.of(
+                        "decision_type", "SKIP_DUPLICATE_TOOL_CALL",
+                        "signature", "weather|{city=杭州}"));
         repository.completeRun(
                 handle,
                 AgentRunStatus.SUCCEEDED,
@@ -79,12 +90,18 @@ class JdbcAgentRunRepositoryTests {
                 "SELECT tool_name FROM agent_run_steps WHERE run_id = ? AND step_type = 'TOOL_RESULT'",
                 String.class,
                 handle.runId());
+        String decisionMetadata = jdbcTemplate.queryForObject(
+                "SELECT metadata_json FROM agent_run_steps WHERE run_id = ? AND step_type = 'POLICY_DECISION'",
+                String.class,
+                handle.runId());
 
         assertThat(runs).isEqualTo(1);
-        assertThat(steps).isEqualTo(2);
+        assertThat(steps).isEqualTo(3);
         assertThat(status).isEqualTo("SUCCEEDED");
         assertThat(stopReason).isEqualTo("FINAL_ANSWER");
         assertThat(toolName).isEqualTo("weather");
+        assertThat(decisionMetadata).contains("SKIP_DUPLICATE_TOOL_CALL");
+        assertThat(decisionMetadata).contains("weather|{city=杭州}");
         assertThat(handle.runKey()).startsWith("agent-run-");
     }
 

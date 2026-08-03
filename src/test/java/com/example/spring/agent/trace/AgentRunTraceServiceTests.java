@@ -23,6 +23,15 @@ class AgentRunTraceServiceTests {
         AgentRunHandle started = service.startWechatRun("session", "hello", "context");
         service.recordModelRound(started, 1, "request", "response", Map.of("tool_count", 0));
         service.recordToolResult(started, 1, "weather", AgentRunStepStatus.SUCCESS, "city=杭州", "晴");
+        service.recordPolicyDecision(
+                started,
+                1,
+                "weather",
+                AgentRunStepStatus.SKIPPED,
+                "SKIP_DUPLICATE_TOOL_CALL",
+                "signature=weather|{city=杭州}",
+                "跳过重复工具调用",
+                Map.of("signature", "weather|{city=杭州}"));
         service.complete(started, AgentRunStatus.SUCCEEDED, "FINAL_ANSWER", "ok");
 
         assertThat(started).isEqualTo(handle);
@@ -44,6 +53,17 @@ class AgentRunTraceServiceTests {
                 "city=杭州",
                 "晴",
                 Map.of());
+        verify(repository).appendStep(
+                handle,
+                AgentRunStepType.POLICY_DECISION,
+                AgentRunStepStatus.SKIPPED,
+                1,
+                "weather",
+                "signature=weather|{city=杭州}",
+                "跳过重复工具调用",
+                Map.of(
+                        "decision_type", "SKIP_DUPLICATE_TOOL_CALL",
+                        "signature", "weather|{city=杭州}"));
         verify(repository).completeRun(handle, AgentRunStatus.SUCCEEDED, "FINAL_ANSWER", "ok");
     }
 

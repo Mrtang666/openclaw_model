@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Service
@@ -78,6 +79,31 @@ public class AgentRunTraceService {
                 inputSummary,
                 outputSummary,
                 Map.of());
+    }
+
+    public void recordPolicyDecision(
+            AgentRunHandle handle,
+            int roundNumber,
+            String toolName,
+            AgentRunStepStatus status,
+            String decisionType,
+            String inputSummary,
+            String outputSummary,
+            Map<String, ?> metadata) {
+        Map<String, Object> mergedMetadata = new LinkedHashMap<>();
+        mergedMetadata.put("decision_type", safe(decisionType));
+        if (metadata != null && !metadata.isEmpty()) {
+            mergedMetadata.putAll(metadata);
+        }
+        appendStep(
+                handle,
+                AgentRunStepType.POLICY_DECISION,
+                status,
+                roundNumber,
+                toolName,
+                inputSummary,
+                outputSummary,
+                mergedMetadata);
     }
 
     public void complete(

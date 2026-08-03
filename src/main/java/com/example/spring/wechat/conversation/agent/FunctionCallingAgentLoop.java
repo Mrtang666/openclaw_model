@@ -245,6 +245,15 @@ public class FunctionCallingAgentLoop {
                     state.messages().add(FunctionCallingMessage.tool(toolCall.id(), skippedResult));
                     recordToolExecution(request, toolCall, skippedResult, "SKIPPED_DUPLICATE");
                     state.recordSkippedToolCall(toolCall.name(), skippedResult);
+                    recordPolicyDecisionTrace(
+                            traceHandle,
+                            round,
+                            toolCall.name(),
+                            AgentRunStepStatus.SKIPPED,
+                            "SKIP_DUPLICATE_TOOL_CALL",
+                            String.valueOf(arguments),
+                            "跳过重复工具调用，复用已成功的工具结果",
+                            Map.of("signature", toolSignature));
                     recordToolResultTrace(traceHandle, round, toolCall.name(), AgentRunStepStatus.SKIPPED,
                             String.valueOf(arguments), skippedResult);
                     continue;
@@ -259,6 +268,15 @@ public class FunctionCallingAgentLoop {
                     state.messages().add(FunctionCallingMessage.tool(toolCall.id(), skippedResult));
                     recordToolExecution(request, toolCall, skippedResult, "SKIPPED_DUPLICATE");
                     state.recordSkippedToolCall(toolCall.name(), skippedResult);
+                    recordPolicyDecisionTrace(
+                            traceHandle,
+                            round,
+                            toolCall.name(),
+                            AgentRunStepStatus.SKIPPED,
+                            "SKIP_DUPLICATE_VOICE_SYNTHESIS",
+                            String.valueOf(arguments),
+                            "跳过重复语音合成，避免重复发送相同音频",
+                            Map.of("signature", voiceSynthesisSignature));
                     recordToolResultTrace(traceHandle, round, toolCall.name(), AgentRunStepStatus.SKIPPED,
                             String.valueOf(arguments), skippedResult);
                     continue;
@@ -271,6 +289,15 @@ public class FunctionCallingAgentLoop {
                     state.messages().add(FunctionCallingMessage.tool(toolCall.id(), skippedResult));
                     recordToolExecution(request, toolCall, skippedResult, "SKIPPED_RAG");
                     state.recordSkippedToolCall(toolCall.name(), skippedResult);
+                    recordPolicyDecisionTrace(
+                            traceHandle,
+                            round,
+                            toolCall.name(),
+                            AgentRunStepStatus.SKIPPED,
+                            "SKIP_WEB_SEARCH_RAG_EVIDENCE",
+                            String.valueOf(arguments),
+                            "知识库 RAG 已提供相关证据，跳过 web_search",
+                            Map.of("reason", "RAG_HAS_EVIDENCE"));
                     recordToolResultTrace(traceHandle, round, toolCall.name(), AgentRunStepStatus.SKIPPED,
                             String.valueOf(arguments), skippedResult);
                     continue;
@@ -285,6 +312,15 @@ public class FunctionCallingAgentLoop {
                     // Side-effecting and provider-owned tools return their authoritative result
                     // directly, avoiding duplicate actions or rewritten provider responses.
                     state.stop(AgentLoopStopReason.SPECIAL_TOOL_DONE);
+                    recordPolicyDecisionTrace(
+                            traceHandle,
+                            round,
+                            toolCall.name(),
+                            AgentRunStepStatus.SUCCESS,
+                            "END_TURN_AFTER_TERMINAL_TOOL",
+                            String.valueOf(arguments),
+                            "工具执行后直接结束本轮 Agent",
+                            Map.of("stop_reason", state.stopReason().name()));
                     completeTrace(traceHandle, AgentRunStatus.SUCCEEDED, state.stopReason(), toolResult.modelText());
                     if (!toolResult.visibleParts().isEmpty()) {
                         return Optional.of(WechatReply.ordered(toolResult.visibleParts()));
@@ -306,6 +342,15 @@ public class FunctionCallingAgentLoop {
                             toolCall.name(), arguments, toolResult.errorMessage());
                     if (!state.addFailedToolSignature(failedSignature) && !state.hasVisibleParts()) {
                         state.stop(AgentLoopStopReason.TOOL_FAILURE);
+                        recordPolicyDecisionTrace(
+                                traceHandle,
+                                round,
+                                toolCall.name(),
+                                AgentRunStepStatus.FAILED,
+                                "STOP_REPEATED_TOOL_FAILURE",
+                                String.valueOf(arguments),
+                                "重复工具失败签名触发本轮 Agent 终止",
+                                Map.of("failure_signature", failedSignature));
                         completeTrace(traceHandle, AgentRunStatus.FAILED, state.stopReason(), state.lastToolFailure());
                         return Optional.of(WechatReply.text(state.lastToolFailure()));
                     }
@@ -387,6 +432,28 @@ public class FunctionCallingAgentLoop {
             String outputSummary) {
         if (traceService != null) {
             traceService.recordToolResult(handle, round, toolName, status, inputSummary, outputSummary);
+        }
+    }
+
+    private void recordPolicyDecisionTrace(
+            AgentRunHandle handle,
+            int round,
+            String toolName,
+            AgentRunStepStatus status,
+            String decisionType,
+            String inputSummary,
+            String outputSummary,
+            Map<String, ?> metadata) {
+        if (traceService != null) {
+            traceService.recordPolicyDecision(
+                    handle,
+                    round,
+                    toolName,
+                    status,
+                    decisionType,
+                    inputSummary,
+                    outputSummary,
+                    metadata);
         }
     }
 

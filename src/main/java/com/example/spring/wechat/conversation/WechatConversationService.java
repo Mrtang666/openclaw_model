@@ -18,6 +18,8 @@ import com.example.spring.wechat.conversation.agent.FunctionCallingAgentLoop;
 import com.example.spring.wechat.conversation.agent.FunctionCallingAgentRequest;
 import com.example.spring.wechat.conversation.memory.WechatAgentMemoryContextBuilder;
 import com.example.spring.wechat.conversation.rag.WechatRagContextService;
+import com.example.spring.wechat.context.ContextBuildRequest;
+import com.example.spring.wechat.context.WechatContextOrchestrator;
 import com.example.spring.wechat.document.model.ParsedDocument;
 import com.example.spring.wechat.document.service.DocumentArchiveService;
 import com.example.spring.wechat.document.service.DocumentParseService;
@@ -64,6 +66,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 import com.example.spring.wechat.conversation.intent.WeatherIntentParser;
 
 /**
@@ -100,6 +103,7 @@ public class WechatConversationService {
     private final WechatAgentMemoryContextBuilder memoryContextBuilder = new WechatAgentMemoryContextBuilder();
     private WebResourceContextService webResourceContextService = new WebResourceContextService();
     private WechatRagContextService ragContextService;
+    private WechatContextOrchestrator contextOrchestrator;
     private FunctionCallingAgentLoop functionCallingAgentLoop;
     private AgentGoalService agentGoalService;
     private String toolCallingMode = "prompt-json";
@@ -170,6 +174,15 @@ public class WechatConversationService {
 
     void configureRagContextService(WechatRagContextService ragContextService) {
         this.ragContextService = ragContextService;
+    }
+
+    @Autowired
+    void configureContextOrchestrator(ObjectProvider<WechatContextOrchestrator> provider) {
+        this.contextOrchestrator = provider == null ? null : provider.getIfAvailable();
+    }
+
+    void configureContextOrchestrator(Supplier<WechatContextOrchestrator> supplier) {
+        this.contextOrchestrator = supplier == null ? null : supplier.get();
     }
 
     @Autowired
@@ -854,11 +867,12 @@ public class WechatConversationService {
         if (isFunctionCallingMode() && functionCallingAgentLoop != null) {
             AgentGoalTracker goalTracker = AgentGoalTracker.start(agentGoalService, sessionKey, text);
             try {
+                String ragContext = ragContext(sessionKey, text);
                 Optional<WechatReply> loopReply = functionCallingAgentLoop.run(new FunctionCallingAgentRequest(
                         sessionKey,
                         text,
-                        conversationContext(sessionKey),
-                        ragContext(sessionKey, text),
+                        conversationContext(sessionKey, text, ragContext, conversationMode),
+                        ragContext,
                         files,
                         images,
                         List.of(),
@@ -1187,6 +1201,30 @@ public class WechatConversationService {
             }
         }
         return fallbackConversationContext(sessionKey);
+    }
+
+    private String conversationContext(
+            String sessionKey,
+            String userText,
+            String ragContext,
+            WechatConversationMode conversationMode) {
+        if (contextOrchestrator != null) {
+            try {
+                String context = contextOrchestrator.build(new ContextBuildRequest(
+                        sessionKey,
+                        userText,
+                        memoryFor(sessionKey),
+                        combinedResourceContext(sessionKey),
+                        ragContext,
+                        conversationMode)).finalContextText();
+                if (hasStructuredContext(context)) {
+                    return conversationModeContext(conversationMode, context);
+                }
+            } catch (RuntimeException exception) {
+                log.warn("Memory Graph 上下文构造失败，userId={}, error={}", sessionKey, rootMessage(exception));
+            }
+        }
+        return conversationContext(sessionKey, conversationMode);
     }
 
     private boolean hasStructuredContext(String context) {

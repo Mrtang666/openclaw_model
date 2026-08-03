@@ -14,6 +14,8 @@ import com.example.spring.skill.SkillDefinition;
 import com.example.spring.skill.SkillManager;
 import com.example.spring.wechat.bot.WechatReply;
 import com.example.spring.wechat.conversation.WechatConversationMode;
+import com.example.spring.wechat.conversation.agent.policy.AgentStopPolicy;
+import com.example.spring.wechat.conversation.agent.policy.ToolExecutionPolicy;
 import com.example.spring.wechat.conversation.tools.WechatToolDefinition;
 import com.example.spring.wechat.conversation.tools.WechatToolRegistry;
 import com.example.spring.wechat.conversation.tools.WechatToolRequest;
@@ -35,7 +37,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.TreeMap;
 
 /**
  * 完整标准 Function Calling Agent 循环。
@@ -49,20 +50,6 @@ public class FunctionCallingAgentLoop {
     private static final Logger log = LoggerFactory.getLogger(FunctionCallingAgentLoop.class);
     private static final String MAX_ROUNDS_MESSAGE =
             "这次需求处理步骤比较多，我已经停止继续调用工具。你可以把需求拆短一点再发我。";
-    private static final Set<String> TERMINAL_ACTION_TOOLS = Set.of(
-            "taxi_service",
-            "reminder_create",
-            "reminder_create_after",
-            "reminder_update",
-            "reminder_cancel",
-            "reminder_complete",
-            "reminder_snooze",
-            "food_delivery",
-            "meituan_travel",
-            "email_send",
-            "email_text_send",
-            "browser_screenshot",
-            "care_agent");
 
     private static final String SYSTEM_PROMPT = """
             你是 OpenClaw 微信端 Agent。
@@ -93,6 +80,8 @@ public class FunctionCallingAgentLoop {
     private final ToolCallValidator toolCallValidator;
     private final SkillManager skillManager;
     private final AgentRunTraceService traceService;
+    private final AgentStopPolicy agentStopPolicy;
+    private final ToolExecutionPolicy toolExecutionPolicy;
     private final int maxLoopRounds;
     private final Clock clock;
     private final ZoneId defaultZoneId;
@@ -104,12 +93,16 @@ public class FunctionCallingAgentLoop {
             ToolCallValidator toolCallValidator,
             ObjectProvider<SkillManager> skillManagerProvider,
             ObjectProvider<AgentRunTraceService> traceServiceProvider,
+            ObjectProvider<AgentStopPolicy> agentStopPolicyProvider,
+            ObjectProvider<ToolExecutionPolicy> toolExecutionPolicyProvider,
             @Value("${agent.tool-calling.max-loop-rounds:5}") int maxLoopRounds,
             Clock clock,
             @Value("${reminder.default-timezone:Asia/Shanghai}") String defaultTimezone) {
         this(client, toolRegistry, toolCallValidator,
                 skillManagerProvider == null ? null : skillManagerProvider.getIfAvailable(),
                 traceServiceProvider == null ? null : traceServiceProvider.getIfAvailable(),
+                agentStopPolicyProvider == null ? null : agentStopPolicyProvider.getIfAvailable(),
+                toolExecutionPolicyProvider == null ? null : toolExecutionPolicyProvider.getIfAvailable(),
                 maxLoopRounds, clock, defaultTimezone);
     }
 
@@ -118,7 +111,8 @@ public class FunctionCallingAgentLoop {
             WechatToolRegistry toolRegistry,
             int maxLoopRounds) {
         this(client, toolRegistry, new ToolCallValidator(), (SkillManager) null,
-                null, maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
+                null, new AgentStopPolicy(), new ToolExecutionPolicy(),
+                maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
     }
 
     FunctionCallingAgentLoop(
@@ -127,7 +121,8 @@ public class FunctionCallingAgentLoop {
             int maxLoopRounds,
             AgentRunTraceService traceService) {
         this(client, toolRegistry, new ToolCallValidator(), (SkillManager) null,
-                traceService, maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
+                traceService, new AgentStopPolicy(), new ToolExecutionPolicy(),
+                maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
     }
 
     FunctionCallingAgentLoop(
@@ -137,7 +132,8 @@ public class FunctionCallingAgentLoop {
             Clock clock,
             String defaultTimezone) {
         this(client, toolRegistry, new ToolCallValidator(), (SkillManager) null,
-                null, maxLoopRounds, clock, defaultTimezone);
+                null, new AgentStopPolicy(), new ToolExecutionPolicy(),
+                maxLoopRounds, clock, defaultTimezone);
     }
 
     FunctionCallingAgentLoop(
@@ -147,7 +143,8 @@ public class FunctionCallingAgentLoop {
             SkillManager skillManager,
             int maxLoopRounds) {
         this(client, toolRegistry, toolCallValidator, skillManager,
-                null, maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
+                null, new AgentStopPolicy(), new ToolExecutionPolicy(),
+                maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
     }
 
     private FunctionCallingAgentLoop(
@@ -156,6 +153,8 @@ public class FunctionCallingAgentLoop {
             ToolCallValidator toolCallValidator,
             SkillManager skillManager,
             AgentRunTraceService traceService,
+            AgentStopPolicy agentStopPolicy,
+            ToolExecutionPolicy toolExecutionPolicy,
             int maxLoopRounds,
             Clock clock,
             String defaultTimezone) {
@@ -164,6 +163,8 @@ public class FunctionCallingAgentLoop {
         this.toolCallValidator = toolCallValidator;
         this.skillManager = skillManager;
         this.traceService = traceService;
+        this.agentStopPolicy = agentStopPolicy == null ? new AgentStopPolicy() : agentStopPolicy;
+        this.toolExecutionPolicy = toolExecutionPolicy == null ? new ToolExecutionPolicy() : toolExecutionPolicy;
         this.maxLoopRounds = Math.max(1, maxLoopRounds);
         this.clock = clock;
         this.defaultZoneId = ZoneId.of(defaultTimezone);
@@ -229,7 +230,7 @@ public class FunctionCallingAgentLoop {
 
                 Map<String, String> arguments = argumentsWithPreviousResult(toolCall, state.previousToolResult());
                 recordToolCallTrace(traceHandle, round, toolCall.name(), String.valueOf(arguments));
-                String toolSignature = toolCallSignature(toolCall.name(), arguments);
+                String toolSignature = toolExecutionPolicy.toolCallSignature(toolCall.name(), arguments);
                 Optional<String> cachedToolResult = state.successfulToolResult(toolSignature);
                 if (cachedToolResult.isPresent()) {
                     String skippedResult = cachedToolResult.get();
@@ -243,7 +244,7 @@ public class FunctionCallingAgentLoop {
                     continue;
                 }
 
-                String voiceSynthesisSignature = voiceSynthesisSignature(toolCall.name(), arguments);
+                String voiceSynthesisSignature = toolExecutionPolicy.voiceSynthesisSignature(toolCall.name(), arguments);
                 if (!voiceSynthesisSignature.isBlank()
                         && !state.addVoiceSynthesisSignature(voiceSynthesisSignature)) {
                     String skippedResult = "语音已经生成，本次重复语音工具调用已跳过，避免重复发送相同音频。";
@@ -257,7 +258,7 @@ public class FunctionCallingAgentLoop {
                     continue;
                 }
 
-                if (shouldSkipWebSearchBecauseRagHasEvidence(request, toolCall, arguments)) {
+                if (toolExecutionPolicy.shouldSkipWebSearchBecauseRagHasEvidence(request, toolCall, arguments)) {
                     String skippedResult = "\u5df2\u8df3\u8fc7 web_search\uff1a\u77e5\u8bc6\u5e93 RAG \u5df2\u63d0\u4f9b\u76f8\u5173\u8bc1\u636e\uff0c\u8bf7\u4f18\u5148\u57fa\u4e8e\u77e5\u8bc6\u5e93\u8d44\u6599\u56de\u7b54\uff1b\u53ea\u6709\u7528\u6237\u660e\u786e\u8981\u6c42\u6700\u65b0\u3001\u5b9e\u65f6\u3001\u8054\u7f51\u6216\u516c\u5f00\u7f51\u9875\u8d44\u6599\u65f6\u624d\u9700\u8981\u7f51\u7edc\u641c\u7d22\u3002";
                     log.info("Function Calling Agent Loop skip web_search because RAG has evidence, userId={}, query={}",
                             request.sessionKey(), preview(String.valueOf(arguments)));
@@ -274,7 +275,7 @@ public class FunctionCallingAgentLoop {
                 state.messages().add(FunctionCallingMessage.tool(toolCall.id(), toolResult.modelText()));
                 recordToolResultTrace(traceHandle, round, toolCall.name(), traceStatus(toolResult.status()),
                         String.valueOf(arguments), toolResult.modelText());
-                if (endsAgentTurnAfterExecution(toolCall.name())) {
+                if (agentStopPolicy.endsAgentTurnAfterExecution(toolCall.name())) {
                     // Side-effecting and provider-owned tools return their authoritative result
                     // directly, avoiding duplicate actions or rewritten provider responses.
                     state.stop(AgentLoopStopReason.SPECIAL_TOOL_DONE);
@@ -295,7 +296,8 @@ public class FunctionCallingAgentLoop {
                 state.replaceExistingMediaOfSameType(toolResult.visibleParts());
                 state.addVisibleParts(toolResult.visibleParts());
                 if ("FAILED".equalsIgnoreCase(toolResult.status())) {
-                    String failedSignature = toolFailureSignature(toolCall.name(), arguments, toolResult.errorMessage());
+                    String failedSignature = toolExecutionPolicy.toolFailureSignature(
+                            toolCall.name(), arguments, toolResult.errorMessage());
                     if (!state.addFailedToolSignature(failedSignature) && !state.hasVisibleParts()) {
                         state.stop(AgentLoopStopReason.TOOL_FAILURE);
                         completeTrace(traceHandle, AgentRunStatus.FAILED, state.stopReason(), state.lastToolFailure());
@@ -406,36 +408,6 @@ public class FunctionCallingAgentLoop {
         return AgentRunStepStatus.SUCCESS;
     }
 
-    private boolean shouldSkipWebSearchBecauseRagHasEvidence(
-            FunctionCallingAgentRequest request,
-            FunctionCallingToolCall toolCall,
-            Map<String, String> arguments) {
-        if (request == null || toolCall == null || !"web_search".equals(toolCall.name())) {
-            return false;
-        }
-        if (request.ragContext().isBlank()) {
-            return false;
-        }
-        return !requiresFreshWebSearch(request.userText(), arguments);
-    }
-
-    private boolean requiresFreshWebSearch(String userText, Map<String, String> arguments) {
-        StringBuilder text = new StringBuilder(firstNonBlank(userText).toLowerCase(java.util.Locale.ROOT));
-        if (arguments != null && !arguments.isEmpty()) {
-            for (String value : arguments.values()) {
-                if (value != null && !value.isBlank()) {
-                    text.append(' ').append(value.toLowerCase(java.util.Locale.ROOT));
-                }
-            }
-        }
-        return containsAny(text.toString(),
-                "\u6700\u65b0", "\u6700\u8fd1", "\u4eca\u5929", "\u73b0\u5728", "\u5f53\u524d", "\u5b9e\u65f6",
-                "\u8054\u7f51", "\u4e92\u8054\u7f51", "\u7f51\u9875", "\u5b98\u7f51", "\u65b0\u95fb",
-                "\u4ef7\u683c", "\u641c\u7d22", "\u516c\u5f00\u8d44\u6599",
-                "latest", "current", "today", "recent", "web", "internet",
-                "official", "news", "price");
-    }
-
     private boolean containsAny(String text, String... markers) {
         if (text == null || text.isBlank() || markers == null) {
             return false;
@@ -446,46 +418,6 @@ public class FunctionCallingAgentLoop {
             }
         }
         return false;
-    }
-
-    private String voiceSynthesisSignature(String toolName, Map<String, String> arguments) {
-        if (!"voice_synthesis".equals(toolName) || arguments == null || arguments.isEmpty()) {
-            return "";
-        }
-        String target = firstNonBlank(
-                arguments.get("target_text"),
-                arguments.get("text"),
-                arguments.get("message"),
-                arguments.get("previous_result"));
-        if (target.isBlank()) {
-            return "";
-        }
-        String voice = firstNonBlank(arguments.get("voice")).toLowerCase(java.util.Locale.ROOT);
-        return toolName + "|" + voice + "|" + normalizeForSignature(target);
-    }
-
-    private String toolFailureSignature(String toolName, Map<String, String> arguments, String errorMessage) {
-        return firstNonBlank(toolName) + "|" + normalizeForSignature(String.valueOf(arguments)) + "|" + normalizeForSignature(errorMessage);
-    }
-
-    private String toolCallSignature(String toolName, Map<String, String> arguments) {
-        return firstNonBlank(toolName) + "|" + normalizeForSignature(new TreeMap<>(arguments == null ? Map.of() : arguments).toString());
-    }
-
-    private String normalizeForSignature(String value) {
-        return value == null ? "" : value.replaceAll("\\s+", " ").strip();
-    }
-
-    private String firstNonBlank(String... values) {
-        if (values == null) {
-            return "";
-        }
-        for (String value : values) {
-            if (value != null && !value.isBlank()) {
-                return value.strip();
-            }
-        }
-        return "";
     }
 
     private boolean containsVoicePart(List<WechatReply.Part> parts) {
@@ -571,10 +503,6 @@ public class FunctionCallingAgentLoop {
         return toolName != null
                 && toolName.startsWith("reminder_")
                 && modelText.startsWith("提醒操作未完成：");
-    }
-
-    private boolean endsAgentTurnAfterExecution(String toolName) {
-        return TERMINAL_ACTION_TOOLS.contains(toolName);
     }
 
     private String runtimeSystemPrompt(

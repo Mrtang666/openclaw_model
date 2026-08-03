@@ -35,7 +35,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         KnowledgeProperties.class,
         QdrantProperties.class,
         WebToolProperties.class,
-        DidiMcpProperties.class,
+        DidiMcpProperties.class, 
         WechatPayProperties.class,
         BaiduNetdiskProperties.class,
         ReminderProperties.class,

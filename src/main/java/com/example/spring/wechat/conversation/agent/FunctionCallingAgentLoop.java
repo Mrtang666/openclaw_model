@@ -15,6 +15,7 @@ import com.example.spring.skill.SkillManager;
 import com.example.spring.wechat.bot.WechatReply;
 import com.example.spring.wechat.conversation.WechatConversationMode;
 import com.example.spring.wechat.conversation.agent.policy.AgentStopPolicy;
+import com.example.spring.wechat.conversation.agent.policy.ToolCapabilityPolicy;
 import com.example.spring.wechat.conversation.agent.policy.ToolExecutionPolicy;
 import com.example.spring.wechat.conversation.tools.WechatToolDefinition;
 import com.example.spring.wechat.conversation.tools.WechatToolRegistry;
@@ -81,6 +82,7 @@ public class FunctionCallingAgentLoop {
     private final SkillManager skillManager;
     private final AgentRunTraceService traceService;
     private final AgentStopPolicy agentStopPolicy;
+    private final ToolCapabilityPolicy toolCapabilityPolicy;
     private final ToolExecutionPolicy toolExecutionPolicy;
     private final int maxLoopRounds;
     private final Clock clock;
@@ -94,6 +96,7 @@ public class FunctionCallingAgentLoop {
             ObjectProvider<SkillManager> skillManagerProvider,
             ObjectProvider<AgentRunTraceService> traceServiceProvider,
             ObjectProvider<AgentStopPolicy> agentStopPolicyProvider,
+            ObjectProvider<ToolCapabilityPolicy> toolCapabilityPolicyProvider,
             ObjectProvider<ToolExecutionPolicy> toolExecutionPolicyProvider,
             @Value("${agent.tool-calling.max-loop-rounds:5}") int maxLoopRounds,
             Clock clock,
@@ -102,6 +105,7 @@ public class FunctionCallingAgentLoop {
                 skillManagerProvider == null ? null : skillManagerProvider.getIfAvailable(),
                 traceServiceProvider == null ? null : traceServiceProvider.getIfAvailable(),
                 agentStopPolicyProvider == null ? null : agentStopPolicyProvider.getIfAvailable(),
+                toolCapabilityPolicyProvider == null ? null : toolCapabilityPolicyProvider.getIfAvailable(),
                 toolExecutionPolicyProvider == null ? null : toolExecutionPolicyProvider.getIfAvailable(),
                 maxLoopRounds, clock, defaultTimezone);
     }
@@ -111,7 +115,7 @@ public class FunctionCallingAgentLoop {
             WechatToolRegistry toolRegistry,
             int maxLoopRounds) {
         this(client, toolRegistry, new ToolCallValidator(), (SkillManager) null,
-                null, new AgentStopPolicy(), new ToolExecutionPolicy(),
+                null, new AgentStopPolicy(), new ToolCapabilityPolicy(), new ToolExecutionPolicy(),
                 maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
     }
 
@@ -121,7 +125,7 @@ public class FunctionCallingAgentLoop {
             int maxLoopRounds,
             AgentRunTraceService traceService) {
         this(client, toolRegistry, new ToolCallValidator(), (SkillManager) null,
-                traceService, new AgentStopPolicy(), new ToolExecutionPolicy(),
+                traceService, new AgentStopPolicy(), new ToolCapabilityPolicy(), new ToolExecutionPolicy(),
                 maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
     }
 
@@ -132,7 +136,7 @@ public class FunctionCallingAgentLoop {
             Clock clock,
             String defaultTimezone) {
         this(client, toolRegistry, new ToolCallValidator(), (SkillManager) null,
-                null, new AgentStopPolicy(), new ToolExecutionPolicy(),
+                null, new AgentStopPolicy(), new ToolCapabilityPolicy(), new ToolExecutionPolicy(),
                 maxLoopRounds, clock, defaultTimezone);
     }
 
@@ -143,7 +147,7 @@ public class FunctionCallingAgentLoop {
             SkillManager skillManager,
             int maxLoopRounds) {
         this(client, toolRegistry, toolCallValidator, skillManager,
-                null, new AgentStopPolicy(), new ToolExecutionPolicy(),
+                null, new AgentStopPolicy(), new ToolCapabilityPolicy(), new ToolExecutionPolicy(),
                 maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
     }
 
@@ -154,6 +158,7 @@ public class FunctionCallingAgentLoop {
             SkillManager skillManager,
             AgentRunTraceService traceService,
             AgentStopPolicy agentStopPolicy,
+            ToolCapabilityPolicy toolCapabilityPolicy,
             ToolExecutionPolicy toolExecutionPolicy,
             int maxLoopRounds,
             Clock clock,
@@ -164,6 +169,7 @@ public class FunctionCallingAgentLoop {
         this.skillManager = skillManager;
         this.traceService = traceService;
         this.agentStopPolicy = agentStopPolicy == null ? new AgentStopPolicy() : agentStopPolicy;
+        this.toolCapabilityPolicy = toolCapabilityPolicy == null ? new ToolCapabilityPolicy() : toolCapabilityPolicy;
         this.toolExecutionPolicy = toolExecutionPolicy == null ? new ToolExecutionPolicy() : toolExecutionPolicy;
         this.maxLoopRounds = Math.max(1, maxLoopRounds);
         this.clock = clock;
@@ -477,32 +483,20 @@ public class FunctionCallingAgentLoop {
             if (modelText.isBlank()) {
                 modelText = "工具已执行完成，但没有文本结果。";
             }
-            if (isToolFailureReply(toolCall.name(), modelText)) {
+            if (toolCapabilityPolicy.isFailureReply(toolCall.name(), modelText)) {
                 recordToolExecution(agentRequest, toolCall, modelText, "FAILED");
                 return AgentToolExecutionResult.failure(
                         toolCall.name(), arguments, modelText, modelText);
             }
             recordToolExecution(agentRequest, toolCall, modelText, "SUCCESS");
             return AgentToolExecutionResult.success(
-                    toolCall.name(), arguments, modelText, visibleParts(toolCall.name(), replyParts));
+                    toolCall.name(), arguments, modelText, toolCapabilityPolicy.visibleParts(toolCall.name(), replyParts));
         } catch (RuntimeException exception) {
             String result = "工具执行失败：" + rootMessage(exception);
             log.warn("Function Calling Agent 工具执行失败，tool={}, error={}", toolCall.name(), rootMessage(exception));
             recordToolExecution(agentRequest, toolCall, result, "FAILED");
             return AgentToolExecutionResult.failure(toolCall.name(), arguments, result, rootMessage(exception));
         }
-    }
-
-    private boolean isToolFailureReply(String toolName, String modelText) {
-        if (modelText == null) {
-            return false;
-        }
-        if ("map_search".equals(toolName) && modelText.startsWith("地图查询失败：")) {
-            return true;
-        }
-        return toolName != null
-                && toolName.startsWith("reminder_")
-                && modelText.startsWith("提醒操作未完成：");
     }
 
     private String runtimeSystemPrompt(
@@ -521,22 +515,7 @@ public class FunctionCallingAgentLoop {
                 - 服务器当前时间：%s
                 - 默认时区：%s
                 """.formatted(currentTime, defaultZoneId.getId()));
-        if (hasTool(availableToolNames, "reminder_create_after")) {
-            prompt.append("""
-                    - 用户说“几分钟后”“几小时后”或“几天后”时，必须调用 reminder_create_after，
-                      原样提取 delay_value 和 delay_unit，禁止换算分钟或 execute_at。
-                    """);
-        }
-        if (hasTool(availableToolNames, "reminder_create")) {
-            prompt.append("- 只有用户明确指定日期和钟点时才调用 reminder_create。")
-                    .append(System.lineSeparator());
-        }
-        if (hasTool(availableToolNames, "reminder_snooze")) {
-            prompt.append("""
-                    - 用户说“再提醒我”且没有指定原提醒编号或标题时，调用 reminder_snooze，
-                      不传 reminder_id 和 title，由程序选择当前会话最近发送的提醒。
-                    """);
-        }
+        prompt.append(toolCapabilityPolicy.runtimeRules(availableToolNames));
         return prompt.toString();
     }
 
@@ -559,29 +538,6 @@ public class FunctionCallingAgentLoop {
             arguments.putIfAbsent("source", "current");
         }
         return arguments;
-    }
-
-    private List<WechatReply.Part> visibleParts(String toolName, List<WechatReply.Part> parts) {
-        if (parts == null || parts.isEmpty()) {
-            return List.of();
-        }
-        if ("map_search".equals(toolName)
-                && parts.stream().anyMatch(part -> part != null && part.hasImage())) {
-            return parts.stream()
-                    .filter(part -> part != null && (part.hasImage()
-                            || (part.text() != null && !part.text().isBlank())))
-                    .toList();
-        }
-        boolean mediaTool = "image_generation".equals(toolName)
-                || "voice_synthesis".equals(toolName)
-                || "document_generation".equals(toolName)
-                || "browser_screenshot".equals(toolName);
-        if (!mediaTool) {
-            return List.of();
-        }
-        return parts.stream()
-                .filter(part -> part != null && (part.hasImage() || part.hasVoice() || part.hasFile()))
-                .toList();
     }
 
     private WechatReply finalReply(String finalContent, List<WechatReply.Part> visibleParts) {
@@ -760,55 +716,7 @@ public class FunctionCallingAgentLoop {
             }
         }
         prompt.append(System.lineSeparator()).append(RAG_SYSTEM_RULES);
-        prompt.append(availableToolRules(availableToolNames));
         return prompt.toString();
-    }
-
-    private String availableToolRules(Set<String> availableToolNames) {
-        StringBuilder rules = new StringBuilder();
-        if (hasTool(availableToolNames, "map_search")) {
-            rules.append("""
-
-                    地图规则：
-                    - 如果地图工具提示地点存在歧义或需要补充地址，立即向用户确认，不要继续拆分调用地点详情来猜测。
-                    """);
-        }
-        if (hasTool(availableToolNames, "knowledge_add", "knowledge_query")) {
-            rules.append("""
-
-                    知识库工具规则：
-                    - 用户要求“记住、保存、加入知识库、以后参考”时，优先调用 knowledge_add；用户要求“根据知识库、保存过的资料、我的资料”回答时，优先调用 knowledge_query。
-                    """);
-        }
-        if (hasTool(availableToolNames, "web_read", "web_search")) {
-            rules.append("""
-
-                    网页工具规则：
-                    - 用户给出 URL 并要求阅读、总结或保存网页时，优先调用 web_read；用户要求查询最新资料、搜索互联网或找公开资料时，优先调用 web_search，必要时再对搜索结果中的 URL 调用 web_read。
-                    """);
-        }
-        if (hasTool(availableToolNames, "meituan_travel")) {
-            rules.append("""
-
-                    旅行工具规则：
-                    - 用户询问国内酒店、机票、火车票、景点门票、度假推荐或组合旅行规划时，优先调用 meituan_travel；缺少关键日期、城市或人数时先追问。
-                    """);
-        }
-        if (hasTool(availableToolNames, "email_send", "email_text_send")) {
-            rules.append("""
-
-                    邮件工具规则：
-                    - 邮件发送是具有外部副作用的工具；只有用户明确要求发送或确认发送邮件时才调用 email_send 或 email_text_send，意图不确定时先追问。
-                    """);
-        }
-        if (hasTool(availableToolNames, "care_agent")) {
-            rules.append("""
-
-                    照护工具规则：
-                    - 用户提到患者、家属、医生、照护、打卡、安全确认、患者状态、绑定患者、联系医生、制定患者方案时，必须优先调用 care_agent。
-                    """);
-        }
-        return rules.toString();
     }
 
     private Set<String> toolNameSet(List<WechatToolDefinition> toolDefinitions) {
@@ -822,18 +730,6 @@ public class FunctionCallingAgentLoop {
             }
         }
         return names;
-    }
-
-    private boolean hasTool(Set<String> availableToolNames, String... names) {
-        if (availableToolNames == null || availableToolNames.isEmpty() || names == null) {
-            return false;
-        }
-        for (String name : names) {
-            if (name != null && availableToolNames.contains(name)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private String toolNames(List<FunctionCallingToolCall> toolCalls) {

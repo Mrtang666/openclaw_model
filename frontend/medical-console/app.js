@@ -98,6 +98,7 @@ let livePatients = [];
 let caregiverRefreshTimer;
 
 const routes = {
+    "/task-action": renderTaskAction,
     "/patient/tasks": renderPatientTasks,
     "/bind/caregiver": renderCaregiverBind,
     "/bind/doctor": renderDoctorBind,
@@ -108,6 +109,7 @@ const routes = {
 };
 
 const routeRoles = {
+    "/task-action": [],
     "/patient/tasks": ["PATIENT"],
     "/bind/caregiver": ["CAREGIVER", "FAMILY"],
     "/caregiver/status": ["CAREGIVER", "FAMILY"],
@@ -191,6 +193,71 @@ async function careApi(path, options = {}) {
     return body.data;
 }
 
+async function taskActionApi(path, actionToken, options = {}) {
+    const response = await fetch(path, {
+        ...options,
+        headers: {
+            "Content-Type": "application/json",
+            "X-Care-Task-Token": actionToken,
+            ...(options.headers || {})
+        }
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok || !body || body.code !== "OK") {
+        throw new Error(body?.message || `请求失败：${response.status}`);
+    }
+    return body.data;
+}
+
+async function renderTaskAction() {
+    const routeInfo = currentRouteInfo();
+    const actionToken = routeInfo.params.get("actionToken") || "";
+    if (!actionToken) {
+        root().innerHTML = `<section class="single-message"><div class="card"><h1>任务链接无效</h1><div class="message error">缺少任务凭证，请从最新提醒进入。</div></div></section>`;
+        return;
+    }
+    let task;
+    try {
+        task = await taskActionApi("/api/care/v1/task-actions/current", actionToken);
+    } catch (error) {
+        root().innerHTML = `<section class="single-message"><div class="card"><h1>任务链接不可用</h1><div class="message error">${escapeHtml(error.message)}</div></div></section>`;
+        return;
+    }
+    const deadline = task.backfillDeadlineAt ? new Date(task.backfillDeadlineAt).toLocaleString() : "";
+    root().innerHTML = `
+        <section class="single-message task-action-page">
+            <div class="card task-action-card">
+                <div class="eyebrow">照护任务确认</div>
+                <h1>${escapeHtml(normalizePlanText(task.title) || `任务 ${task.taskId}`)}</h1>
+                <div class="task-action-meta">${escapeHtml(taskStatusLabel(task.status))}${deadline ? ` · 补卡截止 ${escapeHtml(deadline)}` : ""}</div>
+                <div class="task-action-buttons">
+                    <button class="button primary" id="task-action-complete" type="button" ${task.canComplete ? "" : "disabled"}>已完成</button>
+                    <button class="button secondary" id="task-action-missed" type="button" ${task.canReportMissed ? "" : "disabled"}>未完成</button>
+                </div>
+                <p class="task-action-note">按钮只确认当前任务，不会修改医生方案。</p>
+            </div>
+        </section>
+    `;
+    document.querySelector("#task-action-complete")?.addEventListener("click", () => submitTaskAction(actionToken, "complete"));
+    document.querySelector("#task-action-missed")?.addEventListener("click", () => submitTaskAction(actionToken, "missed"));
+}
+
+async function submitTaskAction(actionToken, action) {
+    const completeButton = document.querySelector("#task-action-complete");
+    const missedButton = document.querySelector("#task-action-missed");
+    [completeButton, missedButton].forEach((button) => { if (button) button.disabled = true; });
+    try {
+        await taskActionApi(`/api/care/v1/task-actions/${action}`, actionToken, {
+            method: "POST",
+            body: JSON.stringify({ note: action === "complete" ? "微信任务页面确认完成" : "微信任务页面确认未完成" })
+        });
+        root().innerHTML = `<section class="single-message"><div class="card"><h1>${action === "complete" ? "已记录完成" : "已记录未完成"}</h1><div class="message info">${action === "complete" ? "患者和家属端会同步为已完成。" : "系统已通知家属关注患者情况。"}</div></div></section>`;
+    } catch (error) {
+        [completeButton, missedButton].forEach((button) => { if (button) button.disabled = false; });
+        window.alert(error.message);
+    }
+}
+
 function apiPrefix(kind) {
     if (kind === "patient") return "/api/care/v1/patient";
     if (kind === "family") return "/api/care/v1/family";
@@ -226,7 +293,7 @@ async function renderPatientTasks() {
         <section class="grid two">
             <div class="card">
                 <h2 class="card-title">今日任务</h2>
-                ${taskList(patient, { interactive: true, showDetail: true, showTime: true })}
+                ${taskList(patient, { interactive: true, showDetail: false, showTime: true })}
             </div>
             <div class="card">
                 <h2 class="card-title">完成情况</h2>
@@ -362,6 +429,7 @@ function taskStatusLabel(status) {
     const value = String(status || "").toUpperCase();
     if (value === "COMPLETED") return "已完成";
     if (value === "OVERDUE") return "已超时";
+    if (value === "MISSED") return "未完成";
     if (value === "CANCELLED") return "已取消";
     if (value === "SKIPPED") return "已跳过";
     if (value === "PENDING") return "待完成";
@@ -382,6 +450,7 @@ function planStatusLabel(status) {
 function taskStatusClass(statusCode) {
     if (statusCode === "COMPLETED") return "completed";
     if (["OVERDUE", "PENDING"].includes(statusCode)) return "pending";
+    if (statusCode === "MISSED") return "missed";
     return "inactive";
 }
 
@@ -1325,7 +1394,7 @@ function taskList(patient, { interactive = false, showDetail = !interactive, sho
             ${patient.tasks.map((task, index) => {
                 const statusCode = task.statusCode || (task.status === "已完成" ? "COMPLETED" : "PENDING");
                 const completed = statusCode === "COMPLETED";
-                const inactive = ["CANCELLED", "SKIPPED"].includes(statusCode);
+                const inactive = ["CANCELLED", "SKIPPED", "MISSED"].includes(statusCode);
                 const canComplete = interactive && task.id && !completed && !inactive;
                 const badgeClass = completed ? "green" : inactive ? "blue" : "amber";
                 const dueAt = task.dueAt ? new Date(task.dueAt) : null;
@@ -1336,7 +1405,7 @@ function taskList(patient, { interactive = false, showDetail = !interactive, sho
                         ${interactive ? `
                             <button class="task-check" type="button" title="${completed ? "任务已完成" : "标记为已完成"}"
                                 aria-label="${completed ? "任务已完成" : `标记${escapeHtml(task.title)}为已完成`}" data-task-complete="${task.id || ""}"
-                                data-task-version="${task.version ?? 0}" ${canComplete ? "" : "disabled"}>
+                                data-task-version="${task.version ?? 0}" data-task-status="${statusCode}" ${canComplete ? "" : "disabled"}>
                                 <span class="task-dot">${completed ? "✓" : ""}</span>
                             </button>
                         ` : `<span class="task-dot task-dot-readonly">${completed ? "✓" : ""}</span>`}
@@ -1349,6 +1418,7 @@ function taskList(patient, { interactive = false, showDetail = !interactive, sho
                         </div>
                         ${showTime && dueLabel ? `<div class="item-meta">执行时间：${escapeHtml(dueLabel)}</div>` : ""}
                         ${showDetail ? `<div class="item-meta">${escapeHtml(task.detail)}</div>` : ""}
+                        ${interactive && statusCode === "OVERDUE" ? `<button class="task-missed-link" type="button" data-task-missed="${task.id || ""}" data-task-version="${task.version ?? 0}">确认未完成</button>` : ""}
                     </div>
                 </article>
                 `;
@@ -1366,11 +1436,14 @@ function bindTaskActions() {
             button.classList.add("is-loading");
             try {
                 const taskApi = role().toUpperCase() === "PATIENT" ? apiPrefix("patient") : apiPrefix("family");
-                await careApi(`${taskApi}/tasks/${taskId}/complete`, {
+                const endpoint = button.dataset.taskStatus === "OVERDUE" ? "late-complete" : "complete";
+                await careApi(`${taskApi}/tasks/${taskId}/${endpoint}`, {
                     method: "POST",
                     body: JSON.stringify({
                         version: Number(button.dataset.taskVersion || 0),
-                        note: "家属端确认患者已完成任务"
+                        note: role().toUpperCase() === "PATIENT"
+                            ? "患者端确认已完成任务"
+                            : "家属端确认患者已完成任务"
                     })
                 });
                 if (role().toUpperCase() === "PATIENT") {
@@ -1381,6 +1454,29 @@ function bindTaskActions() {
             } catch (error) {
                 button.disabled = false;
                 button.classList.remove("is-loading");
+                window.alert(error.message);
+            }
+        });
+    });
+
+    document.querySelectorAll("[data-task-missed]").forEach((button) => {
+        button.addEventListener("click", async () => {
+            const taskId = button.dataset.taskMissed;
+            if (!taskId || button.disabled) return;
+            button.disabled = true;
+            try {
+                const taskApi = role().toUpperCase() === "PATIENT" ? apiPrefix("patient") : apiPrefix("family");
+                await careApi(`${taskApi}/tasks/${taskId}/missed`, {
+                    method: "POST",
+                    body: JSON.stringify({
+                        version: Number(button.dataset.taskVersion || 0),
+                        note: "页面确认任务未完成"
+                    })
+                });
+                if (role().toUpperCase() === "PATIENT") await renderPatientTasks();
+                else await renderCaregiverStatus();
+            } catch (error) {
+                button.disabled = false;
                 window.alert(error.message);
             }
         });

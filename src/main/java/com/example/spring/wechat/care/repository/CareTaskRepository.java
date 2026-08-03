@@ -29,7 +29,10 @@ public class CareTaskRepository {
             rs.getString("result_note"), rs.getInt("snooze_count"),
             instant(rs.getTimestamp("reminder_enqueued_at")),
             instant(rs.getTimestamp("follow_up_enqueued_at")),
-            instant(rs.getTimestamp("overdue_notified_at")), rs.getString("idempotency_key"),
+            instant(rs.getTimestamp("overdue_notified_at")), rs.getString("completion_mode"),
+            instant(rs.getTimestamp("reported_at")), instant(rs.getTimestamp("late_checkin_deadline_at")),
+            instant(rs.getTimestamp("missed_confirmed_at")), rs.getString("missed_reason"),
+            rs.getString("idempotency_key"),
             rs.getLong("version"), rs.getInt("grace_period_minutes"),
             rs.getInt("escalation_after_minutes"), instant(rs.getTimestamp("created_at")),
             instant(rs.getTimestamp("updated_at")));
@@ -53,13 +56,17 @@ public class CareTaskRepository {
             Instant dueAt,
             Instant now) {
         Instant effectiveDueAt = dueAt.isBefore(now) ? now : dueAt;
+        int backfillDeadlineMinutes = Math.max(
+                template.gracePeriodMinutes(), template.escalationAfterMinutes());
+        Instant backfillDeadline = effectiveDueAt.plusSeconds(backfillDeadlineMinutes * 60L);
         jdbc.update("""
                 INSERT IGNORE INTO medical_care_task_instances
                 (plan_id,plan_version_id,task_template_id,patient_user_id,scheduled_for,due_at,status,
-                 idempotency_key,version,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,'PENDING',?,0,?,?)
+                 late_checkin_deadline_at,idempotency_key,version,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,'PENDING',?,?,0,?,?)
                 """, template.planId(), template.planVersionId(), template.id(), template.patientUserId(),
-                Date.valueOf(scheduledFor), timestamp(effectiveDueAt), instanceKey(template.id(), scheduledFor),
+                Date.valueOf(scheduledFor), timestamp(effectiveDueAt), timestamp(backfillDeadline),
+                instanceKey(template.id(), scheduledFor),
                 timestamp(now), timestamp(now));
     }
 
@@ -92,21 +99,27 @@ public class CareTaskRepository {
                 """, Long.class, timestamp(now), limit);
     }
 
-    public List<CareTaskInstance> findReadyForFollowUp(Instant now, int limit) {
+    public List<CareTaskInstance> findReadyForBackfillNotification(Instant now, int limit) {
         return jdbc.query(SELECT + """
-                WHERE i.status='PENDING' AND i.reminder_enqueued_at IS NOT NULL
-                  AND i.follow_up_enqueued_at IS NULL
-                  AND TIMESTAMPADD(MINUTE,t.follow_up_after_minutes,i.due_at)<=?
+                WHERE i.status='OVERDUE' AND i.follow_up_enqueued_at IS NULL
+                  AND i.late_checkin_deadline_at>?
                 ORDER BY i.due_at,i.id LIMIT ?
                 """, MAPPER, timestamp(now), limit);
     }
 
-    public List<CareTaskInstance> findReadyForOverdueNotification(Instant now, int limit) {
+    public List<Long> findReadyToMarkMissed(Instant now, int limit) {
+        return jdbc.queryForList("""
+                SELECT id FROM medical_care_task_instances
+                WHERE status='OVERDUE' AND late_checkin_deadline_at<=?
+                ORDER BY due_at,id LIMIT ?
+                """, Long.class, timestamp(now), limit);
+    }
+
+    public List<CareTaskInstance> findReadyForMissedNotification(Instant now, int limit) {
         return jdbc.query(SELECT + """
-                WHERE i.status='OVERDUE' AND i.overdue_notified_at IS NULL
-                  AND TIMESTAMPADD(MINUTE,t.escalation_after_minutes,i.due_at)<=?
+                WHERE i.status='MISSED' AND i.overdue_notified_at IS NULL
                 ORDER BY i.due_at,i.id LIMIT ?
-                """, MAPPER, timestamp(now), limit);
+                """, MAPPER, limit);
     }
 
     public void markReminderEnqueued(long taskId, Instant now) {
@@ -121,52 +134,119 @@ public class CareTaskRepository {
         jdbc.update("""
                 UPDATE medical_care_task_instances
                 SET follow_up_enqueued_at=?,updated_at=?
-                WHERE id=? AND follow_up_enqueued_at IS NULL AND status='PENDING'
+                WHERE id=? AND follow_up_enqueued_at IS NULL AND status='OVERDUE'
                 """, timestamp(now), timestamp(now), taskId);
     }
 
+    @Transactional
     public void markOverdue(long taskId, Instant now) {
-        jdbc.update("""
+        int changed = jdbc.update("""
                 UPDATE medical_care_task_instances
                 SET status='OVERDUE',version=version+1,updated_at=?
                 WHERE id=? AND status='PENDING'
                 """, timestamp(now), taskId);
+        if (changed == 1) {
+            recordEvent(taskId, null, "BACKFILL_WINDOW_OPENED", "任务进入补卡窗口", null, null, now);
+        }
     }
 
     public void markOverdueNotified(long taskId, Instant now) {
         jdbc.update("""
                 UPDATE medical_care_task_instances
                 SET overdue_notified_at=?,updated_at=?
-                WHERE id=? AND overdue_notified_at IS NULL AND status='OVERDUE'
+                WHERE id=? AND overdue_notified_at IS NULL AND status='MISSED'
                 """, timestamp(now), timestamp(now), taskId);
     }
 
     @Transactional
-    public boolean complete(long taskId, long actorUserId, long expectedVersion, String note, Instant now) {
+    public boolean completeOnTime(long taskId, long actorUserId, long expectedVersion, String note, Instant now) {
         int changed = jdbc.update("""
                 UPDATE medical_care_task_instances
                 SET status='COMPLETED',completed_by_user_id=?,completed_at=?,result_note=?,
-                    version=version+1,updated_at=?
-                WHERE id=? AND version=? AND status IN ('PENDING','OVERDUE')
-                """, actorUserId, timestamp(now), clean(note), timestamp(now), taskId, expectedVersion);
-        if (changed == 1) recordEvent(taskId, actorUserId, "COMPLETED", note, null, null, now);
+                    completion_mode='ON_TIME',reported_at=?,version=version+1,updated_at=?
+                WHERE id=? AND version=? AND status='PENDING'
+                """, actorUserId, timestamp(now), clean(note), timestamp(now), timestamp(now),
+                taskId, expectedVersion);
+        if (changed == 1) recordEvent(taskId, actorUserId, "COMPLETED_ON_TIME", note, null, null, now);
         return changed == 1;
     }
 
-    /**
-     * A patient can explicitly report a task as incomplete before the automatic
-     * grace window expires. It is represented as OVERDUE so all existing task
-     * views and escalation queries show the same abnormal state.
-     */
+    /** Backward-compatible name kept for existing callers; it only completes PENDING tasks. */
+    @Deprecated
+    public boolean complete(long taskId, long actorUserId, long expectedVersion, String note, Instant now) {
+        return completeOnTime(taskId, actorUserId, expectedVersion, note, now);
+    }
+
     @Transactional
-    public boolean reportIncomplete(long taskId, long actorUserId, long expectedVersion, String note, Instant now) {
+    public boolean completeByBackfill(long taskId, long actorUserId, long expectedVersion, String note, Instant now) {
         int changed = jdbc.update("""
                 UPDATE medical_care_task_instances
-                SET status='OVERDUE',version=version+1,updated_at=?
+                SET status='COMPLETED',completed_by_user_id=?,completed_at=?,result_note=?,
+                    completion_mode='BACKFILL',reported_at=?,version=version+1,updated_at=?
+                WHERE id=? AND version=? AND status='OVERDUE'
+                  AND late_checkin_deadline_at>=?
+                """, actorUserId, timestamp(now), clean(note), timestamp(now), timestamp(now),
+                taskId, expectedVersion, timestamp(now));
+        if (changed == 1) recordEvent(taskId, actorUserId, "COMPLETED_BY_BACKFILL", note, null, null, now);
+        return changed == 1;
+    }
+
+    @Transactional
+    public boolean reportMissed(long taskId, long actorUserId, long expectedVersion, String note, Instant now) {
+        int changed = jdbc.update("""
+                UPDATE medical_care_task_instances
+                SET status='OVERDUE',completion_mode='REPORTED_INCOMPLETE',reported_at=?,
+                    missed_reason=?,result_note=?,version=version+1,updated_at=?
                 WHERE id=? AND version=? AND status IN ('PENDING','OVERDUE')
-                """, timestamp(now), taskId, expectedVersion);
+                """, timestamp(now), "REPORTED_NOT_COMPLETED", clean(note),
+                timestamp(now), taskId, expectedVersion);
         if (changed == 1) {
             recordEvent(taskId, actorUserId, "REPORTED_INCOMPLETE", note, null, null, now);
+        }
+        return changed == 1;
+    }
+
+    @Deprecated
+    public boolean reportIncomplete(long taskId, long actorUserId, long expectedVersion, String note, Instant now) {
+        return reportMissed(taskId, actorUserId, expectedVersion, note, now);
+    }
+
+    @Deprecated
+    public List<CareTaskInstance> findReadyForFollowUp(Instant now, int limit) {
+        return findReadyForBackfillNotification(now, limit);
+    }
+
+    @Deprecated
+    public List<CareTaskInstance> findReadyForOverdueNotification(Instant now, int limit) {
+        return findReadyForMissedNotification(now, limit);
+    }
+
+    @Transactional
+    public boolean markMissed(long taskId, Instant now) {
+        int changed = jdbc.update("""
+                UPDATE medical_care_task_instances
+                SET status='MISSED',completion_mode='MISSED',missed_confirmed_at=?,
+                    missed_reason='BACKFILL_WINDOW_EXPIRED',version=version+1,updated_at=?
+                WHERE id=? AND status='OVERDUE' AND late_checkin_deadline_at<=?
+                """, timestamp(now), timestamp(now), taskId, timestamp(now));
+        if (changed == 1) {
+            recordEvent(taskId, null, "MISSED_CONFIRMED", "补卡窗口结束仍未确认完成", null, null, now);
+        }
+        return changed == 1;
+    }
+
+    @Transactional
+    public boolean correctMissedByClinical(
+            long taskId, long actorUserId, long expectedVersion, String note, Instant now) {
+        int changed = jdbc.update("""
+                UPDATE medical_care_task_instances
+                SET status='COMPLETED',completed_by_user_id=?,completed_at=?,result_note=?,
+                    completion_mode='CLINICAL_CORRECTION',reported_at=?,version=version+1,updated_at=?
+                WHERE id=? AND version=? AND status='MISSED'
+                """, actorUserId, timestamp(now), clean(note), timestamp(now), timestamp(now),
+                taskId, expectedVersion);
+        if (changed == 1) {
+            recordEvent(taskId, actorUserId, "MISSED_CORRECTED_BY_CLINICAL", note, null, null, now);
         }
         return changed == 1;
     }
@@ -181,11 +261,16 @@ public class CareTaskRepository {
             String note,
             Instant now) {
         int changed = jdbc.update("""
-                UPDATE medical_care_task_instances
-                SET status='PENDING',due_at=?,snooze_count=snooze_count+1,reminder_enqueued_at=NULL,
-                    follow_up_enqueued_at=NULL,overdue_notified_at=NULL,version=version+1,updated_at=?
-                WHERE id=? AND version=? AND status IN ('PENDING','OVERDUE')
-                """, timestamp(newDueAt), timestamp(now), taskId, expectedVersion);
+                UPDATE medical_care_task_instances i
+                JOIN medical_care_task_templates t ON t.id=i.task_template_id
+                SET i.status='PENDING',i.due_at=?,i.snooze_count=i.snooze_count+1,
+                    i.reminder_enqueued_at=NULL,i.follow_up_enqueued_at=NULL,i.overdue_notified_at=NULL,
+                    i.late_checkin_deadline_at=TIMESTAMPADD(MINUTE,
+                        GREATEST(t.grace_period_minutes,t.escalation_after_minutes),?),
+                    i.completion_mode=NULL,i.reported_at=NULL,i.missed_confirmed_at=NULL,i.missed_reason=NULL,
+                    i.version=i.version+1,i.updated_at=?
+                WHERE i.id=? AND i.version=? AND i.status IN ('PENDING','OVERDUE')
+                """, timestamp(newDueAt), timestamp(newDueAt), timestamp(now), taskId, expectedVersion);
         if (changed == 1) {
             recordEvent(taskId, actorUserId, "POSTPONED", note, previousDueAt, newDueAt, now);
         }

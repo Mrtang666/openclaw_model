@@ -61,7 +61,58 @@ public class CareTaskService {
         CareTaskInstance task = find(taskId);
         authorizationService.require(actor, task.patientUserId(), CarePermissions.TASK_UPDATE,
                 "COMPLETE_CARE_TASK", "CARE_TASK", Long.toString(taskId), command.requestId());
+        if (task.status() != com.example.spring.wechat.care.model.CareTaskStatus.PENDING) {
+            throw new CareException(CareErrorCode.CONFLICT, "任务已进入补卡窗口，请使用补卡操作");
+        }
         if (!repository.complete(
+                taskId, actor.userId(), command.version(), limit(command.note(), 1000), clock.instant())) {
+            throw conflict();
+        }
+        return find(taskId);
+    }
+
+    public CareTaskInstance backfill(CareActor actor, long taskId, ActionCommand command) {
+        if (command == null) throw invalid("缺少任务补卡参数");
+        CareTaskInstance task = find(taskId);
+        authorizationService.require(actor, task.patientUserId(), CarePermissions.PATIENT_TASK_BACKFILL,
+                "BACKFILL_CARE_TASK", "CARE_TASK", Long.toString(taskId), command.requestId());
+        if (task.status() != com.example.spring.wechat.care.model.CareTaskStatus.OVERDUE) {
+            throw new CareException(CareErrorCode.CONFLICT, "当前任务不在补卡窗口内");
+        }
+        if (!repository.completeByBackfill(
+                taskId, actor.userId(), command.version(), limit(command.note(), 1000), clock.instant())) {
+            throw conflict();
+        }
+        return find(taskId);
+    }
+
+    public CareTaskInstance reportMissed(CareActor actor, long taskId, ActionCommand command) {
+        if (command == null) throw invalid("缺少任务异常确认参数");
+        CareTaskInstance task = find(taskId);
+        authorizationService.require(actor, task.patientUserId(), CarePermissions.PATIENT_TASK_BACKFILL,
+                "REPORT_CARE_TASK_MISSED", "CARE_TASK", Long.toString(taskId), command.requestId());
+        if (task.status() == com.example.spring.wechat.care.model.CareTaskStatus.COMPLETED
+                || task.status() == com.example.spring.wechat.care.model.CareTaskStatus.CANCELLED
+                || task.status() == com.example.spring.wechat.care.model.CareTaskStatus.SKIPPED
+                || task.status() == com.example.spring.wechat.care.model.CareTaskStatus.MISSED) {
+            throw new CareException(CareErrorCode.CONFLICT, "当前任务已经关闭，不能重复确认");
+        }
+        if (!repository.reportMissed(
+                taskId, actor.userId(), command.version(), limit(command.note(), 1000), clock.instant())) {
+            throw conflict();
+        }
+        return find(taskId);
+    }
+
+    public CareTaskInstance correctMissed(CareActor actor, long taskId, ActionCommand command) {
+        if (command == null) throw invalid("缺少临床纠错参数");
+        if (actor == null || !actor.role().isClinical()) {
+            throw new CareException(CareErrorCode.FORBIDDEN, "只有医护人员可以纠正未完成任务");
+        }
+        CareTaskInstance task = find(taskId);
+        authorizationService.require(actor, task.patientUserId(), CarePermissions.PATIENT_TASK_BACKFILL,
+                "CORRECT_MISSED_CARE_TASK", "CARE_TASK", Long.toString(taskId), command.requestId());
+        if (!repository.correctMissedByClinical(
                 taskId, actor.userId(), command.version(), limit(command.note(), 1000), clock.instant())) {
             throw conflict();
         }
@@ -86,9 +137,13 @@ public class CareTaskService {
         return find(taskId);
     }
 
-    private CareTaskInstance find(long taskId) {
+    public CareTaskInstance findTask(long taskId) {
         return repository.findById(taskId)
                 .orElseThrow(() -> new CareException(CareErrorCode.NOT_FOUND, "照护任务不存在"));
+    }
+
+    private CareTaskInstance find(long taskId) {
+        return findTask(taskId);
     }
 
     private String limit(String value, int max) {
@@ -123,9 +178,10 @@ public class CareTaskService {
         return switch (task.status()) {
             case OVERDUE -> 0;
             case PENDING -> 1;
-            case COMPLETED -> 2;
-            case SKIPPED -> 3;
-            case CANCELLED -> 4;
+            case MISSED -> 2;
+            case COMPLETED -> 3;
+            case SKIPPED -> 4;
+            case CANCELLED -> 5;
         };
     }
 

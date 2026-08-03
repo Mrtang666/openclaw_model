@@ -92,9 +92,9 @@ public class CareNotificationRepository {
                     ON n.idempotency_key LIKE CONCAT('task:', i.id, ':%')
                 SET n.status='PENDING',n.retry_count=0,n.scheduled_at=?,n.locked_at=NULL,n.updated_at=?
                 WHERE n.status='FAILED'
-                  AND n.notification_type IN ('CARE_PLAN_TO_PATIENT','CARE_TASK_DUE','CARE_TASK_FOLLOW_UP')
+                  AND n.notification_type IN ('CARE_PLAN_TO_PATIENT','CARE_TASK_DUE','CARE_TASK_FOLLOW_UP','CARE_TASK_MISSED')
                   AND (n.last_error LIKE '%微信连接当前不可用%' OR n.last_error LIKE '%没有可用微信连接%')
-                  AND (n.notification_type='CARE_PLAN_TO_PATIENT' OR i.status='PENDING')
+                  AND (n.notification_type='CARE_PLAN_TO_PATIENT' OR i.status IN ('PENDING','OVERDUE','MISSED'))
                 """, timestamp(now), timestamp(now));
     }
 

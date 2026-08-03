@@ -90,12 +90,29 @@ public class CareWebLinkService {
                 .toUriString();
     }
 
+    /** Builds a short-lived task action URL. The token stays in the URL fragment. */
+    public String taskActionUrl(String actionToken) {
+        String token = actionToken == null ? "" : actionToken.strip();
+        if (token.isBlank()) {
+            throw new IllegalArgumentException("task action token cannot be blank");
+        }
+        return UriComponentsBuilder.fromHttpUrl(baseUrl())
+                .path("/medical-console/")
+                .fragment("/task-action?actionToken=" + encode(token))
+                .build(true)
+                .toUriString();
+    }
+
     public String baseUrl() {
         if (!configuredBaseUrl.isBlank()) {
             return stripTrailingSlash(configuredBaseUrl);
         }
         int port = localServerPort <= 0 ? 8080 : localServerPort;
         return "http://127.0.0.1:" + port;
+    }
+
+    public boolean hasPublicBaseUrl() {
+        return !configuredBaseUrl.isBlank();
     }
 
     private MedicalRole firstActiveRole(long userId) {

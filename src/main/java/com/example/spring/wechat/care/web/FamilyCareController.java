@@ -233,6 +233,30 @@ public class FamilyCareController {
                 context.traceId());
     }
 
+    @PostMapping("/tasks/{taskId}/late-complete")
+    public CareApiResponse<?> lateCompleteTask(
+            @RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable long taskId,
+            @RequestBody TaskActionRequest request) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(taskService.backfill(context.actor(), taskId,
+                new CareTaskService.ActionCommand(request.version(), request.note(), context.traceId())),
+                context.traceId());
+    }
+
+    @PostMapping("/tasks/{taskId}/missed")
+    public CareApiResponse<?> missedTask(
+            @RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable long taskId,
+            @RequestBody TaskActionRequest request) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(taskService.reportMissed(context.actor(), taskId,
+                new CareTaskService.ActionCommand(request.version(), request.note(), context.traceId())),
+                context.traceId());
+    }
+
     @PostMapping("/tasks/{taskId}/postpone")
     public CareApiResponse<?> postponeTask(@RequestHeader("Authorization") String authorization,
             @RequestHeader(value = "X-Request-Id", required = false) String requestId,

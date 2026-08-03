@@ -33,7 +33,7 @@ import java.util.regex.Pattern;
 public class CareTaskInteractionService {
 
     private static final Pattern TASK_ID = Pattern.compile("(?:任务\\s*)?#\\s*(\\d+)|任务\\s*(\\d+)");
-    private static final Pattern COMPLETED = Pattern.compile("(?:已?完成|完成了|已做好|做好了)");
+    private static final Pattern COMPLETED = Pattern.compile("(?:已?完成|完成了|已做好|做好了|补卡)");
     private static final Pattern INCOMPLETE = Pattern.compile("(?:未完成|没完成|没有完成|还没完成|未做|没做)");
 
     private final CareTaskRepository taskRepository;
@@ -75,13 +75,16 @@ public class CareTaskInteractionService {
         }
         CareTaskInstance task = taskRepository.findById(reply.taskId())
                 .orElseThrow(() -> new CareException(CareErrorCode.NOT_FOUND, "照护任务不存在"));
-        authorizationService.require(actor, task.patientUserId(), CarePermissions.TASK_UPDATE,
+        String permission = task.status() == CareTaskStatus.OVERDUE || !reply.completed()
+                ? CarePermissions.PATIENT_TASK_BACKFILL : CarePermissions.TASK_UPDATE;
+        authorizationService.require(actor, task.patientUserId(), permission,
                 reply.completed() ? "COMPLETE_CARE_TASK_BY_WECHAT" : "REPORT_CARE_TASK_INCOMPLETE_BY_WECHAT",
                 "CARE_TASK", Long.toString(task.id()), requestId);
         if (task.status() == CareTaskStatus.COMPLETED) {
             return TaskReplyResult.alreadyCompleted(task);
         }
-        if (task.status() == CareTaskStatus.CANCELLED || task.status() == CareTaskStatus.SKIPPED) {
+        if (task.status() == CareTaskStatus.CANCELLED || task.status() == CareTaskStatus.SKIPPED
+                || task.status() == CareTaskStatus.MISSED) {
             return TaskReplyResult.unavailable(task);
         }
         Instant now = clock.instant();
@@ -92,8 +95,11 @@ public class CareTaskInteractionService {
     }
 
     private TaskReplyResult complete(CareTaskInstance task, CareActor actor, Instant now) {
-        boolean changed = taskRepository.complete(
-                task.id(), actor.userId(), task.version(), "微信回复：已完成", now);
+        boolean changed = task.status() == CareTaskStatus.OVERDUE
+                ? taskRepository.completeByBackfill(
+                        task.id(), actor.userId(), task.version(), "微信回复：补卡完成", now)
+                : taskRepository.complete(
+                        task.id(), actor.userId(), task.version(), "微信回复：已完成", now);
         if (changed) {
             return TaskReplyResult.completed(task);
         }
@@ -203,7 +209,7 @@ public class CareTaskInteractionService {
         }
 
         static TaskReplyResult unavailable(CareTaskInstance task) {
-            return new TaskReplyResult("任务“" + task.title() + "”已取消或跳过，不能再打卡。", false);
+            return new TaskReplyResult("任务“" + task.title() + "”已关闭，不能再打卡。", false);
         }
 
         static TaskReplyResult conflict() {

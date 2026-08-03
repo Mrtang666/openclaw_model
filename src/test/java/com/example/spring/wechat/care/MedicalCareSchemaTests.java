@@ -43,6 +43,7 @@ class MedicalCareSchemaTests {
                 "medical_care_plan_versions",
                 "medical_care_task_templates",
                 "medical_care_task_instances",
+                "medical_care_task_action_tokens",
                 "medical_care_task_events",
                 "medical_safety_alerts",
                 "medical_alert_events",
@@ -68,7 +69,8 @@ class MedicalCareSchemaTests {
                 "PATIENT_PLAN_MANAGE",
                 "PATIENT_PLAN_REVIEW",
                 "PATIENT_TASK_READ",
-                "PATIENT_TASK_UPDATE");
+                "PATIENT_TASK_UPDATE",
+                "PATIENT_TASK_BACKFILL");
     }
 
     private void assertUsingTestDatabase() {

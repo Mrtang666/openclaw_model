@@ -67,7 +67,7 @@ public class CareNotificationScheduler {
             repository.markSent(notification.id(), now);
             log.info("照护通知发送成功，notificationId={}", notification.id());
         } catch (Exception exception) {
-            lastError = rootMessage(exception);
+            String lastError = rootMessage(exception);
             if (isConnectionUnavailable(lastError)) {
                 repository.deferUntilConnectionAvailable(
                         notification.id(), lastError, now.plusSeconds(connectionRetryDelaySeconds()), now);
@@ -125,9 +125,11 @@ public class CareNotificationScheduler {
     }
 
     private List<NotificationTarget> latestTargets(MedicalNotification notification) {
-        if ("CARE_PLAN_TO_PATIENT".equals(notification.notificationType())
+        if (notification.patientUserId() != null
+                && notification.toUserId() == notification.patientUserId()
+                && ("CARE_PLAN_TO_PATIENT".equals(notification.notificationType())
                 || "CARE_TASK_DUE".equals(notification.notificationType())
-                || "CARE_TASK_FOLLOW_UP".equals(notification.notificationType())) {
+                || "CARE_TASK_FOLLOW_UP".equals(notification.notificationType()))) {
             return identityRepository.listUserNotificationTargetsByRole(notification.toUserId(), MedicalRole.PATIENT);
         }
         if ("CARE_PLAN_TO_FAMILY".equals(notification.notificationType())) {

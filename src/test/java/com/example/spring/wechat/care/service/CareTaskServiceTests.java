@@ -89,6 +89,44 @@ class CareTaskServiceTests {
     }
 
     @Test
+    void familyCanBackfillAnOverdueTaskWithinTheWindow() {
+        CareTaskRepository repository = mock(CareTaskRepository.class);
+        CareAuthorizationService authorization = mock(CareAuthorizationService.class);
+        CareTaskService service = service(repository, authorization);
+        CareActor family = new CareActor(2L, "FAM-1", "家属", MedicalRole.CAREGIVER);
+        CareTaskInstance overdue = task(CareTaskStatus.OVERDUE, 3L, null);
+        CareTaskInstance completed = task(CareTaskStatus.COMPLETED, 4L, NOW);
+        when(repository.findById(9L)).thenReturn(Optional.of(overdue), Optional.of(completed));
+        when(repository.completeByBackfill(9L, 2L, 3L, "已完成", NOW)).thenReturn(true);
+
+        CareTaskInstance result = service.backfill(
+                family, 9L, new CareTaskService.ActionCommand(3L, "已完成", "request-backfill"));
+
+        assertThat(result.status()).isEqualTo(CareTaskStatus.COMPLETED);
+        verify(authorization).require(family, 1L, CarePermissions.PATIENT_TASK_BACKFILL,
+                "BACKFILL_CARE_TASK", "CARE_TASK", "9", "request-backfill");
+    }
+
+    @Test
+    void patientCanExplicitlyReportMissedTask() {
+        CareTaskRepository repository = mock(CareTaskRepository.class);
+        CareAuthorizationService authorization = mock(CareAuthorizationService.class);
+        CareTaskService service = service(repository, authorization);
+        CareActor patient = new CareActor(1L, "PAT-1", "患者", MedicalRole.PATIENT);
+        CareTaskInstance pending = task(CareTaskStatus.PENDING, 3L, null);
+        CareTaskInstance overdue = task(CareTaskStatus.OVERDUE, 4L, null);
+        when(repository.findById(9L)).thenReturn(Optional.of(pending), Optional.of(overdue));
+        when(repository.reportMissed(9L, 1L, 3L, "今天没完成", NOW)).thenReturn(true);
+
+        CareTaskInstance result = service.reportMissed(
+                patient, 9L, new CareTaskService.ActionCommand(3L, "今天没完成", "request-missed"));
+
+        assertThat(result.status()).isEqualTo(CareTaskStatus.OVERDUE);
+        verify(authorization).require(patient, 1L, CarePermissions.PATIENT_TASK_BACKFILL,
+                "REPORT_CARE_TASK_MISSED", "CARE_TASK", "9", "request-missed");
+    }
+
+    @Test
     void postponeCannotExceedConfiguredLimit() {
         CareTaskRepository repository = mock(CareTaskRepository.class);
         CareTaskService service = service(repository, mock(CareAuthorizationService.class));

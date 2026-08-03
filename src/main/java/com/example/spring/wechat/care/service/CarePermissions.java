@@ -16,10 +16,11 @@ public final class CarePermissions {
     public static final String PLAN_REVIEW = "PATIENT_PLAN_REVIEW";
     public static final String TASK_READ = "PATIENT_TASK_READ";
     public static final String TASK_UPDATE = "PATIENT_TASK_UPDATE";
+    public static final String PATIENT_TASK_BACKFILL = "PATIENT_TASK_BACKFILL";
 
     public static final Set<String> ALL = Set.of(
             STATUS_READ, MEMORY_READ, MEMORY_CONFIRM, CHECKIN_READ, ALERT_READ, ALERT_ACK, REPORT_READ,
-            PLAN_READ, PLAN_MANAGE, PLAN_REVIEW, TASK_READ, TASK_UPDATE);
+            PLAN_READ, PLAN_MANAGE, PLAN_REVIEW, TASK_READ, TASK_UPDATE, PATIENT_TASK_BACKFILL);
 
     private CarePermissions() {
     }

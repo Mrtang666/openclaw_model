@@ -569,6 +569,70 @@ h1 {
     color: #ffffff;
 }
 
+.task-item.missed {
+    border-color: #e8b5ad;
+    background: #fff7f5;
+}
+
+.task-item.missed .task-dot-readonly,
+.task-item.missed .task-dot {
+    border-color: #bc4b3f;
+    color: #bc4b3f;
+}
+
+.task-missed-link {
+    margin-top: 8px;
+    border: 0;
+    background: transparent;
+    color: #9e3e35;
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.task-missed-link:hover {
+    text-decoration: underline;
+}
+
+.task-action-page {
+    min-height: calc(100vh - 40px);
+}
+
+.task-action-card {
+    width: min(100%, 520px);
+    text-align: center;
+    padding: 28px;
+}
+
+.task-action-card h1 {
+    margin: 12px 0 8px;
+    font-size: 28px;
+}
+
+.task-action-meta {
+    color: var(--muted);
+    line-height: 1.6;
+}
+
+.task-action-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 24px;
+}
+
+.task-action-buttons .button {
+    min-height: 48px;
+}
+
+.task-action-note {
+    margin: 16px 0 0;
+    color: var(--muted);
+    font-size: 13px;
+}
+
 .task-index {
     color: var(--muted);
     font-size: 12px;
@@ -715,4 +779,6 @@ h1 {
     .plan-card-header { display: grid; }
     .task-item { grid-template-columns: 52px minmax(0, 1fr); gap: 8px; padding: 11px; }
     .task-leading { gap: 6px; }
+    .task-action-card { padding: 22px 16px; }
+    .task-action-buttons { grid-template-columns: 1fr; }
 }

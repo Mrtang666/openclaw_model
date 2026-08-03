@@ -195,9 +195,9 @@ public class CareAuthorizationService {
         if (role.isClinical()) return CarePermissions.ALL;
         if (role.isFamily()) return Set.of(
                 CarePermissions.STATUS_READ, CarePermissions.MEMORY_READ, CarePermissions.MEMORY_CONFIRM,
-                CarePermissions.CHECKIN_READ, CarePermissions.ALERT_READ, CarePermissions.ALERT_ACK,
-                CarePermissions.REPORT_READ, CarePermissions.PLAN_READ, CarePermissions.TASK_READ,
-                CarePermissions.TASK_UPDATE);
+                 CarePermissions.CHECKIN_READ, CarePermissions.ALERT_READ, CarePermissions.ALERT_ACK,
+                 CarePermissions.REPORT_READ, CarePermissions.PLAN_READ, CarePermissions.TASK_READ,
+                 CarePermissions.TASK_UPDATE, CarePermissions.PATIENT_TASK_BACKFILL);
         return Set.of(CarePermissions.STATUS_READ);
     }
 

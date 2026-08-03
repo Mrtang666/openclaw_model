@@ -313,6 +313,18 @@ public class ClinicalCareController {
                 context.traceId());
     }
 
+    @PostMapping("/tasks/{taskId}/correct-missed")
+    public CareApiResponse<?> correctMissedTask(
+            @RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable long taskId,
+            @RequestBody TaskActionRequest request) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(taskService.correctMissed(context.actor(), taskId,
+                new CareTaskService.ActionCommand(request.version(), request.note(), context.traceId())),
+                context.traceId());
+    }
+
     @PostMapping("/tasks/{taskId}/postpone")
     public CareApiResponse<?> postponeTask(@RequestHeader("Authorization") String authorization,
             @RequestHeader(value = "X-Request-Id", required = false) String requestId,

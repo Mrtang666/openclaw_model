@@ -38,6 +38,7 @@ class MedicalCareSchemaTests {
                 "medical_memory_events",
                 "medical_daily_checkins",
                 "medical_care_observations",
+                "medical_health_records",
                 "medical_care_plans",
                 "medical_care_plan_versions",
                 "medical_care_task_templates",

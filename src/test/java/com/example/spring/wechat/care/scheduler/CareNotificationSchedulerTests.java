@@ -42,7 +42,6 @@ class CareNotificationSchedulerTests {
 
         scheduler.processDue(now);
 
-        verify(repository).requeueConnectionUnavailablePatientNotifications(now);
         verify(repository).markFailed(7L, false, "send failed", now.plusSeconds(60), now);
     }
 
@@ -70,6 +69,6 @@ class CareNotificationSchedulerTests {
         scheduler.processDue(now);
 
         verify(repository).deferUntilConnectionAvailable(
-                8L, "提醒对应的微信连接当前不可用，请在 Bot 登录后重试", now.plusSeconds(60), now);
+                8L, "提醒对应的微信连接当前不可用，请在 Bot 登录后重试", now, now);
     }
 }

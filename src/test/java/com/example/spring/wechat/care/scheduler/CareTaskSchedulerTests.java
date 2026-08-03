@@ -54,7 +54,9 @@ class CareTaskSchedulerTests {
         when(tasks.findReadyForReminder(NOW, 100)).thenReturn(List.of(task));
         when(tasks.findReadyForFollowUp(NOW, 100)).thenReturn(List.of());
         when(identities.listUserNotificationTargetsByRole(1L, com.example.spring.wechat.care.model.MedicalRole.PATIENT))
-                .thenReturn(List.of(new NotificationTarget(1L, "connection", "recipient")));
+                .thenReturn(List.of(
+                        new NotificationTarget(1L, "latest-connection", "recipient"),
+                        new NotificationTarget(1L, "old-connection", "recipient")));
         when(tasks.findReadyToMarkOverdue(NOW, 100)).thenReturn(List.of());
         when(tasks.findReadyForOverdueNotification(NOW, 100)).thenReturn(List.of());
         CareTaskScheduler scheduler = new CareTaskScheduler(
@@ -68,9 +70,10 @@ class CareTaskSchedulerTests {
         verify(notifications).enqueue(captor.capture());
         assertThat(captor.getValue().content())
                 .contains("晚间服药")
-                .contains("某药物详细内容")
-                .contains("完成 #9", "未完成 #9");
+                .contains("完成 #9")
+                .doesNotContain("某药物详细内容", "未完成 #9");
         assertThat(captor.getValue().toUserId()).isEqualTo(1L);
+        assertThat(captor.getValue().idempotencyKey()).isEqualTo("task:9:CARE_TASK_DUE:user:1");
         verify(tasks).markReminderEnqueued(9L, NOW);
     }
 

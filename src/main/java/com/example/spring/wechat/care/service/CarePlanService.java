@@ -267,7 +267,7 @@ public class CarePlanService {
         int followUp = range(command.followUpAfterMinutes(), 30, 1, 1_440, "任务确认时间不合法");
         int grace = range(command.gracePeriodMinutes(), 60, followUp, 1_440, "任务宽限时间不合法");
         int escalation = range(
-                command.escalationAfterMinutes(), Math.max(120, grace), grace, 10_080,
+                command.escalationAfterMinutes(), grace + 30, grace, 10_080,
                 "任务升级提醒时间不合法");
         return new CareTaskTemplate(
                 0L, 0L, 0L, 0L, type, required(command.title(), "任务标题不能为空", 255),

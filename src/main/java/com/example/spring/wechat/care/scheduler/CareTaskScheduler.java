@@ -13,19 +13,18 @@ import com.example.spring.wechat.care.repository.CarePlanRepository;
 import com.example.spring.wechat.care.repository.CareTaskRepository;
 import com.example.spring.wechat.care.repository.MedicalIdentityRepository;
 import com.example.spring.wechat.care.service.CarePermissions;
+import com.example.spring.wechat.care.service.SafetyAlertService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,8 +39,30 @@ public class CareTaskScheduler {
     private final CareNotificationRepository notificationRepository;
     private final CareTaskProperties taskProperties;
     private final CareProperties careProperties;
+    private final SafetyAlertService alertService;
     private final Clock clock;
 
+    @Autowired
+    public CareTaskScheduler(
+            CarePlanRepository planRepository,
+            CareTaskRepository taskRepository,
+            MedicalIdentityRepository identityRepository,
+            CareNotificationRepository notificationRepository,
+            CareTaskProperties taskProperties,
+            CareProperties careProperties,
+            SafetyAlertService alertService,
+            Clock clock) {
+        this.planRepository = planRepository;
+        this.taskRepository = taskRepository;
+        this.identityRepository = identityRepository;
+        this.notificationRepository = notificationRepository;
+        this.taskProperties = taskProperties;
+        this.careProperties = careProperties;
+        this.alertService = alertService;
+        this.clock = clock;
+    }
+
+    /** Compatibility constructor for focused scheduler tests and older integrations. */
     public CareTaskScheduler(
             CarePlanRepository planRepository,
             CareTaskRepository taskRepository,
@@ -50,13 +71,8 @@ public class CareTaskScheduler {
             CareTaskProperties taskProperties,
             CareProperties careProperties,
             Clock clock) {
-        this.planRepository = planRepository;
-        this.taskRepository = taskRepository;
-        this.identityRepository = identityRepository;
-        this.notificationRepository = notificationRepository;
-        this.taskProperties = taskProperties;
-        this.careProperties = careProperties;
-        this.clock = clock;
+        this(planRepository, taskRepository, identityRepository, notificationRepository,
+                taskProperties, careProperties, null, clock);
     }
 
     @Scheduled(fixedDelayString = "${care.task.poll-interval-ms:15000}")
@@ -97,7 +113,15 @@ public class CareTaskScheduler {
 
     void markOverdue(Instant now) {
         for (Long taskId : taskRepository.findReadyToMarkOverdue(now, taskProperties.batchSize())) {
-            if (taskId != null) taskRepository.markOverdue(taskId, now);
+            if (taskId == null) continue;
+            CareTaskInstance task = taskRepository.findById(taskId).orElse(null);
+            taskRepository.markOverdue(taskId, now);
+            if (task != null && alertService != null) {
+                alertService.createTaskOverdueAttention(task);
+                for (NotificationTarget target : patientTargets(task.patientUserId())) {
+                    enqueue(task, target, "CARE_TASK_OVERDUE_PATIENT", overduePatientContent(task), now);
+                }
+            }
         }
     }
 
@@ -113,6 +137,10 @@ public class CareTaskScheduler {
     void enqueueOverdueNotifications(Instant now) {
         for (CareTaskInstance task : taskRepository.findReadyForOverdueNotification(
                 now, taskProperties.batchSize())) {
+            if (alertService != null) alertService.escalateTaskOverdue(task);
+            for (NotificationTarget target : patientTargets(task.patientUserId())) {
+                enqueue(task, target, "CARE_TASK_ESCALATED_PATIENT", escalatedPatientContent(task), now);
+            }
             List<NotificationTarget> targets = familyTargets(task.patientUserId(), now);
             for (NotificationTarget target : targets) {
                 enqueue(task, target, "CARE_TASK_OVERDUE",
@@ -142,7 +170,7 @@ public class CareTaskScheduler {
             String type,
             String content,
             Instant now) {
-        String idempotencyKey = "task:" + task.id() + ":" + type + ":" + targetHash(target);
+        String idempotencyKey = "task:" + task.id() + ":" + type + ":user:" + target.userId();
         notificationRepository.enqueue(new MedicalNotification(
                 0L, target.userId(), task.patientUserId(), target.connectionId(), target.recipientId(),
                 type, "WECHAT", content, "PENDING", now, null, 0,
@@ -175,7 +203,7 @@ public class CareTaskScheduler {
         Map<String, NotificationTarget> distinct = new LinkedHashMap<>();
         for (NotificationTarget target : identityRepository.listUserNotificationTargetsByRole(
                 patientUserId, MedicalRole.PATIENT)) {
-            distinct.putIfAbsent(target.userId() + ":" + target.recipientId(), target);
+            distinct.putIfAbsent(Long.toString(target.userId()), target);
         }
         return List.copyOf(distinct.values());
     }
@@ -185,24 +213,25 @@ public class CareTaskScheduler {
                 + task.title() + "（#" + task.id() + "）";
     }
 
+    private String overduePatientContent(CareTaskInstance task) {
+        return "【任务超时提醒】\n请尽快完成：" + reminderTitle(task)
+                + "\n完成后请回复：完成 #" + task.id();
+    }
+
+    private String escalatedPatientContent(CareTaskInstance task) {
+        return "【请尽快确认】\n任务“" + reminderTitle(task)
+                + "”超时仍未完成，请尽快回复：完成 #" + task.id();
+    }
+
     private List<NotificationTarget> familyTargets(long patientUserId, Instant now) {
         Map<String, NotificationTarget> distinct = new LinkedHashMap<>();
         for (MedicalRole role : List.of(MedicalRole.FAMILY, MedicalRole.CAREGIVER)) {
             for (NotificationTarget target : identityRepository.listNotificationTargetsByRole(
                     patientUserId, role, CarePermissions.TASK_READ, now)) {
-                distinct.put(target.userId() + ":" + target.connectionId() + ":" + target.recipientId(), target);
+                distinct.putIfAbsent(Long.toString(target.userId()), target);
             }
         }
         return List.copyOf(distinct.values());
     }
 
-    private String targetHash(NotificationTarget target) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(
-                    (target.connectionId() + ":" + target.recipientId()).getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest, 0, 8);
-        } catch (Exception exception) {
-            throw new IllegalStateException("无法生成照护通知幂等键", exception);
-        }
-    }
 }

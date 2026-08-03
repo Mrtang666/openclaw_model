@@ -6,6 +6,7 @@ import com.example.spring.wechat.care.service.CarePlanService;
 import com.example.spring.wechat.care.service.CareReportService;
 import com.example.spring.wechat.care.service.CareTaskService;
 import com.example.spring.wechat.care.service.DailyCheckInService;
+import com.example.spring.wechat.care.service.HealthRecordService;
 import com.example.spring.wechat.care.service.SafetyAlertService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.math.BigDecimal;
 
 @RestController
 @RequestMapping("/api/care/v1/patient")
@@ -27,6 +29,7 @@ public class PatientCareController {
     private final CareApiSupport apiSupport;
     private final CareMemoryService memoryService;
     private final DailyCheckInService checkInService;
+    private final HealthRecordService healthRecordService;
     private final SafetyAlertService alertService;
     private final CareReportService reportService;
     private final CarePlanService planService;
@@ -36,6 +39,7 @@ public class PatientCareController {
             CareApiSupport apiSupport,
             CareMemoryService memoryService,
             DailyCheckInService checkInService,
+            HealthRecordService healthRecordService,
             SafetyAlertService alertService,
             CareReportService reportService,
             CarePlanService planService,
@@ -43,6 +47,7 @@ public class PatientCareController {
         this.apiSupport = apiSupport;
         this.memoryService = memoryService;
         this.checkInService = checkInService;
+        this.healthRecordService = healthRecordService;
         this.alertService = alertService;
         this.reportService = reportService;
         this.planService = planService;
@@ -111,6 +116,27 @@ public class PatientCareController {
             @RequestParam(defaultValue = "50") int limit) {
         Context context = context(authorization, requestId);
         return CareApiResponse.success(alertService.list(
+                context.actor(), context.actor().userId(), limit, context.traceId()), context.traceId());
+    }
+
+    @PostMapping("/health-records")
+    public CareApiResponse<?> recordHealth(
+            @RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @RequestBody HealthRecordRequest request) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(healthRecordService.record(
+                context.actor(), context.actor().userId(), request.toCommand(context.traceId()), "PATIENT_WEB"),
+                context.traceId());
+    }
+
+    @GetMapping("/health-records")
+    public CareApiResponse<?> healthRecords(
+            @RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @RequestParam(defaultValue = "50") int limit) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(healthRecordService.list(
                 context.actor(), context.actor().userId(), limit, context.traceId()), context.traceId());
     }
 
@@ -197,6 +223,20 @@ public class PatientCareController {
             String incidentType,
             String originalText,
             String idempotencyKey) {
+    }
+
+    public record HealthRecordRequest(
+            String category,
+            BigDecimal primaryValue,
+            BigDecimal secondaryValue,
+            String unit,
+            String recordText,
+            Instant occurredAt,
+            String idempotencyKey) {
+        HealthRecordService.RecordCommand toCommand(String requestId) {
+            return new HealthRecordService.RecordCommand(category, primaryValue, secondaryValue, unit,
+                    recordText, occurredAt, idempotencyKey, requestId);
+        }
     }
 
     public record TaskActionRequest(long version, String note) {

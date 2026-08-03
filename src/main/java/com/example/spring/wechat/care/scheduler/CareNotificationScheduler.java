@@ -49,7 +49,6 @@ public class CareNotificationScheduler {
     }
 
     public void processDue(Instant now) {
-        repository.requeueConnectionUnavailablePatientNotifications(now);
         repository.releaseExpiredLocks(
                 now.minusSeconds(properties.notification().lockTimeoutSeconds()), now);
         for (Long id : repository.findDueIds(now, properties.notification().batchSize())) {
@@ -68,8 +67,8 @@ public class CareNotificationScheduler {
             lastError = rootMessage(exception);
             if (isConnectionUnavailable(lastError)) {
                 repository.deferUntilConnectionAvailable(
-                        notification.id(), lastError, now.plusSeconds(connectionRetryDelaySeconds()), now);
-                log.info("照护通知等待接收方重新登录，notificationId={}", notification.id());
+                        notification.id(), lastError, now, now);
+                log.debug("照护通知等待接收方重新登录，notificationId={}", notification.id());
                 return;
             }
             boolean terminal = notification.retryCount() + 1 >= notification.maxRetryCount();
@@ -85,10 +84,6 @@ public class CareNotificationScheduler {
         String value = message == null ? "" : message;
         return value.contains("微信连接当前不可用")
                 || value.contains("没有可用微信连接");
-    }
-
-    private long connectionRetryDelaySeconds() {
-        return Math.max(60L, properties.notification().retryDelaySeconds());
     }
 
     private void sendToFirstAvailableTarget(MedicalNotification notification) {

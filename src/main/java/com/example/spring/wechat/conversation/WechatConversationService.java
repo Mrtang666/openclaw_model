@@ -662,6 +662,9 @@ public class WechatConversationService {
         if (looksLikeCarePlanRequest(value)) {
             return true;
         }
+        if (looksLikeHealthRecordReport(value)) {
+            return true;
+        }
         return containsAny(value,
                 "\u60a3\u8005\u7f16\u53f7", "\u6211\u7684\u7f16\u53f7", "\u7528\u6237\u7f16\u53f7", "\u533b\u7597\u8eab\u4efd", "\u5f53\u524d\u8eab\u4efd",
                 "\u7ed1\u5b9a\u60a3\u8005", "\u65b0\u589e\u60a3\u8005", "\u6dfb\u52a0\u60a3\u8005",
@@ -698,6 +701,9 @@ public class WechatConversationService {
         if (looksLikeCarePlanRequest(value)) {
             return "plan_draft";
         }
+        if (looksLikeHealthRecordReport(value)) {
+            return "health_record";
+        }
         if (containsAny(value, "\u60a3\u8005\u7f16\u53f7", "\u6211\u7684\u7f16\u53f7", "\u7528\u6237\u7f16\u53f7", "\u533b\u7597\u8eab\u4efd", "\u5f53\u524d\u8eab\u4efd")) {
             return "whoami";
         }
@@ -717,6 +723,13 @@ public class WechatConversationService {
             return "doctor_workspace";
         }
         return "status";
+    }
+
+    private boolean looksLikeHealthRecordReport(String text) {
+        return containsAny(text,
+                "血压", "血糖", "体温", "血氧", "心率", "体重",
+                "头晕", "胸痛", "胸闷", "呼吸困难", "无法呼吸", "昏迷", "救命", "不舒服",
+                "不安全", "安全异常");
     }
 
     private String extractNickname(String text) {

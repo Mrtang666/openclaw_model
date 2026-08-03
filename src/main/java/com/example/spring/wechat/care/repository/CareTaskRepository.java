@@ -104,7 +104,7 @@ public class CareTaskRepository {
     public List<CareTaskInstance> findReadyForOverdueNotification(Instant now, int limit) {
         return jdbc.query(SELECT + """
                 WHERE i.status='OVERDUE' AND i.overdue_notified_at IS NULL
-                  AND TIMESTAMPADD(MINUTE,t.escalation_after_minutes,i.due_at)<=?
+                  AND TIMESTAMPADD(MINUTE,t.grace_period_minutes + 30,i.due_at)<=?
                 ORDER BY i.due_at,i.id LIMIT ?
                 """, MAPPER, timestamp(now), limit);
     }

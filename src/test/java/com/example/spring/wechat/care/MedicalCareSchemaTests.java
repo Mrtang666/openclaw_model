@@ -32,7 +32,6 @@ class MedicalCareSchemaTests {
                 "medical_organization_members",
                 "medical_patient_organization_relations",
                 "medical_patient_relations",
-                "medical_consents",
                 "medical_relation_permissions",
                 "medical_web_sessions",
                 "medical_login_sessions",

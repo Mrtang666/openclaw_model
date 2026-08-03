@@ -255,13 +255,6 @@ public class MedicalIdentityRepository {
                 SET status='REVOKED',version=version+1,updated_at=?
                 WHERE patient_user_id=? AND viewer_user_id=? AND relation_role=? AND status='ACTIVE'
                 """, timestamp(now), patientUserId, viewerUserId, role.name());
-        if (changed > 0) {
-            jdbc.update("""
-                    UPDATE medical_consents
-                    SET status='REVOKED',revoked_at=?,version=version+1,updated_at=?
-                    WHERE patient_user_id=? AND grantee_type='USER' AND grantee_id=? AND status='ACTIVE'
-                    """, timestamp(now), timestamp(now), patientUserId, viewerUserId);
-        }
         return changed > 0;
     }
 
@@ -292,15 +285,6 @@ public class MedicalIdentityRepository {
                     ON DUPLICATE KEY UPDATE expires_at=VALUES(expires_at)
                     """, relationId, permission, nullableTimestamp(expiresAt), timestamp(now));
         }
-        jdbc.update("""
-                INSERT INTO medical_consents
-                (patient_user_id,granted_by_user_id,consent_scope,grantee_type,grantee_id,status,
-                 granted_at,expires_at,revoked_at,version,created_at,updated_at)
-                VALUES (?,?,'CARE_DATA_SHARE','USER',?,'ACTIVE',?,?,NULL,0,?,?)
-                ON DUPLICATE KEY UPDATE status='ACTIVE',granted_at=VALUES(granted_at),
-                    expires_at=VALUES(expires_at),revoked_at=NULL,version=version+1,updated_at=VALUES(updated_at)
-                """, patientUserId, patientUserId, viewerUserId, timestamp(now), nullableTimestamp(expiresAt),
-                timestamp(now), timestamp(now));
         return findRelation(relationId).orElseThrow();
     }
 

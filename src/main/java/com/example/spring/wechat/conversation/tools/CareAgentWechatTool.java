@@ -187,7 +187,7 @@ public class CareAgentWechatTool implements WechatTool {
 
     private String bindLink(CareActor actor, String sessionKey) {
         if (actor.role() == MedicalRole.PATIENT) {
-            return "患者端用于接收任务和授权关系。请把你的患者编号发给家属或医生：\n" + actor.userCode();
+            return "患者端用于接收任务。请把你的患者编号发给家属或医生：\n" + actor.userCode();
         }
         String route = actor.role().isClinical() ? "/bind/doctor" : "/bind/caregiver";
         String label = actor.role().isClinical() ? "医生绑定患者" : "家属绑定患者";

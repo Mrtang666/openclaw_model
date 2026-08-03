@@ -1,7 +1,6 @@
 package com.example.spring.wechat.care.web;
 
 import com.example.spring.wechat.care.model.CareActor;
-import com.example.spring.wechat.care.service.CareAuthorizationService;
 import com.example.spring.wechat.care.service.CareMemoryService;
 import com.example.spring.wechat.care.service.CarePlanService;
 import com.example.spring.wechat.care.service.CareReportService;
@@ -20,14 +19,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.util.Set;
 
 @RestController
 @RequestMapping("/api/care/v1/patient")
 public class PatientCareController {
 
     private final CareApiSupport apiSupport;
-    private final CareAuthorizationService authorizationService;
     private final CareMemoryService memoryService;
     private final DailyCheckInService checkInService;
     private final SafetyAlertService alertService;
@@ -37,7 +34,6 @@ public class PatientCareController {
 
     public PatientCareController(
             CareApiSupport apiSupport,
-            CareAuthorizationService authorizationService,
             CareMemoryService memoryService,
             DailyCheckInService checkInService,
             SafetyAlertService alertService,
@@ -45,7 +41,6 @@ public class PatientCareController {
             CarePlanService planService,
             CareTaskService taskService) {
         this.apiSupport = apiSupport;
-        this.authorizationService = authorizationService;
         this.memoryService = memoryService;
         this.checkInService = checkInService;
         this.alertService = alertService;
@@ -117,18 +112,6 @@ public class PatientCareController {
         Context context = context(authorization, requestId);
         return CareApiResponse.success(alertService.list(
                 context.actor(), context.actor().userId(), limit, context.traceId()), context.traceId());
-    }
-
-    @PostMapping("/access-grants")
-    public CareApiResponse<?> grantAccess(
-            @RequestHeader("Authorization") String authorization,
-            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
-            @RequestBody AccessGrantRequest request) {
-        Context context = context(authorization, requestId);
-        return CareApiResponse.success(authorizationService.grantRelation(
-                context.actor(), new CareAuthorizationService.GrantCommand(
-                        request.viewerUserCode(), request.relationRole(), request.relationLabel(),
-                        request.permissions(), request.expiresAt(), context.traceId())), context.traceId());
     }
 
     @GetMapping("/plans")
@@ -214,14 +197,6 @@ public class PatientCareController {
             String incidentType,
             String originalText,
             String idempotencyKey) {
-    }
-
-    public record AccessGrantRequest(
-            String viewerUserCode,
-            String relationRole,
-            String relationLabel,
-            Set<String> permissions,
-            Instant expiresAt) {
     }
 
     public record TaskActionRequest(long version, String note) {

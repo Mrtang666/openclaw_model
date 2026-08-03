@@ -2,6 +2,7 @@ package com.example.spring.medical.login;
 
 import com.example.spring.wechat.care.model.MedicalRole;
 import com.example.spring.wechat.care.model.MedicalUser;
+import com.example.spring.wechat.care.repository.CareNotificationRepository;
 import com.example.spring.wechat.care.repository.MedicalIdentityRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,14 +22,17 @@ public class MedicalLoginSessionService {
     private static final Logger log = LoggerFactory.getLogger(MedicalLoginSessionService.class);
 
     private final ObjectProvider<JdbcTemplate> jdbcTemplateProvider;
+    private final ObjectProvider<CareNotificationRepository> notificationRepositoryProvider;
     private final ObjectProvider<MedicalIdentityRepository> identityRepositoryProvider;
     private final Clock clock;
 
     public MedicalLoginSessionService(
             ObjectProvider<JdbcTemplate> jdbcTemplateProvider,
+            ObjectProvider<CareNotificationRepository> notificationRepositoryProvider,
             ObjectProvider<MedicalIdentityRepository> identityRepositoryProvider,
             ObjectProvider<Clock> clockProvider) {
         this.jdbcTemplateProvider = jdbcTemplateProvider;
+        this.notificationRepositoryProvider = notificationRepositoryProvider;
         this.identityRepositoryProvider = identityRepositoryProvider;
         this.clock = clockProvider.getIfAvailable(Clock::systemUTC);
     }
@@ -106,6 +110,13 @@ public class MedicalLoginSessionService {
                     SET status = 'BOUND', bound_user_id = ?, bound_at = ?
                     WHERE login_session_id = ?
                     """, user.id(), Timestamp.from(now), loginSessionId);
+            CareNotificationRepository notificationRepository = notificationRepositoryProvider.getIfAvailable();
+            if (notificationRepository != null) {
+                int resumed = notificationRepository.resumeWaitingForConnection(user.id(), connectionId, fromUserId, now);
+                if (resumed > 0) {
+                    log.info("医疗身份重新登录，已恢复待发送照护通知，userId={}, count={}", user.id(), resumed);
+                }
+            }
             return Optional.of(new BoundMedicalIdentity(user, role));
         } catch (RuntimeException exception) {
             log.warn("绑定医疗身份登录会话失败，不影响微信消息处理，loginSessionId={}, fromUserId={}, error={}",

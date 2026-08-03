@@ -4,7 +4,10 @@ import com.example.spring.wechat.care.config.CareProperties;
 import com.example.spring.wechat.care.exception.CareErrorCode;
 import com.example.spring.wechat.care.exception.CareException;
 import com.example.spring.wechat.care.model.CareActor;
+import com.example.spring.wechat.care.model.CareTaskInstance;
+import com.example.spring.wechat.care.model.HealthRecord;
 import com.example.spring.wechat.care.model.MedicalNotification;
+import com.example.spring.wechat.care.model.MedicalRole;
 import com.example.spring.wechat.care.model.NotificationTarget;
 import com.example.spring.wechat.care.model.SafetyAlert;
 import com.example.spring.wechat.care.model.SafetyAlertStatus;
@@ -56,9 +59,61 @@ public class SafetyAlertService {
                     0L, patientUserId, candidate.alertType(), candidate.severity(), SafetyAlertStatus.OPEN,
                     "DAILY_CHECKIN", checkInId, candidate.evidenceText(), idempotencyKey, now,
                     null, null, null, null, 0L, now, now));
-            enqueueNotifications(alert, now);
+            if (candidate.severity() == com.example.spring.wechat.care.model.SafetySeverity.URGENT) {
+                enqueueDoctorNotifications(alert, now);
+            } else {
+                enqueueNotifications(alert, now);
+            }
             return alert;
         });
+    }
+
+    @Transactional
+    public SafetyAlert createFromHealthRecord(
+            HealthRecord record,
+            SafetyRuleEngine.AlertCandidate candidate) {
+        String idempotencyKey = "health:" + record.id() + ":" + candidate.alertType();
+        return repository.findByIdempotencyKey(idempotencyKey).orElseGet(() -> {
+            Instant now = clock.instant();
+            String evidence = candidate.evidenceText() + "（记录值：" + recordValue(record) + "）";
+            SafetyAlert alert = repository.save(new SafetyAlert(
+                    0L, record.patientUserId(), candidate.alertType(), candidate.severity(), SafetyAlertStatus.OPEN,
+                    "HEALTH_RECORD", record.id(), evidence, idempotencyKey, now,
+                    null, null, null, null, 0L, now, now));
+            if (candidate.severity().name().equals("URGENT")) {
+                enqueueDoctorNotifications(alert, now);
+            }
+            return alert;
+        });
+    }
+
+    @Transactional
+    public SafetyAlert createTaskOverdueAttention(CareTaskInstance task) {
+        String idempotencyKey = "task:" + task.id() + ":overdue";
+        return repository.findByIdempotencyKey(idempotencyKey).orElseGet(() -> {
+            Instant now = clock.instant();
+            return repository.save(new SafetyAlert(
+                    0L, task.patientUserId(), "TASK_OVERDUE", com.example.spring.wechat.care.model.SafetySeverity.ATTENTION,
+                    SafetyAlertStatus.OPEN, "CARE_TASK", task.id(),
+                    "任务“" + task.title() + "”已超时，已再次提醒患者确认。", idempotencyKey, now,
+                    null, null, null, null, 0L, now, now));
+        });
+    }
+
+    @Transactional
+    public SafetyAlert escalateTaskOverdue(CareTaskInstance task) {
+        String idempotencyKey = "task:" + task.id() + ":overdue";
+        Instant now = clock.instant();
+        SafetyAlert alert = repository.findByIdempotencyKey(idempotencyKey)
+                .map(existing -> repository.escalate(existing.id(),
+                        "任务“" + task.title() + "”超时超过 30 分钟，已升级为紧急告警。", now))
+                .orElseGet(() -> repository.save(new SafetyAlert(
+                        0L, task.patientUserId(), "TASK_OVERDUE", com.example.spring.wechat.care.model.SafetySeverity.URGENT,
+                        SafetyAlertStatus.ESCALATED, "CARE_TASK", task.id(),
+                        "任务“" + task.title() + "”超时超过 30 分钟，已升级为紧急告警。", idempotencyKey, now,
+                        null, null, null, null, 0L, now, now)));
+        enqueueDoctorNotifications(alert, now);
+        return alert;
     }
 
     public List<SafetyAlert> list(CareActor actor, long patientUserId, int requestedLimit, String requestId) {
@@ -106,6 +161,30 @@ public class SafetyAlertService {
                     properties.notification().maxRetryCount(), "", null,
                     "alert:" + alert.id() + ":user:" + target.userId(), now, now));
         }
+    }
+
+    private void enqueueDoctorNotifications(SafetyAlert alert, Instant now) {
+        List<NotificationTarget> targets = identityRepository.listNotificationTargetsByRole(
+                alert.patientUserId(), MedicalRole.DOCTOR, CarePermissions.ALERT_READ, now);
+        for (NotificationTarget target : targets) {
+            String content = "【紧急患者告警】\n患者出现紧急照护情况，请尽快查看。\n告警："
+                    + alert.evidenceText() + "\n告警编号 #" + alert.id();
+            notificationRepository.enqueue(new MedicalNotification(
+                    0L, target.userId(), alert.patientUserId(), target.connectionId(), target.recipientId(),
+                    "SAFETY_ALERT_URGENT", "WECHAT", content, "PENDING", now, null, 0,
+                    properties.notification().maxRetryCount(), "", null,
+                    "urgent-alert:" + alert.id() + ":doctor:" + target.userId(), now, now));
+        }
+    }
+
+    private String recordValue(HealthRecord record) {
+        if (record.secondaryValue() != null) {
+            return record.primaryValue() + "/" + record.secondaryValue() + " " + record.unit();
+        }
+        if (record.primaryValue() != null) {
+            return record.primaryValue() + (record.unit().isBlank() ? "" : " " + record.unit());
+        }
+        return record.recordText();
     }
 
     public record ActionCommand(long version, String note, String requestId) {

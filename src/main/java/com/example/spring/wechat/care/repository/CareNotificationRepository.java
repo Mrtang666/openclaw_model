@@ -80,9 +80,9 @@ public class CareNotificationRepository {
     public void deferUntilConnectionAvailable(long id, String error, Instant retryAt, Instant now) {
         jdbc.update("""
                 UPDATE medical_notifications
-                SET status='PENDING',last_error=?,scheduled_at=?,locked_at=NULL,updated_at=?
+                SET status='WAITING_LOGIN',last_error=?,locked_at=NULL,updated_at=?
                 WHERE id=? AND status='PROCESSING'
-                """, limit(error, 1000), timestamp(retryAt), timestamp(now), id);
+                """, limit(error, 1000), timestamp(now), id);
     }
 
     public void requeueConnectionUnavailablePatientNotifications(Instant now) {
@@ -96,6 +96,15 @@ public class CareNotificationRepository {
                   AND (n.last_error LIKE '%微信连接当前不可用%' OR n.last_error LIKE '%没有可用微信连接%')
                   AND (n.notification_type='CARE_PLAN_TO_PATIENT' OR i.status IN ('PENDING','OVERDUE','MISSED'))
                 """, timestamp(now), timestamp(now));
+    }
+
+    public int resumeWaitingForConnection(long userId, String connectionId, String recipientId, Instant now) {
+        return jdbc.update("""
+                UPDATE medical_notifications
+                SET status='PENDING',connection_id=?,recipient_id=?,scheduled_at=?,locked_at=NULL,last_error=NULL,
+                    updated_at=?
+                WHERE to_user_id=? AND status='WAITING_LOGIN'
+                """, connectionId, recipientId, timestamp(now), timestamp(now), userId);
     }
 
     public void releaseExpiredLocks(Instant expiredBefore, Instant now) {

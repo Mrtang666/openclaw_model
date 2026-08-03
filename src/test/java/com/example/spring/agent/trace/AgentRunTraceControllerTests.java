@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -12,14 +13,17 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(AgentRunTraceController.class)
+@Import(AgentRunDiagnosticMapper.class)
 class AgentRunTraceControllerTests {
 
     @Autowired
@@ -38,9 +42,19 @@ class AgentRunTraceControllerTests {
                 .andExpect(jsonPath("$.runId").value(1))
                 .andExpect(jsonPath("$.runKey").value("agent-run-1"))
                 .andExpect(jsonPath("$.sessionKey").value("session-a"))
+                .andExpect(jsonPath("$.userText").value("contact a***@example.com or 138****5678"))
+                .andExpect(jsonPath("$.contextSummary").value("context token=[REDACTED]"))
                 .andExpect(jsonPath("$.status").value("SUCCEEDED"))
+                .andExpect(jsonPath("$.finalReplySummary").value("reply password=[REDACTED]"))
                 .andExpect(jsonPath("$.steps[0].stepIndex").value(1))
-                .andExpect(jsonPath("$.steps[0].stepType").value("POLICY_DECISION"));
+                .andExpect(jsonPath("$.steps[0].stepType").value("POLICY_DECISION"))
+                .andExpect(jsonPath("$.steps[0].inputSummary").value("api_key=[REDACTED]"))
+                .andExpect(jsonPath("$.steps[0].outputSummary").value("mail b***@example.com"))
+                .andExpect(jsonPath("$.steps[0].metadataJson").value("{\"secret\":\"[REDACTED]\"}"))
+                .andExpect(content().string(not(containsString("alice@example.com"))))
+                .andExpect(content().string(not(containsString("13812345678"))))
+                .andExpect(content().string(not(containsString("sk-live-123"))))
+                .andExpect(content().string(not(containsString("top-secret"))));
 
         verify(queryService).findRun("agent-run-1");
     }
@@ -69,8 +83,14 @@ class AgentRunTraceControllerTests {
                 .andExpect(jsonPath("$[0].runId").value(2))
                 .andExpect(jsonPath("$[0].runKey").value("agent-run-2"))
                 .andExpect(jsonPath("$[0].sessionKey").value("session-a"))
+                .andExpect(jsonPath("$[0].userText").value("phone 139****5678"))
+                .andExpect(jsonPath("$[0].contextSummary").value("email c***@example.com"))
                 .andExpect(jsonPath("$[0].status").value("FAILED"))
-                .andExpect(jsonPath("$[0].stopReason").value("TOOL_FAILURE"));
+                .andExpect(jsonPath("$[0].stopReason").value("TOOL_FAILURE"))
+                .andExpect(jsonPath("$[0].finalReplySummary").value("token=[REDACTED]"))
+                .andExpect(content().string(not(containsString("13912345678"))))
+                .andExpect(content().string(not(containsString("carol@example.com"))))
+                .andExpect(content().string(not(containsString("raw-token"))));
 
         verify(queryService).findRecentRuns("session-a", 5);
     }
@@ -90,11 +110,11 @@ class AgentRunTraceControllerTests {
                 runKey,
                 "WECHAT",
                 "session-a",
-                "hello",
-                "context",
+                "contact alice@example.com or 13812345678",
+                "context token=abc123",
                 AgentRunStatus.SUCCEEDED,
                 "FINAL_ANSWER",
-                "ok",
+                "reply password=p@ss",
                 Instant.parse("2026-08-03T06:00:00Z"),
                 Instant.parse("2026-08-03T06:00:01Z"),
                 List.of(new AgentRunStepView(
@@ -104,9 +124,9 @@ class AgentRunTraceControllerTests {
                         2,
                         "web_search",
                         AgentRunStepStatus.SKIPPED,
-                        "has rag evidence",
-                        "skip web search",
-                        "{\"decision_type\":\"SKIP_WEB_SEARCH_RAG_EVIDENCE\"}",
+                        "api_key=sk-live-123",
+                        "mail bob@example.com",
+                        "{\"secret\":\"top-secret\"}",
                         Instant.parse("2026-08-03T06:00:00Z"))));
     }
 
@@ -116,11 +136,11 @@ class AgentRunTraceControllerTests {
                 runKey,
                 "WECHAT",
                 "session-a",
-                "hello",
-                "context",
+                "phone 13912345678",
+                "email carol@example.com",
                 AgentRunStatus.FAILED,
                 "TOOL_FAILURE",
-                "failed",
+                "token=raw-token",
                 Instant.parse("2026-08-03T06:00:00Z"),
                 Instant.parse("2026-08-03T06:00:01Z"));
     }

@@ -15,28 +15,32 @@ import java.util.List;
 public class AgentRunTraceController {
 
     private final AgentRunTraceQueryService queryService;
+    private final AgentRunDiagnosticMapper diagnosticMapper;
 
-    public AgentRunTraceController(AgentRunTraceQueryService queryService) {
+    public AgentRunTraceController(AgentRunTraceQueryService queryService, AgentRunDiagnosticMapper diagnosticMapper) {
         this.queryService = queryService;
+        this.diagnosticMapper = diagnosticMapper;
     }
 
     @GetMapping("/{runKey}")
-    public ResponseEntity<AgentRunTraceView> run(@PathVariable String runKey) {
+    public ResponseEntity<AgentRunDiagnosticTraceView> run(@PathVariable String runKey) {
         return queryService.findRun(runKey)
                 .map(trace -> ResponseEntity.ok()
                         .cacheControl(CacheControl.noStore())
-                        .body(trace))
+                        .body(diagnosticMapper.toDiagnostic(trace)))
                 .orElseGet(() -> ResponseEntity.notFound()
                         .cacheControl(CacheControl.noStore())
                         .build());
     }
 
     @GetMapping
-    public ResponseEntity<List<AgentRunSummaryView>> recentRuns(
+    public ResponseEntity<List<AgentRunDiagnosticSummaryView>> recentRuns(
             @RequestParam String sessionKey,
             @RequestParam(defaultValue = "20") int limit) {
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
-                .body(queryService.findRecentRuns(sessionKey, limit));
+                .body(queryService.findRecentRuns(sessionKey, limit).stream()
+                        .map(diagnosticMapper::toDiagnostic)
+                        .toList());
     }
 }

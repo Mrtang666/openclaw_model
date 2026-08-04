@@ -55,17 +55,18 @@ public class CareTaskRepository {
             LocalDate scheduledFor,
             Instant dueAt,
             Instant now) {
-        Instant effectiveDueAt = dueAt.isBefore(now) ? now : dueAt;
+        boolean alreadyMissed = dueAt.isBefore(now);
         int backfillDeadlineMinutes = Math.max(
                 template.gracePeriodMinutes(), template.escalationAfterMinutes());
-        Instant backfillDeadline = effectiveDueAt.plusSeconds(backfillDeadlineMinutes * 60L);
+        Instant backfillDeadline = dueAt.plusSeconds(backfillDeadlineMinutes * 60L);
         jdbc.update("""
                 INSERT IGNORE INTO medical_care_task_instances
                 (plan_id,plan_version_id,task_template_id,patient_user_id,scheduled_for,due_at,status,
-                 late_checkin_deadline_at,idempotency_key,version,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,'PENDING',?,?,0,?,?)
+                 late_checkin_deadline_at,overdue_notified_at,idempotency_key,version,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?)
                 """, template.planId(), template.planVersionId(), template.id(), template.patientUserId(),
-                Date.valueOf(scheduledFor), timestamp(effectiveDueAt), timestamp(backfillDeadline),
+                Date.valueOf(scheduledFor), timestamp(dueAt), alreadyMissed ? "MISSED" : "PENDING",
+                timestamp(backfillDeadline), alreadyMissed ? timestamp(now) : null,
                 instanceKey(template.id(), scheduledFor),
                 timestamp(now), timestamp(now));
     }
@@ -183,8 +184,8 @@ public class CareTaskRepository {
                 UPDATE medical_care_task_instances
                 SET status='COMPLETED',completed_by_user_id=?,completed_at=?,result_note=?,
                     completion_mode='BACKFILL',reported_at=?,version=version+1,updated_at=?
-                WHERE id=? AND version=? AND status='OVERDUE'
-                  AND late_checkin_deadline_at>=?
+                WHERE id=? AND version=?
+                  AND ((status='OVERDUE' AND late_checkin_deadline_at>=?) OR status='MISSED')
                 """, actorUserId, timestamp(now), clean(note), timestamp(now), timestamp(now),
                 taskId, expectedVersion, timestamp(now));
         if (changed == 1) recordEvent(taskId, actorUserId, "COMPLETED_BY_BACKFILL", note, null, null, now);

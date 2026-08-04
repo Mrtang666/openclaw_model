@@ -635,6 +635,25 @@ function connectionStateLabel(connection) {
   return "已停止";
 }
 
+const connectionRoleLabels = {
+  PATIENT: "\u60a3\u8005",
+  CAREGIVER: "\u5bb6\u5c5e",
+  DOCTOR: "\u533b\u751f"
+};
+
+function connectionDisplayName(connection, index) {
+  const rawName = String(connection?.displayName || "").trim();
+  const name = rawName || ("\u7528\u6237 " + (index + 1));
+  const connectionRole = normalizeRole(connection?.requestedRole);
+  const roleLabel = connectionRoleLabels[connectionRole] || connectionRoleLabels[activeRole];
+  const hasRolePrefix = Object.values(connectionRoleLabels)
+    .some((label) => name.startsWith(label + " "));
+  if (!roleLabel || hasRolePrefix) {
+    return name;
+  }
+  return roleLabel + " " + name;
+}
+
 function renderManager(snapshot) {
   document.querySelector("#connected-count").textContent = snapshot.connectedCount;
   document.querySelector("#mobile-connected-count").textContent = snapshot.connectedCount;
@@ -656,6 +675,7 @@ function renderManager(snapshot) {
     name.textContent = connection.displayName || `用户 ${index + 1}`;
     const state = document.createElement("em");
     state.textContent = connectionStateLabel(connection);
+    name.textContent = connectionDisplayName(connection, index);
     title.append(stateDot, name, state);
     const meta = document.createElement("p");
     meta.textContent = `队列 ${connection.queuedMessages} · 处理中 ${connection.activeMessages}`;

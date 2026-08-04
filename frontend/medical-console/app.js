@@ -1785,7 +1785,8 @@ function taskList(patient, { interactive = false, showDetail = !interactive, sho
             ${patient.tasks.map((task, index) => {
                 const statusCode = task.statusCode || (task.status === "已完成" ? "COMPLETED" : "PENDING");
                 const completed = statusCode === "COMPLETED";
-                const inactive = ["CANCELLED", "SKIPPED", "MISSED"].includes(statusCode);
+                const inactive = ["CANCELLED", "SKIPPED"].includes(statusCode);
+                const lateCompletion = ["OVERDUE", "MISSED"].includes(statusCode);
                 const canComplete = interactive && task.id && !completed && !inactive;
                 const badgeClass = completed ? "green" : inactive ? "blue" : "amber";
                 const dueAt = task.dueAt ? new Date(task.dueAt) : null;
@@ -1809,6 +1810,7 @@ function taskList(patient, { interactive = false, showDetail = !interactive, sho
                         </div>
                         ${showTime && dueLabel ? `<div class="item-meta">执行时间：${escapeHtml(dueLabel)}</div>` : ""}
                         ${showDetail ? `<div class="item-meta">${escapeHtml(task.detail)}</div>` : ""}
+                        ${interactive && lateCompletion ? `<button class="task-missed-link" type="button" data-task-complete="${task.id || ""}" data-task-version="${task.version ?? 0}" data-task-status="${statusCode}">补卡完成</button>` : ""}
                         ${interactive && statusCode === "OVERDUE" ? `<button class="task-missed-link" type="button" data-task-missed="${task.id || ""}" data-task-version="${task.version ?? 0}">确认未完成</button>` : ""}
                     </div>
                 </article>
@@ -1827,7 +1829,8 @@ function bindTaskActions() {
             button.classList.add("is-loading");
             try {
                 const taskApi = role().toUpperCase() === "PATIENT" ? apiPrefix("patient") : apiPrefix("family");
-                const endpoint = button.dataset.taskStatus === "OVERDUE" ? "late-complete" : "complete";
+                const endpoint = ["OVERDUE", "MISSED"].includes(button.dataset.taskStatus)
+                    ? "late-complete" : "complete";
                 await careApi(`${taskApi}/tasks/${taskId}/${endpoint}`, {
                     method: "POST",
                     body: JSON.stringify({

@@ -108,6 +108,25 @@ class CareTaskServiceTests {
     }
 
     @Test
+    void familyCanBackfillTaskAfterItWasMarkedMissed() {
+        CareTaskRepository repository = mock(CareTaskRepository.class);
+        CareAuthorizationService authorization = mock(CareAuthorizationService.class);
+        CareTaskService service = service(repository, authorization);
+        CareActor family = new CareActor(2L, "FAM-1", "family", MedicalRole.CAREGIVER);
+        CareTaskInstance missed = task(CareTaskStatus.MISSED, 3L, null);
+        CareTaskInstance completed = task(CareTaskStatus.COMPLETED, 4L, NOW);
+        when(repository.findById(9L)).thenReturn(Optional.of(missed), Optional.of(completed));
+        when(repository.completeByBackfill(9L, 2L, 3L, "done", NOW)).thenReturn(true);
+
+        CareTaskInstance result = service.backfill(
+                family, 9L, new CareTaskService.ActionCommand(3L, "done", "request-missed-backfill"));
+
+        assertThat(result.status()).isEqualTo(CareTaskStatus.COMPLETED);
+        verify(authorization).require(family, 1L, CarePermissions.PATIENT_TASK_BACKFILL,
+                "BACKFILL_CARE_TASK", "CARE_TASK", "9", "request-missed-backfill");
+    }
+
+    @Test
     void patientCanExplicitlyReportMissedTask() {
         CareTaskRepository repository = mock(CareTaskRepository.class);
         CareAuthorizationService authorization = mock(CareAuthorizationService.class);

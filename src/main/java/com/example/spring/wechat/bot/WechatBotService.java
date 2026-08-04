@@ -12,6 +12,8 @@ import com.example.spring.wechat.login.WechatLoginPageSessionService;
 import com.example.spring.wechat.login.WechatLoginPageUrlService;
 import com.example.spring.wechat.reminder.service.ReminderRecipientBindingService;
 import com.example.spring.medical.login.MedicalLoginSessionService;
+import com.example.spring.wechat.care.model.MedicalRole;
+import com.example.spring.wechat.care.repository.MedicalIdentityRepository;
 import com.example.spring.wechat.report.WechatReplyPresentationService;
 import com.example.spring.wechat.bot.concurrency.ConversationKey;
 import com.example.spring.wechat.bot.concurrency.WechatConcurrencyProperties;
@@ -71,6 +73,7 @@ public class WechatBotService {
     private final ReminderRecipientBindingService reminderRecipientBindingService;
     private final WechatReplyPresentationService replyPresentationService;
     private final MedicalLoginSessionService medicalLoginSessionService;
+    private volatile ObjectProvider<MedicalIdentityRepository> medicalIdentityRepositoryProvider;
     private final ExecutorService receiverExecutor = Executors.newCachedThreadPool(task -> {
         Thread thread = new Thread(task, "wechat-receiver-" + UUID.randomUUID());
         thread.setDaemon(true);
@@ -209,6 +212,12 @@ public class WechatBotService {
         this.modelSlots = new Semaphore(concurrencyProperties.getModelMaxConcurrency(), true);
     }
 
+    @Autowired
+    void configureMedicalIdentityRepository(
+            ObjectProvider<MedicalIdentityRepository> medicalIdentityRepositoryProvider) {
+        this.medicalIdentityRepositoryProvider = medicalIdentityRepositoryProvider;
+    }
+
     public synchronized WechatStartResult start() {
         return start(null);
     }
@@ -318,7 +327,7 @@ public class WechatBotService {
     public ClawBotManagerSnapshot managerSnapshot() {
         cleanupExpiredPendingConnections();
         List<ClawBotConnectionSnapshot> connections = runtimes.values().stream()
-                .map(ClientRuntime::snapshot)
+                .map(runtime -> runtime.snapshot(displayNameForSnapshot(runtime)))
                 .sorted(Comparator.comparing(ClawBotConnectionSnapshot::createdAt))
                 .toList();
         int connected = (int) connections.stream().filter(item -> item.state() == WechatBotState.RUNNING).count();
@@ -335,6 +344,37 @@ public class WechatBotService {
                 dispatcher == null ? 0 : dispatcher.activeTasks(),
                 dispatcher == null ? 0 : dispatcher.queuedTasks(),
                 connections);
+    }
+
+    private String displayNameForSnapshot(ClientRuntime runtime) {
+        String currentName = runtime.displayName;
+        if (!isGeneratedDisplayName(currentName)
+                || runtime.fromUserId == null || runtime.fromUserId.isBlank()
+                || runtime.requestedRole == null || runtime.requestedRole.isBlank()) {
+            return currentName;
+        }
+        ObjectProvider<MedicalIdentityRepository> provider = medicalIdentityRepositoryProvider;
+        MedicalIdentityRepository identityRepository = provider == null ? null : provider.getIfAvailable();
+        if (identityRepository == null) {
+            return currentName;
+        }
+        try {
+            MedicalRole role = MedicalRole.from(runtime.requestedRole);
+            String sessionKey = new ConversationKey(runtime.connectionId, runtime.fromUserId).sessionKey();
+            return identityRepository.findUserBySessionKeyAndRole(sessionKey, role)
+                    .map(user -> {
+                        String displayName = medicalDisplayName(role, user.displayName());
+                        runtime.displayName = displayName;
+                        return displayName;
+                    })
+                    .orElse(currentName);
+        } catch (RuntimeException ignored) {
+            return currentName;
+        }
+    }
+
+    private boolean isGeneratedDisplayName(String displayName) {
+        return displayName == null || displayName.isBlank() || displayName.strip().matches("^\u7528\u6237\\s*\\d+$");
     }
 
     public boolean sendProactiveText(String connectionId, String userId, String text) {
@@ -359,6 +399,31 @@ public class WechatBotService {
                     connectionId, userId, rootMessage(exception));
             return false;
         }
+    }
+
+    /**
+     * Keeps the connection-management display name in sync with a medical user's saved nickname.
+     */
+    public boolean updateMedicalDisplayName(
+            String sessionKey,
+            MedicalRole role,
+            String displayName) {
+        if (sessionKey == null || !sessionKey.startsWith("clawbot:")) {
+            return false;
+        }
+        int separator = sessionKey.lastIndexOf(':');
+        if (separator <= "clawbot:".length() || separator == sessionKey.length() - 1) {
+            return false;
+        }
+
+        String connectionId = sessionKey.substring("clawbot:".length(), separator);
+        String fromUserId = sessionKey.substring(separator + 1);
+        ClientRuntime runtime = runtimes.get(connectionId);
+        if (runtime == null || !fromUserId.equals(runtime.fromUserId)) {
+            return false;
+        }
+        runtime.displayName = medicalDisplayName(role, displayName);
+        return true;
     }
 
     public boolean sendProactiveFile(String connectionId, String userId, byte[] bytes,
@@ -437,6 +502,7 @@ public class WechatBotService {
             return;
         }
 
+        runtime.fromUserId = message.fromUserId();
         String text = hasText ? message.text().strip() : "";
         refreshReminderRecipientBinding(runtime, message);
         bindMedicalIdentity(runtime, message);
@@ -1211,6 +1277,7 @@ public class WechatBotService {
     private static final class ClientRuntime {
         private final String connectionId;
         private volatile String displayName;
+        private volatile String fromUserId;
         private final WechatClient client;
         private final String loginSessionId;
         private final String requestedRole;
@@ -1239,9 +1306,13 @@ public class WechatBotService {
         }
 
         private ClawBotConnectionSnapshot snapshot() {
+            return snapshot(displayName);
+        }
+
+        private ClawBotConnectionSnapshot snapshot(String snapshotDisplayName) {
             return new ClawBotConnectionSnapshot(
                     connectionId,
-                    displayName,
+                    snapshotDisplayName,
                     state,
                     processingState,
                     botId,
@@ -1250,7 +1321,8 @@ public class WechatBotService {
                     lastActivityAt,
                     queuedMessages.get(),
                     activeMessages.get(),
-                    lastError);
+                    lastError,
+                    requestedRole);
         }
     }
 

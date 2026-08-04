@@ -112,6 +112,11 @@ public class MedicalLoginSessionService {
                     """, user.id(), Timestamp.from(now), loginSessionId);
             CareNotificationRepository notificationRepository = notificationRepositoryProvider.getIfAvailable();
             if (notificationRepository != null) {
+                int discarded = notificationRepository.discardWaitingTaskNotifications(user.id(), now);
+                if (discarded > 0) {
+                    log.info("医疗身份重新登录，已跳过离线期间积压的任务通知，userId={}, role={}, count={}",
+                            user.id(), role, discarded);
+                }
                 int resumed = notificationRepository.resumeWaitingForConnection(user.id(), connectionId, fromUserId, now);
                 if (resumed > 0) {
                     log.info("医疗身份重新登录，已恢复待发送照护通知，userId={}, count={}", user.id(), resumed);

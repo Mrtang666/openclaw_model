@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 @Primary
@@ -50,19 +51,47 @@ public class ModelConversationRelevanceClassifier implements ConversationRelevan
         if (properties == null || !properties.relevanceClassifierEnabled() || chatService == null) {
             return fallback.classify(userText, recentTurns, recentTopics);
         }
+
+        ConversationRelevanceDecision ruleDecision = fallback.classify(userText, recentTurns, recentTopics);
+        if (properties.fastRelevanceEnabled()
+                && shouldBypassModel(ruleDecision, userText, recentTurns, recentTopics)) {
+            return ruleDecision;
+        }
+
         try {
             String reply = chatService.reply(prompt(userText, recentTurns, recentTopics));
             return parse(reply);
         } catch (RuntimeException exception) {
             log.warn("上下文相关性模型判断失败，error={}", rootMessage(exception));
-            return fallback.classify(userText, recentTurns, recentTopics);
+            return ruleDecision;
         }
+    }
+
+    private boolean shouldBypassModel(
+            ConversationRelevanceDecision ruleDecision,
+            String userText,
+            List<String> recentTurns,
+            List<String> recentTopics) {
+        if (ruleDecision == null) {
+            return false;
+        }
+        if (ruleDecision.relevance() == RelevanceLevel.STRONG && ruleDecision.confidence() >= 0.9) {
+            return true;
+        }
+        if (ruleDecision.relevance() != RelevanceLevel.WEAK) {
+            return false;
+        }
+        String text = clean(userText);
+        if (text.length() < 6) {
+            return false;
+        }
+        return !sharesTopicKeyword(text, recentTurns) && !sharesTopicKeyword(text, recentTopics);
     }
 
     private String prompt(String userText, List<String> recentTurns, List<String> recentTopics) {
         return """
                 你是微信 Agent 的上下文主题相关性分类器。
-                判断“当前用户消息”和“近期上下文主题”是否属于同一个主题。
+                判断“当前用户消息”和“近期上下文主题”是否属于同一主题。
                 只输出 JSON，不要输出解释文字。
 
                 JSON 字段：
@@ -71,10 +100,6 @@ public class ModelConversationRelevanceClassifier implements ConversationRelevan
                 - currentTopic: 当前主题，不能确定则为空字符串
                 - reason: 一句话理由
                 - relatedTopics: 字符串数组
-
-                判定标准：
-                - STRONG：当前消息明显延续近期主题，或通过“继续、刚才、这个、第二个”等表达依赖近期上下文。
-                - WEAK：新话题、不相关、主题跨度很大，或无法可靠判断为同一主题。
 
                 当前用户消息：
                 %s
@@ -130,6 +155,30 @@ public class ModelConversationRelevanceClassifier implements ConversationRelevan
                 .map(String::strip)
                 .limit(8)
                 .toList());
+    }
+
+    private boolean sharesTopicKeyword(String text, List<String> values) {
+        if (text.isBlank() || values == null || values.isEmpty()) {
+            return false;
+        }
+        for (String keyword : roughKeywords(text)) {
+            if (keyword.length() < 2) {
+                continue;
+            }
+            for (String value : values) {
+                if (value != null && value.contains(keyword)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private List<String> roughKeywords(String text) {
+        return Arrays.stream(text.split("[\\s,.;:!?，。！？、（）()\\[\\]\"']+"))
+                .map(String::strip)
+                .filter(value -> !value.isBlank())
+                .toList();
     }
 
     private String clean(String value) {

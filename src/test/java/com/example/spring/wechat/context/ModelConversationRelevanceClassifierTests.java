@@ -8,6 +8,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class ModelConversationRelevanceClassifierTests {
@@ -16,16 +17,16 @@ class ModelConversationRelevanceClassifierTests {
     void parsesStrongModelDecision() {
         ChatService chatService = mock(ChatService.class);
         when(chatService.reply(contains("只输出 JSON"))).thenReturn("""
-                {"relevance":"STRONG","confidence":0.91,"currentTopic":"Memory Graph","reason":"同一主题","relatedTopics":["Memory Graph"]}
+                {"relevance":"STRONG","confidence":0.91,"currentTopic":"Memory Graph","reason":"same topic","relatedTopics":["Memory Graph"]}
                 """);
         ModelConversationRelevanceClassifier classifier = new ModelConversationRelevanceClassifier(
                 chatService,
                 new RuleBasedRelevanceFallback(),
-                new WechatContextProperties(true, true, true, 5, 1, 2, 5, 1, 128000, 8000, 12000, 0.8));
+                new WechatContextProperties(true, true, true, 5, 1, 2, 5, 1, 128000, 8000, 12000, 0.8, false, false));
 
         ConversationRelevanceDecision decision = classifier.classify(
-                "继续讲活摘",
-                List.of("用户：Memory Graph 怎么做\n助手：我们拆成节点"),
+                "continue discussing",
+                List.of("user: Memory Graph design\nassistant: keep graph context"),
                 List.of("Memory Graph"));
 
         assertThat(decision.relevance()).isEqualTo(RelevanceLevel.STRONG);
@@ -40,10 +41,44 @@ class ModelConversationRelevanceClassifierTests {
         ModelConversationRelevanceClassifier classifier = new ModelConversationRelevanceClassifier(
                 chatService,
                 new RuleBasedRelevanceFallback(),
+                new WechatContextProperties(true, true, true, 5, 1, 2, 5, 1, 128000, 8000, 12000, 0.8, false, false));
+
+        ConversationRelevanceDecision decision = classifier.classify("it?", List.of(), List.of("topic"));
+
+        assertThat(decision.relevance()).isEqualTo(RelevanceLevel.WEAK);
+    }
+
+    @Test
+    void skipsModelCallForObviousStrongTopicOverlap() {
+        ChatService chatService = mock(ChatService.class);
+        ModelConversationRelevanceClassifier classifier = new ModelConversationRelevanceClassifier(
+                chatService,
+                new RuleBasedRelevanceFallback(),
                 new WechatContextProperties(true, true, true, 5, 1, 2, 5, 1, 128000, 8000, 12000, 0.8));
 
-        ConversationRelevanceDecision decision = classifier.classify("继续", List.of(), List.of("上下文设计"));
+        ConversationRelevanceDecision decision = classifier.classify(
+                "Memory Graph performance",
+                List.of("user: Memory Graph design\nassistant: keep graph context"),
+                List.of("Memory Graph"));
 
         assertThat(decision.relevance()).isEqualTo(RelevanceLevel.STRONG);
+        verifyNoInteractions(chatService);
+    }
+
+    @Test
+    void skipsModelCallForObviousNewTopic() {
+        ChatService chatService = mock(ChatService.class);
+        ModelConversationRelevanceClassifier classifier = new ModelConversationRelevanceClassifier(
+                chatService,
+                new RuleBasedRelevanceFallback(),
+                new WechatContextProperties(true, true, true, 5, 1, 2, 5, 1, 128000, 8000, 12000, 0.8));
+
+        ConversationRelevanceDecision decision = classifier.classify(
+                "weather tomorrow",
+                List.of("user: Memory Graph design\nassistant: keep graph context"),
+                List.of("Memory Graph"));
+
+        assertThat(decision.relevance()).isEqualTo(RelevanceLevel.WEAK);
+        verifyNoInteractions(chatService);
     }
 }

@@ -1,6 +1,7 @@
 package com.example.spring.wechat.context;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
 @ConfigurationProperties(prefix = "wechat.agent.context")
 public record WechatContextProperties(
@@ -15,8 +16,11 @@ public record WechatContextProperties(
         int modelWindowTokens,
         int outputReserveTokens,
         int toolLoopReserveTokens,
-        double maxInputRatio) {
+        double maxInputRatio,
+        boolean fastRelevanceEnabled,
+        boolean semanticCompressionEnabled) {
 
+    @ConstructorBinding
     public WechatContextProperties {
         strongRecentTurns = strongRecentTurns <= 0 ? 5 : strongRecentTurns;
         weakRecentTurns = weakRecentTurns <= 0 ? 1 : weakRecentTurns;
@@ -30,5 +34,37 @@ public record WechatContextProperties(
         outputReserveTokens = outputReserveTokens <= 0 ? 8_000 : outputReserveTokens;
         toolLoopReserveTokens = toolLoopReserveTokens <= 0 ? 12_000 : toolLoopReserveTokens;
         maxInputRatio = maxInputRatio <= 0 || maxInputRatio > 1 ? 0.8 : maxInputRatio;
+        fastRelevanceEnabled = fastRelevanceEnabled;
+        semanticCompressionEnabled = semanticCompressionEnabled;
+    }
+
+    public WechatContextProperties(
+            boolean memoryGraphEnabled,
+            boolean relevanceClassifierEnabled,
+            boolean longTermMemoryIngestionEnabled,
+            int strongRecentTurns,
+            int weakRecentTurns,
+            int minRecentTurns,
+            int summaryWindowSize,
+            int summaryOverlapTurns,
+            int modelWindowTokens,
+            int outputReserveTokens,
+            int toolLoopReserveTokens,
+            double maxInputRatio) {
+        this(
+                memoryGraphEnabled,
+                relevanceClassifierEnabled,
+                longTermMemoryIngestionEnabled,
+                strongRecentTurns,
+                weakRecentTurns,
+                minRecentTurns,
+                summaryWindowSize,
+                summaryOverlapTurns,
+                modelWindowTokens,
+                outputReserveTokens,
+                toolLoopReserveTokens,
+                maxInputRatio,
+                true,
+                false);
     }
 }

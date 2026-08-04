@@ -14,15 +14,31 @@ public class ContextCompressor {
 
     private final TokenEstimator tokenEstimator;
     private final SectionCompressionService sectionCompressionService;
+    private final boolean semanticCompressionEnabled;
 
     public ContextCompressor(TokenEstimator tokenEstimator) {
-        this(tokenEstimator, null);
+        this(tokenEstimator, null, false);
+    }
+
+    public ContextCompressor(TokenEstimator tokenEstimator, SectionCompressionService sectionCompressionService) {
+        this(tokenEstimator, sectionCompressionService, false);
     }
 
     @Autowired
-    public ContextCompressor(TokenEstimator tokenEstimator, SectionCompressionService sectionCompressionService) {
+    public ContextCompressor(
+            TokenEstimator tokenEstimator,
+            SectionCompressionService sectionCompressionService,
+            WechatContextProperties properties) {
+        this(tokenEstimator, sectionCompressionService, properties != null && properties.semanticCompressionEnabled());
+    }
+
+    ContextCompressor(
+            TokenEstimator tokenEstimator,
+            SectionCompressionService sectionCompressionService,
+            boolean semanticCompressionEnabled) {
         this.tokenEstimator = tokenEstimator;
         this.sectionCompressionService = sectionCompressionService;
+        this.semanticCompressionEnabled = semanticCompressionEnabled;
     }
 
     public List<ContextSection> compress(List<ContextSection> sections, int budgetTokens) {
@@ -45,10 +61,9 @@ public class ContextCompressor {
             int overBudget = estimateContent(result) - budgetTokens;
             int currentLength = tokenEstimator.estimate(section.content());
             int targetLength = Math.max(MARKER.length(), currentLength - overBudget - MARKER.length());
-            String semanticallyCompressed = semanticCompress(section, targetLength);
-            if (!semanticallyCompressed.isBlank()
-                    && tokenEstimator.estimate(semanticallyCompressed) < currentLength) {
-                ContextSection semanticSection = section.withContent(semanticallyCompressed);
+            String compressed = semanticCompress(section, targetLength);
+            if (!compressed.isBlank() && tokenEstimator.estimate(compressed) < currentLength) {
+                ContextSection semanticSection = section.withContent(compressed);
                 result.set(index, semanticSection);
                 if (estimateContent(result) > budgetTokens) {
                     int semanticOverBudget = estimateContent(result) - budgetTokens;
@@ -72,7 +87,7 @@ public class ContextCompressor {
     }
 
     private String semanticCompress(ContextSection section, int targetTokens) {
-        if (sectionCompressionService == null || section == null || section.content().isBlank()) {
+        if (!semanticCompressionEnabled || sectionCompressionService == null || section == null || section.content().isBlank() || targetTokens <= 0) {
             return "";
         }
         try {

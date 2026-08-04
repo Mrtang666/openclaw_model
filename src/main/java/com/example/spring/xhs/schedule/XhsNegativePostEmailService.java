@@ -19,6 +19,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 public class XhsNegativePostEmailService {
@@ -61,14 +62,28 @@ public class XhsNegativePostEmailService {
             jdbcTemplate.update("""
                     INSERT IGNORE INTO xhs_negative_post_deliveries(
                         project_id, post_id, schedule_id, recipient_email, status,
-                        attempt_count, next_attempt_at, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, 'PENDING', 0, ?, ?, ?)
+                        attempt_count, next_attempt_at, deduplication_bucket, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 'PENDING', 0, ?, ?, ?, ?)
                     """, candidate.projectId(), candidate.postId(), target.scheduleId(), target.email(),
-                    Timestamp.from(now), Timestamp.from(now), Timestamp.from(now));
+                    Timestamp.from(now), now.getEpochSecond() / Math.max(60L, target.cooldownMinutes() * 60L),
+                    Timestamp.from(now), Timestamp.from(now));
         }
     }
 
     public int dispatchPending() {
+        Instant now = Instant.now();
+        jdbcTemplate.update("""
+                UPDATE xhs_negative_post_deliveries
+                SET status = 'PENDING', lock_token = NULL, locked_at = NULL, updated_at = ?
+                WHERE status = 'PROCESSING' AND locked_at < ?
+                """, Timestamp.from(now), Timestamp.from(now.minusSeconds(900)));
+        String lockToken = UUID.randomUUID().toString();
+        jdbcTemplate.update("""
+                UPDATE xhs_negative_post_deliveries
+                SET status = 'PROCESSING', lock_token = ?, locked_at = ?, updated_at = ?
+                WHERE status = 'PENDING' AND next_attempt_at <= ?
+                ORDER BY next_attempt_at, id LIMIT 20
+                """, lockToken, Timestamp.from(now), Timestamp.from(now), Timestamp.from(now));
         List<Delivery> deliveries = jdbcTemplate.query("""
                 SELECT d.id, d.post_id, d.recipient_email, pr.project_key, p.title, p.content,
                        p.source_url, p.published_at, a.summary, a.sentiment, a.risk_category,
@@ -76,10 +91,12 @@ public class XhsNegativePostEmailService {
                 FROM xhs_negative_post_deliveries d
                 JOIN xhs_posts p ON p.id = d.post_id
                 JOIN xhs_monitor_projects pr ON pr.id = p.project_id
-                JOIN xhs_analysis_results a ON a.post_id = p.id
-                WHERE d.status = 'PENDING' AND d.next_attempt_at <= ?
-                ORDER BY d.next_attempt_at, d.id LIMIT 20
-                """, this::mapDelivery, Timestamp.from(Instant.now()));
+                JOIN xhs_analysis_results a ON a.id = (
+                    SELECT a2.id FROM xhs_analysis_results a2
+                    WHERE a2.post_id = p.id ORDER BY a2.analyzed_at DESC, a2.id DESC LIMIT 1)
+                WHERE d.status = 'PROCESSING' AND d.lock_token = ?
+                ORDER BY d.id
+                """, this::mapDelivery, lockToken);
         deliveries.forEach(this::dispatch);
         return deliveries.size();
     }
@@ -135,7 +152,8 @@ public class XhsNegativePostEmailService {
                 UPDATE xhs_negative_post_deliveries
                 SET status = CASE WHEN ? = 'SENT' THEN 'SENT' WHEN attempt_count + 1 >= 3 THEN 'FAILED' ELSE 'PENDING' END,
                     attempt_count = attempt_count + 1, last_error = ?,
-                    sent_at = ?, next_attempt_at = ?, updated_at = ? WHERE id = ?
+                    sent_at = ?, next_attempt_at = ?, lock_token = NULL, locked_at = NULL,
+                    updated_at = ? WHERE id = ?
                 """, status, error, sent ? Timestamp.from(now) : null,
                 Timestamp.from(sent ? now : now.plusSeconds(300)), Timestamp.from(now), id);
     }

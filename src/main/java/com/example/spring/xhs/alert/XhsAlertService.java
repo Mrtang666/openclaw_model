@@ -30,7 +30,7 @@ public class XhsAlertService {
         if (!properties.enabled()) {
             return 0;
         }
-        List<XhsAlertDelivery> deliveries = repository.findPendingDeliveries(
+        List<XhsAlertDelivery> deliveries = repository.claimPendingDeliveries(
                 properties.maxDeliveryAttempts(), properties.batchSize());
         deliveries.forEach(this::dispatch);
         return deliveries.size();
@@ -49,12 +49,12 @@ public class XhsAlertService {
     private void dispatch(XhsAlertDelivery delivery) {
         try {
             notifier.send(delivery, message(delivery));
-            repository.markDeliverySent(delivery.deliveryId(), delivery.alertEventId(),
-                    properties.maxDeliveryAttempts(), Instant.now());
+            repository.markDeliverySent(delivery, properties.maxDeliveryAttempts(), Instant.now());
         } catch (RuntimeException exception) {
-            repository.markDeliveryFailed(
-                    delivery.deliveryId(), delivery.alertEventId(), safeMessage(exception),
+            repository.markDeliveryFailed(delivery, safeMessage(exception),
                     properties.maxDeliveryAttempts(), Instant.now());
+        } finally {
+            repository.releaseDeliveryClaim(delivery);
         }
     }
 

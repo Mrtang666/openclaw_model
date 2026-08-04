@@ -8,14 +8,23 @@ import org.springframework.transaction.annotation.Transactional;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
+import java.time.Duration;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 
 @Repository
 public class MySqlXhsAlertRepository implements XhsAlertRepository {
 
     private final JdbcTemplate jdbcTemplate;
+    private final Duration claimTimeout;
 
-    public MySqlXhsAlertRepository(JdbcTemplate jdbcTemplate) {
+    @Autowired
+    public MySqlXhsAlertRepository(JdbcTemplate jdbcTemplate,
+                                   @Value("${xhs.alert.claim-timeout:2m}") Duration claimTimeout) {
         this.jdbcTemplate = jdbcTemplate;
+        this.claimTimeout = claimTimeout == null || claimTimeout.isNegative() || claimTimeout.isZero()
+                ? Duration.ofMinutes(2) : claimTimeout;
     }
 
     @Override
@@ -116,6 +125,60 @@ public class MySqlXhsAlertRepository implements XhsAlertRepository {
     }
 
     @Override
+    public List<XhsAlertDelivery> claimPendingDeliveries(int maxAttempts, int limit) {
+        String token = UUID.randomUUID().toString();
+        Instant now = Instant.now();
+        Timestamp staleBefore = Timestamp.from(now.minus(claimTimeout));
+        jdbcTemplate.update("""
+                UPDATE xhs_alert_deliveries
+                SET status = 'PENDING', claim_token = NULL, claimed_at = NULL, updated_at = ?
+                WHERE status = 'PROCESSING' AND claimed_at < ?
+                """, Timestamp.from(now), staleBefore);
+        jdbcTemplate.update("""
+                UPDATE xhs_alert_deliveries
+                SET status = 'PROCESSING', claim_token = ?, claimed_at = ?, updated_at = ?
+                WHERE id IN (
+                    SELECT id FROM (
+                        SELECT d.id
+                        FROM xhs_alert_deliveries d
+                        JOIN xhs_alert_events e ON e.id = d.alert_event_id
+                        WHERE d.status IN ('PENDING', 'FAILED') AND d.attempt_count < ?
+                          AND e.status = 'PENDING'
+                        ORDER BY d.updated_at, d.id LIMIT ?
+                    ) claimable
+                )
+                  AND status IN ('PENDING', 'FAILED')
+                """, token, Timestamp.from(now), Timestamp.from(now), Math.max(1, maxAttempts),
+                Math.max(1, limit));
+        return jdbcTemplate.query("""
+                SELECT d.id delivery_id, e.id alert_event_id, p.project_key,
+                       s.connection_id, s.recipient_id, i.title, i.risk_category,
+                       e.risk_score, i.risk_level, i.post_count, d.attempt_count
+                FROM xhs_alert_deliveries d
+                JOIN xhs_alert_events e ON e.id = d.alert_event_id
+                JOIN xhs_incidents i ON i.id = e.incident_id
+                JOIN xhs_monitor_projects p ON p.id = i.project_id
+                JOIN xhs_alert_subscriptions s ON s.id = d.subscription_id
+                WHERE d.status = 'PROCESSING' AND d.claim_token = ?
+                ORDER BY d.id
+                """, (rs, row) -> new XhsAlertDelivery(
+                rs.getLong("delivery_id"), rs.getLong("alert_event_id"),
+                rs.getString("project_key"), rs.getString("connection_id"),
+                rs.getString("recipient_id"), rs.getString("title"),
+                rs.getString("risk_category"), rs.getInt("risk_score"),
+                rs.getString("risk_level"), rs.getInt("post_count"),
+                rs.getInt("attempt_count"), token), token);
+    }
+
+    @Override
+    public void releaseDeliveryClaim(XhsAlertDelivery delivery) {
+        jdbcTemplate.update("""
+                UPDATE xhs_alert_deliveries SET status = 'PENDING', claim_token = NULL, claimed_at = NULL
+                WHERE id = ? AND claim_token = ? AND status = 'PROCESSING'
+                """, delivery.deliveryId(), delivery.claimToken());
+    }
+
+    @Override
     @Transactional
     public void markDeliverySent(long deliveryId, long alertEventId, int maxAttempts, Instant now) {
         Timestamp time = Timestamp.from(now);
@@ -126,6 +189,20 @@ public class MySqlXhsAlertRepository implements XhsAlertRepository {
                         WHERE id = ?
                         """, time, time, deliveryId);
         reconcileEvent(alertEventId, maxAttempts, time);
+    }
+
+    @Override
+    public void markDeliverySent(XhsAlertDelivery delivery, int maxAttempts, Instant now) {
+        Timestamp time = Timestamp.from(now);
+        int updated = jdbcTemplate.update("""
+                UPDATE xhs_alert_deliveries
+                SET status = 'SENT', attempt_count = attempt_count + 1,
+                    last_error = NULL, sent_at = ?, updated_at = ?, claim_token = NULL, claimed_at = NULL
+                WHERE id = ? AND alert_event_id = ? AND status = 'PROCESSING' AND claim_token = ?
+                """, time, time, delivery.deliveryId(), delivery.alertEventId(), delivery.claimToken());
+        if (updated > 0) {
+            reconcileEvent(delivery.alertEventId(), maxAttempts, time);
+        }
     }
 
     @Override
@@ -143,6 +220,23 @@ public class MySqlXhsAlertRepository implements XhsAlertRepository {
                         WHERE id = ?
                 """, truncate(errorMessage, 1000), Timestamp.from(now), deliveryId);
         reconcileEvent(alertEventId, maxAttempts, Timestamp.from(now));
+    }
+
+    @Override
+    public void markDeliveryFailed(XhsAlertDelivery delivery, String errorMessage,
+                                   int maxAttempts, Instant now) {
+        Timestamp time = Timestamp.from(now);
+        int updated = jdbcTemplate.update("""
+                UPDATE xhs_alert_deliveries
+                SET status = CASE WHEN attempt_count + 1 >= ? THEN 'FAILED' ELSE 'PENDING' END,
+                    attempt_count = attempt_count + 1, last_error = ?, updated_at = ?,
+                    claim_token = NULL, claimed_at = NULL
+                WHERE id = ? AND alert_event_id = ? AND status = 'PROCESSING' AND claim_token = ?
+                """, Math.max(1, maxAttempts), truncate(errorMessage, 1000), time,
+                delivery.deliveryId(), delivery.alertEventId(), delivery.claimToken());
+        if (updated > 0) {
+            reconcileEvent(delivery.alertEventId(), maxAttempts, time);
+        }
     }
 
     @Override

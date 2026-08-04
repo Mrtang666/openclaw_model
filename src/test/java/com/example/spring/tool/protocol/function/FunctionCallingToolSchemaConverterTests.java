@@ -73,4 +73,32 @@ class FunctionCallingToolSchemaConverterTests {
                             .contains("天气文本");
                 });
     }
+
+    @Test
+    void compactModeKeepsOnlyRoutingCriticalSchemaFields() {
+        FunctionCallingToolSchemaConverter converter = new FunctionCallingToolSchemaConverter(true);
+
+        List<Map<String, Object>> tools = converter.convert(List.of(new WechatToolDefinition(
+                "weather",
+                "query city weather",
+                List.of(WechatToolParameter.requiredString("city", "city name", "Hangzhou")),
+                new WechatToolCapability(
+                        "weather lookup capability",
+                        List.of("ask for city when missing"),
+                        List.of("city"),
+                        List.of("weather text")))));
+
+        assertThat(tools).singleElement()
+                .satisfies(tool -> {
+                    Map<?, ?> function = (Map<?, ?>) tool.get("function");
+                    assertThat(function.get("description")).isEqualTo("query city weather");
+
+                    Map<?, ?> parameters = (Map<?, ?>) function.get("parameters");
+                    Map<?, ?> properties = (Map<?, ?>) parameters.get("properties");
+                    Map<?, ?> city = (Map<?, ?>) properties.get("city");
+                    assertThat(city.get("type")).isEqualTo("string");
+                    assertThat(city.containsKey("description")).isFalse();
+                    assertThat(city.containsKey("example")).isFalse();
+                });
+    }
 }

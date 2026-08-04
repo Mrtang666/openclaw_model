@@ -1,0 +1,242 @@
+package com.example.spring.agent.trace;
+
+import jakarta.servlet.http.HttpServletRequest;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@WebMvcTest(AgentRunTraceController.class)
+@Import(AgentRunDiagnosticMapper.class)
+class AgentRunTraceControllerTests {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @MockBean
+    private AgentRunTraceQueryService queryService;
+
+    @MockBean
+    private AgentTraceDiagnosticAccessService accessService;
+
+    @Test
+    void findsRunByRunKey() throws Exception {
+        allowAccess();
+        when(queryService.findRun("agent-run-1")).thenReturn(Optional.of(traceView("agent-run-1")));
+
+        mockMvc.perform(get("/api/agent-runs/agent-run-1"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+                .andExpect(jsonPath("$.runId").value(1))
+                .andExpect(jsonPath("$.runKey").value("agent-run-1"))
+                .andExpect(jsonPath("$.sessionKey").value("session-a"))
+                .andExpect(jsonPath("$.userText").value("contact a***@example.com or 138****5678"))
+                .andExpect(jsonPath("$.contextSummary").value("context token=[REDACTED]"))
+                .andExpect(jsonPath("$.status").value("SUCCEEDED"))
+                .andExpect(jsonPath("$.finalReplySummary").value("reply password=[REDACTED]"))
+                .andExpect(jsonPath("$.stats.totalStepCount").value(1))
+                .andExpect(jsonPath("$.stats.failedStepCount").value(0))
+                .andExpect(jsonPath("$.stats.skippedStepCount").value(1))
+                .andExpect(jsonPath("$.stats.phaseCount").value(1))
+                .andExpect(jsonPath("$.steps[0].stepIndex").value(1))
+                .andExpect(jsonPath("$.steps[0].stepType").value("POLICY_DECISION"))
+                .andExpect(jsonPath("$.steps[0].stepPhase").value("POLICY"))
+                .andExpect(jsonPath("$.steps[0].inputSummary").value("api_key=[REDACTED]"))
+                .andExpect(jsonPath("$.steps[0].outputSummary").value("mail b***@example.com"))
+                .andExpect(jsonPath("$.steps[0].metadataJson").value("{\"secret\":\"[REDACTED]\"}"))
+                .andExpect(jsonPath("$.phases[0].phase").value("POLICY"))
+                .andExpect(jsonPath("$.phases[0].startStepIndex").value(1))
+                .andExpect(jsonPath("$.phases[0].endStepIndex").value(1))
+                .andExpect(jsonPath("$.phases[0].stepCount").value(1))
+                .andExpect(jsonPath("$.phases[0].status").value("SKIPPED"))
+                .andExpect(content().string(not(containsString("alice@example.com"))))
+                .andExpect(content().string(not(containsString("13812345678"))))
+                .andExpect(content().string(not(containsString("sk-live-123"))))
+                .andExpect(content().string(not(containsString("top-secret"))));
+
+        verify(accessService).authorizeAndAudit(
+                eq(null),
+                eq(null),
+                eq("FIND_RUN"),
+                eq("RUN"),
+                eq("agent-run-1"),
+                any(HttpServletRequest.class),
+                eq(null));
+        verify(queryService).findRun("agent-run-1");
+    }
+
+    @Test
+    void returnsNotFoundWhenRunDoesNotExist() throws Exception {
+        allowAccess();
+        when(queryService.findRun("missing-run")).thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/api/agent-runs/missing-run"))
+                .andExpect(status().isNotFound())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")));
+
+        verify(accessService).authorizeAndAudit(
+                eq(null),
+                eq(null),
+                eq("FIND_RUN"),
+                eq("RUN"),
+                eq("missing-run"),
+                any(HttpServletRequest.class),
+                eq(null));
+        verify(queryService).findRun("missing-run");
+    }
+
+    @Test
+    void findsRecentRunsBySessionKey() throws Exception {
+        allowAccess();
+        when(queryService.findRecentRuns("session-a", 5))
+                .thenReturn(List.of(summaryView("agent-run-2")));
+
+        mockMvc.perform(get("/api/agent-runs")
+                        .param("sessionKey", "session-a")
+                        .param("limit", "5"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+                .andExpect(jsonPath("$[0].runId").value(2))
+                .andExpect(jsonPath("$[0].runKey").value("agent-run-2"))
+                .andExpect(jsonPath("$[0].sessionKey").value("session-a"))
+                .andExpect(jsonPath("$[0].userText").value("phone 139****5678"))
+                .andExpect(jsonPath("$[0].contextSummary").value("email c***@example.com"))
+                .andExpect(jsonPath("$[0].status").value("FAILED"))
+                .andExpect(jsonPath("$[0].stopReason").value("TOOL_FAILURE"))
+                .andExpect(jsonPath("$[0].finalReplySummary").value("token=[REDACTED]"))
+                .andExpect(jsonPath("$[0].stats.totalStepCount").value(4))
+                .andExpect(jsonPath("$[0].stats.modelRoundCount").value(1))
+                .andExpect(jsonPath("$[0].stats.toolCallCount").value(2))
+                .andExpect(jsonPath("$[0].stats.failedStepCount").value(1))
+                .andExpect(jsonPath("$[0].stats.phaseCount").value(3))
+                .andExpect(content().string(not(containsString("13912345678"))))
+                .andExpect(content().string(not(containsString("carol@example.com"))))
+                .andExpect(content().string(not(containsString("raw-token"))));
+
+        verify(accessService).authorizeAndAudit(
+                eq(null),
+                eq(null),
+                eq("FIND_RECENT_RUNS"),
+                eq("SESSION"),
+                eq("session-a"),
+                any(HttpServletRequest.class),
+                eq(null));
+        verify(queryService).findRecentRuns("session-a", 5);
+    }
+
+    @Test
+    void usesDefaultLimitForRecentRuns() throws Exception {
+        allowAccess();
+        mockMvc.perform(get("/api/agent-runs").param("sessionKey", "session-a"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")));
+
+        verify(queryService).findRecentRuns("session-a", 20);
+    }
+
+    @Test
+    void returnsForbiddenAndAuditsWhenAccessDenied() throws Exception {
+        when(accessService.authorizeAndAudit(
+                eq("ops"),
+                eq("bad-key"),
+                eq("FIND_RUN"),
+                eq("RUN"),
+                eq("agent-run-1"),
+                any(HttpServletRequest.class),
+                eq("JUnit")))
+                .thenReturn(new AgentTraceAccessDecision(false, "API_KEY_MISMATCH"));
+
+        mockMvc.perform(get("/api/agent-runs/agent-run-1")
+                        .header("X-OpenClaw-Diagnostic-Key", "bad-key")
+                        .header("X-OpenClaw-Actor", "ops")
+                        .header(HttpHeaders.USER_AGENT, "JUnit"))
+                .andExpect(status().isForbidden())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")));
+
+        verify(accessService).authorizeAndAudit(
+                eq("ops"),
+                eq("bad-key"),
+                eq("FIND_RUN"),
+                eq("RUN"),
+                eq("agent-run-1"),
+                any(HttpServletRequest.class),
+                eq("JUnit"));
+        verify(queryService, never()).findRun(anyString());
+    }
+
+    private void allowAccess() {
+        when(accessService.authorizeAndAudit(
+                nullable(String.class),
+                nullable(String.class),
+                anyString(),
+                anyString(),
+                anyString(),
+                any(HttpServletRequest.class),
+                nullable(String.class)))
+                .thenReturn(new AgentTraceAccessDecision(true, "API_KEY_NOT_CONFIGURED"));
+    }
+
+    private AgentRunTraceView traceView(String runKey) {
+        return new AgentRunTraceView(
+                1L,
+                runKey,
+                "WECHAT",
+                "session-a",
+                "contact alice@example.com or 13812345678",
+                "context token=abc123",
+                AgentRunStatus.SUCCEEDED,
+                "FINAL_ANSWER",
+                "reply password=p@ss",
+                Instant.parse("2026-08-03T06:00:00Z"),
+                Instant.parse("2026-08-03T06:00:01Z"),
+                List.of(new AgentRunStepView(
+                        11L,
+                        1,
+                        AgentRunStepType.POLICY_DECISION,
+                        2,
+                        "web_search",
+                        AgentRunStepStatus.SKIPPED,
+                        "api_key=sk-live-123",
+                        "mail bob@example.com",
+                        "{\"secret\":\"top-secret\"}",
+                        Instant.parse("2026-08-03T06:00:00Z"))));
+    }
+
+    private AgentRunSummaryView summaryView(String runKey) {
+        return new AgentRunSummaryView(
+                2L,
+                runKey,
+                "WECHAT",
+                "session-a",
+                "phone 13912345678",
+                "email carol@example.com",
+                AgentRunStatus.FAILED,
+                "TOOL_FAILURE",
+                "token=raw-token",
+                Instant.parse("2026-08-03T06:00:00Z"),
+                Instant.parse("2026-08-03T06:00:01Z"),
+                new AgentRunDiagnosticStatsView(4, 1, 2, 1, 0, 3));
+    }
+}

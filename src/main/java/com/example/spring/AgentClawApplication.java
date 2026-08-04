@@ -1,6 +1,7 @@
 package com.example.spring;
 
 import com.example.spring.config.EnvFileLoader;
+import com.example.spring.wechat.context.WechatContextProperties;
 import com.example.spring.wechat.knowledge.config.KnowledgeProperties;
 import com.example.spring.wechat.conversation.rag.RagProperties;
 import com.example.spring.wechat.netdisk.config.BaiduNetdiskProperties;
@@ -35,7 +36,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         KnowledgeProperties.class,
         QdrantProperties.class,
         WebToolProperties.class,
-        DidiMcpProperties.class,
+        DidiMcpProperties.class, 
         WechatPayProperties.class,
         BaiduNetdiskProperties.class,
         ReminderProperties.class,
@@ -48,7 +49,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         XhsScheduledReportProperties.class,
         CareProperties.class,
         CareTaskProperties.class,
-        EmailProperties.class
+        EmailProperties.class,
+        WechatContextProperties.class
 })
 @EnableScheduling
 public class AgentClawApplication {

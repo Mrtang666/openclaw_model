@@ -4,6 +4,7 @@ import com.example.spring.chat.ChatService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -11,20 +12,51 @@ import java.util.List;
 @Component
 public class LlmXhsSemanticAnalyzer implements XhsSemanticAnalyzer {
 
-    private final ChatService chatService;
+    private final XhsAnalysisLlmClient llmClient;
+    private final ChatService legacyChatService;
     private final ObjectMapper objectMapper;
+    private final XhsAnalysisTelemetry telemetry;
+    private final XhsSemanticCache semanticCache;
+    private final String analysisVersion;
     private final RuleBasedXhsSemanticAnalyzer fallback = new RuleBasedXhsSemanticAnalyzer();
 
-    public LlmXhsSemanticAnalyzer(ChatService chatService, ObjectMapper objectMapper) {
-        this.chatService = chatService;
+    @Autowired
+    public LlmXhsSemanticAnalyzer(XhsAnalysisLlmClient llmClient, ObjectMapper objectMapper,
+                                  XhsAnalysisTelemetry telemetry, XhsSemanticCache semanticCache,
+                                  com.example.spring.xhs.config.XhsAnalysisProperties properties) {
+        this.llmClient = llmClient;
+        this.legacyChatService = null;
         this.objectMapper = objectMapper;
+        this.telemetry = telemetry;
+        this.semanticCache = semanticCache;
+        this.analysisVersion = properties.version();
+    }
+
+    LlmXhsSemanticAnalyzer(ChatService chatService, ObjectMapper objectMapper) {
+        this.llmClient = null;
+        this.legacyChatService = chatService;
+        this.objectMapper = objectMapper;
+        this.telemetry = null;
+        this.semanticCache = null;
+        this.analysisVersion = "test";
     }
 
     @Override
     public XhsSemanticAssessment analyze(XhsAnalysisCandidate candidate) {
+        if (semanticCache != null) {
+            XhsSemanticCache.Cached cached = semanticCache.find(candidate, analysisVersion);
+            if (cached != null) {
+                recordCache(candidate.postId(), cached.model());
+                return cached.assessment();
+            }
+        }
+        long started = System.nanoTime();
         try {
-            JsonNode root = objectMapper.readTree(jsonObject(chatService.reply(prompt(candidate))));
-            return new XhsSemanticAssessment(
+            XhsAnalysisLlmClient.Response response = llmClient == null
+                    ? new XhsAnalysisLlmClient.Response(legacyChatService.reply(prompt(candidate)), "legacy", 0, 0, 0, 0)
+                    : llmClient.analyze(prompt(candidate));
+            JsonNode root = objectMapper.readTree(jsonObject(response.content()));
+            XhsSemanticAssessment assessment = new XhsSemanticAssessment(
                     XhsSentiment.from(root.path("sentiment").asText()),
                     root.path("sentimentScore").asDouble(0),
                     strings(root.path("aspects")),
@@ -33,8 +65,48 @@ public class LlmXhsSemanticAnalyzer implements XhsSemanticAnalyzer {
                     root.path("confidence").asDouble(0),
                     root.path("summary").asText(""),
                     strings(root.path("evidence")));
+            recordModel(candidate.postId(), response);
+            if (semanticCache != null) {
+                semanticCache.save(candidate, analysisVersion, response.model(), assessment);
+            }
+            return assessment;
         } catch (RuntimeException | com.fasterxml.jackson.core.JsonProcessingException exception) {
+            recordFallback(candidate.postId(), System.nanoTime() - started, exception);
             return fallback.analyze(candidate);
+        }
+    }
+
+    private void recordCache(long postId, String model) {
+        if (telemetry == null) {
+            return;
+        }
+        try {
+            telemetry.cache(postId, analysisVersion, model);
+        } catch (RuntimeException ignored) {
+            // Cache reuse remains useful even if telemetry storage is unavailable.
+        }
+    }
+
+    private void recordModel(long postId, XhsAnalysisLlmClient.Response response) {
+        if (telemetry == null) {
+            return;
+        }
+        try {
+            telemetry.model(postId, analysisVersion, response);
+        } catch (RuntimeException ignored) {
+            // Telemetry must never change an otherwise valid analysis result.
+        }
+    }
+
+    private void recordFallback(long postId, long elapsedNanos, Throwable error) {
+        if (telemetry == null) {
+            return;
+        }
+        try {
+            telemetry.fallback(postId, analysisVersion, llmClient.model(),
+                    java.time.Duration.ofNanos(elapsedNanos).toMillis(), error);
+        } catch (RuntimeException ignored) {
+            // Keep rule-based fallback available even if telemetry storage is unavailable.
         }
     }
 
@@ -49,7 +121,7 @@ public class LlmXhsSemanticAnalyzer implements XhsSemanticAnalyzer {
 
                 标题：%s
                 正文：%s
-                """.formatted(safe(candidate.title(), 500), safe(candidate.content(), 4000));
+                """.formatted(safe(candidate.title(), 300), safe(candidate.content(), 2400));
     }
 
     private String jsonObject(String response) {

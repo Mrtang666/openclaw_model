@@ -23,6 +23,7 @@ class XhsAlertServiceTests {
 
         assertThat(processed).isEqualTo(1);
         assertThat(repository.sentDeliveryId).isEqualTo(10);
+        assertThat(repository.releasedClaims).isEqualTo(1);
         assertThat(notifier.message).contains("CRITICAL", "80分", "告警编号：20", "仅覆盖已采集数据");
     }
 
@@ -37,6 +38,7 @@ class XhsAlertServiceTests {
 
         assertThat(repository.failedDeliveryId).isEqualTo(10);
         assertThat(repository.lastError).contains("send failed");
+        assertThat(repository.releasedClaims).isEqualTo(1);
     }
 
     @Test
@@ -80,6 +82,7 @@ class XhsAlertServiceTests {
         private long failedDeliveryId;
         private long createdIncidentId;
         private String lastError;
+        private int releasedClaims;
 
         @Override
         public long subscribeWechat(String projectKey, String connectionId, String recipientId,
@@ -107,6 +110,11 @@ class XhsAlertServiceTests {
         public void markDeliveryFailed(long deliveryId, long alertEventId, String errorMessage, int maxAttempts, Instant now) {
             failedDeliveryId = deliveryId;
             lastError = errorMessage;
+        }
+
+        @Override
+        public void releaseDeliveryClaim(XhsAlertDelivery delivery) {
+            releasedClaims++;
         }
 
         @Override

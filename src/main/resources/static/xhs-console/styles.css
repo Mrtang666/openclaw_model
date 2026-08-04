@@ -97,6 +97,7 @@ tbody tr:hover { background: #fafbfc; }
 .form-grid .full { grid-column: 1 / -1; }
 .form-actions { display: flex; gap: 8px; align-items: center; margin-top: 15px; }
 .option-row, .inline-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.pagination { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 15px; border-top: 1px solid var(--border); }
 .option-row label { display: flex; align-items: center; gap: 6px; color: var(--text); }
 .option-row input { width: 16px; height: 16px; }
 .delivery-list { display: grid; gap: 8px; min-width: 180px; }
@@ -132,6 +133,9 @@ tbody tr:hover { background: #fafbfc; }
 .detail-meta div { padding: 10px; background: var(--surface-soft); border: 1px solid var(--border); border-radius: 6px; }
 .detail-meta span, .detail-meta strong { display: block; }
 .detail-meta span { color: var(--muted); font-size: 11px; margin-bottom: 5px; }
+.feedback-panel { margin-top: 18px; padding: 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-soft); }
+.feedback-panel h3 { margin-top: 0; }
+.feedback-panel p { margin-top: -4px; }
 .comment { padding: 11px 0; border-bottom: 1px solid #edf0f2; }
 .comment header { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
 .comment p { margin: 6px 0 0; }

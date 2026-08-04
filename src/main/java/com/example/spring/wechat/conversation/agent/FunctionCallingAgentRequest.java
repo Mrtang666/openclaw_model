@@ -155,7 +155,6 @@ public record FunctionCallingAgentRequest(
                 WechatConversationMode.GENERAL);
     }
 
-
     @FunctionalInterface
     public interface ToolExecutionRecorder {
         void record(String toolName, Map<String, String> arguments, String resultSummary, String status);

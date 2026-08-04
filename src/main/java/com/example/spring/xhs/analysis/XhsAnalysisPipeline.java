@@ -2,10 +2,13 @@ package com.example.spring.xhs.analysis;
 
 import com.example.spring.xhs.config.XhsAnalysisProperties;
 import com.example.spring.xhs.repository.XhsAnalysisRepository;
+import com.example.spring.xhs.repository.XhsAnalysisClaim;
 import com.example.spring.xhs.alert.XhsAlertService;
 import com.example.spring.xhs.schedule.XhsNegativePostEmailService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -15,6 +18,8 @@ import java.util.List;
 
 @Service
 public class XhsAnalysisPipeline {
+
+    private static final Logger log = LoggerFactory.getLogger(XhsAnalysisPipeline.class);
 
     private final XhsAnalysisRepository repository;
     private final XhsSemanticAnalyzer semanticAnalyzer;
@@ -51,9 +56,21 @@ public class XhsAnalysisPipeline {
         if (!properties.enabled()) {
             return 0;
         }
-        List<XhsAnalysisCandidate> candidates = repository.findUnanalyzed(properties.version(), properties.batchSize());
-        candidates.forEach(this::analyze);
-        return candidates.size();
+        List<XhsAnalysisClaim> claims = repository.claimUnanalyzed(properties.version(), properties.batchSize());
+        claims.forEach(claim -> {
+            XhsAnalysisCandidate candidate = claim.candidate();
+            try {
+                analyze(candidate);
+            } catch (RuntimeException exception) {
+                // Leave the analysis row absent so this candidate can be retried on the next poll.
+                log.warn("小红书帖子分析失败，保留待重试状态 postId={} error={}",
+                        candidate.postId(), safeMessage(exception));
+                log.debug("小红书帖子分析异常详情 postId={}", candidate.postId(), exception);
+            } finally {
+                repository.releaseClaim(claim);
+            }
+        });
+        return claims.size();
     }
 
     private void analyze(XhsAnalysisCandidate candidate) {
@@ -80,8 +97,20 @@ public class XhsAnalysisPipeline {
         // leaves the post eligible for an idempotent retry.
         repository.saveAnalysis(result);
         if (negativePostEmailService != null) {
-            negativePostEmailService.enqueue(candidate, semantic, risk);
+            try {
+                negativePostEmailService.enqueue(candidate, semantic, risk);
+            } catch (RuntimeException exception) {
+                log.warn("小红书负面邮件入队失败，不影响分析结果 postId={} error={}",
+                        candidate.postId(), safeMessage(exception));
+                log.debug("小红书负面邮件入队异常详情 postId={}", candidate.postId(), exception);
+            }
         }
+    }
+
+    private String safeMessage(Throwable error) {
+        String message = error.getMessage();
+        String value = message == null || message.isBlank() ? error.getClass().getSimpleName() : message.strip();
+        return value.substring(0, Math.min(value.length(), 300));
     }
 
     private String incidentKey(XhsAnalysisCandidate candidate, XhsSemanticAssessment semantic) {

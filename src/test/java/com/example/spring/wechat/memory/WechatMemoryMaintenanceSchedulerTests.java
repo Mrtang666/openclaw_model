@@ -1,6 +1,8 @@
 package com.example.spring.wechat.memory;
 
 import com.example.spring.chat.ChatService;
+import com.example.spring.wechat.context.MemoryGraphMaintenanceService;
+import com.example.spring.wechat.memory.model.WechatConversationMemory;
 import com.example.spring.wechat.memory.scheduler.WechatMemoryMaintenanceScheduler;
 import com.example.spring.wechat.memory.service.MySqlWechatMemoryService;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,7 +19,10 @@ import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @SpringBootTest(
@@ -37,6 +42,9 @@ class WechatMemoryMaintenanceSchedulerTests {
 
     @MockBean
     private ChatService chatService;
+
+    @MockBean
+    private MemoryGraphMaintenanceService memoryGraphMaintenanceService;
 
     @BeforeEach
     void clearMemoryTables() {
@@ -164,6 +172,42 @@ class WechatMemoryMaintenanceSchedulerTests {
 
         assertThat(memoryService.memoryFor("rolling-user").conversationSummary())
                 .hasValueSatisfying(summary -> assertThat(summary).contains("杭州旅行"));
+    }
+
+    @Test
+    void rollingSummaryMaintainsMemoryGraphContextWindow() {
+        Instant firstMessageAt = Instant.parse("2026-07-21T01:00:00Z");
+        when(chatService.reply(anyString())).thenReturn("用户正在准备杭州旅行，并希望获得简洁建议。");
+
+        for (int index = 1; index <= 2; index++) {
+            memoryService.acceptIncoming(
+                    "graph-user",
+                    "graph-message-" + index,
+                    "travel question " + index,
+                    "TEXT",
+                    firstMessageAt.plusSeconds(index));
+            memoryService.recordAssistantMessage(
+                    "graph-user",
+                    "travel answer " + index,
+                    "TEXT",
+                    firstMessageAt.plusSeconds(index));
+        }
+
+        scheduler.maintainConversationSummaries(firstMessageAt.plusSeconds(10));
+
+        verify(memoryGraphMaintenanceService).maintainConversationWindow(
+                eq("graph-user"),
+                argThat(value -> value != null && value > 0),
+                argThat((WechatConversationMemory memory) -> memory.snapshot().size() == 2),
+                eq("用户正在准备杭州旅行，并希望获得简洁建议。"));
+        verify(memoryGraphMaintenanceService).ingestLongTermMemories(
+                eq("graph-user"),
+                argThat(value -> value != null && value > 0),
+                argThat(transcript -> transcript != null
+                        && transcript.contains("travel question 1")
+                        && transcript.contains("travel answer 1")
+                        && transcript.contains("travel question 2")
+                        && transcript.contains("travel answer 2")));
     }
 
     @Test

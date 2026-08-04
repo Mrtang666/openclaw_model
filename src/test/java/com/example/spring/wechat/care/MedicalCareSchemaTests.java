@@ -40,6 +40,7 @@ class MedicalCareSchemaTests {
                 "medical_care_observations",
                 "medical_health_records",
                 "medical_care_plans",
+                "medical_care_plan_drafts",
                 "medical_care_plan_versions",
                 "medical_care_task_templates",
                 "medical_care_task_instances",

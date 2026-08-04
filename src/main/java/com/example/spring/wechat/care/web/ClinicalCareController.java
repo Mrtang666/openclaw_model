@@ -221,6 +221,53 @@ public class ClinicalCareController {
         return CareApiResponse.success(draftService.get(context.actor(), draftId, context.traceId()), context.traceId());
     }
 
+    @GetMapping("/plan-drafts/{draftId}/consultation-candidates")
+    public CareApiResponse<?> consultationCandidates(@RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable String draftId) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(
+                draftService.consultationCandidates(context.actor(), draftId, context.traceId()), context.traceId());
+    }
+
+    @PostMapping("/plan-drafts/{draftId}/consultations")
+    public CareApiResponse<?> createConsultations(@RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable String draftId,
+            @RequestBody ConsultationCreateRequest request) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(draftService.createConsultations(
+                context.actor(), draftId, request.doctorUserIds(), request.note(), context.traceId()), context.traceId());
+    }
+
+    @GetMapping("/plan-drafts/{draftId}/consultations")
+    public CareApiResponse<?> consultationAdvice(@RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable String draftId) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(
+                draftService.consultationAdvice(context.actor(), draftId, context.traceId()), context.traceId());
+    }
+
+    @GetMapping("/consultations/{consultationId}")
+    public CareApiResponse<?> consultation(@RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable String consultationId) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(
+                draftService.getConsultation(context.actor(), consultationId, context.traceId()), context.traceId());
+    }
+
+    @PostMapping("/consultations/{consultationId}/advice")
+    public CareApiResponse<?> submitConsultationAdvice(@RequestHeader("Authorization") String authorization,
+            @RequestHeader(value = "X-Request-Id", required = false) String requestId,
+            @PathVariable String consultationId,
+            @RequestBody ConsultationAdviceRequest request) {
+        Context context = context(authorization, requestId);
+        return CareApiResponse.success(draftService.submitConsultationAdvice(
+                context.actor(), consultationId, request.advice(), context.traceId()), context.traceId());
+    }
+
     @PatchMapping("/plan-drafts/{draftId}")
     public CareApiResponse<?> updatePlanDraft(@RequestHeader("Authorization") String authorization,
             @RequestHeader(value = "X-Request-Id", required = false) String requestId,
@@ -422,5 +469,11 @@ public class ClinicalCareController {
     }
 
     public record PlanDraftUpdateRequest(String title, String editedPlan) {
+    }
+
+    public record ConsultationCreateRequest(Set<Long> doctorUserIds, String note) {
+    }
+
+    public record ConsultationAdviceRequest(String advice) {
     }
 }

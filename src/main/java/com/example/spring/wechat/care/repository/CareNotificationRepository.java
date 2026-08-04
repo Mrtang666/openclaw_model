@@ -107,6 +107,39 @@ public class CareNotificationRepository {
                 """, connectionId, recipientId, timestamp(now), timestamp(now), userId);
     }
 
+    /**
+     * Do not replay task notifications accumulated while any care user was
+     * offline. Task and alert records remain available in the management views.
+     */
+    public int discardWaitingTaskNotifications(long userId, Instant now) {
+        return jdbc.update("""
+                UPDATE medical_notifications
+                SET status='CANCELLED',locked_at=NULL,
+                    last_error='重新登录时跳过离线期间积压的任务通知',updated_at=?
+                WHERE to_user_id=? AND status='WAITING_LOGIN'
+                  AND (
+                      notification_type IN (
+                          'CARE_TASK_DUE',
+                          'CARE_TASK_FOLLOW_UP',
+                          'CARE_TASK_OVERDUE_PATIENT',
+                          'CARE_TASK_ESCALATED_PATIENT',
+                          'CARE_TASK_OVERDUE',
+                          'CARE_TASK_INCOMPLETE'
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM medical_safety_alerts alert
+                          WHERE alert.patient_user_id = medical_notifications.patient_user_id
+                            AND alert.source_type = 'CARE_TASK'
+                            AND (
+                                medical_notifications.idempotency_key LIKE CONCAT('alert:', alert.id, ':user:%')
+                                OR medical_notifications.idempotency_key LIKE CONCAT('urgent-alert:', alert.id, ':doctor:%')
+                            )
+                      )
+                  )
+                """, timestamp(now), userId);
+    }
+
     public void releaseExpiredLocks(Instant expiredBefore, Instant now) {
         jdbc.update("""
                 UPDATE medical_notifications

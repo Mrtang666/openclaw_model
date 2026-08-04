@@ -14,6 +14,7 @@ import com.example.spring.wechat.care.model.MedicalRole;
 import com.example.spring.wechat.care.model.MedicalUser;
 import com.example.spring.wechat.care.model.NotificationTarget;
 import com.example.spring.wechat.care.repository.CareNotificationRepository;
+import com.example.spring.wechat.care.repository.CarePlanDraftRepository;
 import com.example.spring.wechat.care.repository.CareTaskRepository;
 import com.example.spring.wechat.care.repository.MedicalIdentityRepository;
 import com.example.spring.wechat.reminder.service.ReminderNotificationSender;
@@ -35,7 +36,6 @@ import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -44,6 +44,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class CarePlanDraftService {
 
     private final MedicalIdentityRepository identityRepository;
+    private final CarePlanDraftRepository draftRepository;
     private final CareAuthorizationService authorizationService;
     private final CarePlanService planService;
     private final CareTaskRepository taskRepository;
@@ -54,10 +55,11 @@ public class CarePlanDraftService {
     private final CareSessionService sessionService;
     private final CareWebLinkService linkService;
     private final Clock clock;
-    private final Map<String, DraftRecord> drafts = new ConcurrentHashMap<>();
+    private final Map<String, ConsultationRecord> consultations = new ConcurrentHashMap<>();
 
     public CarePlanDraftService(
             MedicalIdentityRepository identityRepository,
+            CarePlanDraftRepository draftRepository,
             CareAuthorizationService authorizationService,
             CarePlanService planService,
             CareTaskRepository taskRepository,
@@ -69,6 +71,7 @@ public class CarePlanDraftService {
             CareWebLinkService linkService,
             Clock clock) {
         this.identityRepository = identityRepository;
+        this.draftRepository = draftRepository;
         this.authorizationService = authorizationService;
         this.planService = planService;
         this.taskRepository = taskRepository;
@@ -107,7 +110,7 @@ public class CarePlanDraftService {
                 null,
                 now,
                 now);
-        drafts.put(record.id(), record);
+        draftRepository.save(toData(record));
         return toDetails(record);
     }
 
@@ -117,32 +120,157 @@ public class CarePlanDraftService {
         for (MedicalUser patient : authorizationService.listAccessiblePatients(actor, CarePermissions.PLAN_MANAGE)) {
             allowedPatientIds.add(patient.id());
         }
-        return drafts.values().stream()
-                .filter(draft -> allowedPatientIds.contains(draft.patientUserId()))
+        return draftRepository.listByCreator(actor.userId()).stream()
+                .map(this::fromData)
+                .filter(draft -> allowedPatientIds.contains(draft.patientUserId())
+                        && draft.createdByUserId() == actor.userId())
                 .sorted(Comparator.comparing(DraftRecord::updatedAt).reversed())
                 .map(this::toSummary)
                 .toList();
     }
 
     public CarePlanDraftDetails get(CareActor actor, String draftId, String requestId) {
-        return toDetails(requireDraft(actor, draftId, requestId));
+        return toDetails(requireInitiator(actor, draftId, requestId));
+    }
+
+    public List<MedicalUser> consultationCandidates(CareActor actor, String draftId, String requestId) {
+        DraftRecord record = requireInitiator(actor, draftId, requestId);
+        List<MedicalUser> doctors = identityRepository.listRelatedViewersByRoleAndPermission(
+                record.patientUserId(), MedicalRole.DOCTOR, CarePermissions.PLAN_MANAGE, clock.instant());
+        return doctors.stream().filter(doctor -> doctor.id() != actor.userId()).toList();
+    }
+
+    public ConsultationSendResult createConsultations(
+            CareActor actor,
+            String draftId,
+            Set<Long> doctorUserIds,
+            String note,
+            String requestId) {
+        DraftRecord record = requireInitiator(actor, draftId, requestId);
+        if (record.confirmedAt() != null) {
+            throw new CareException(CareErrorCode.CONFLICT, "方案已经确认发送，不能再发起新的会诊");
+        }
+        if (doctorUserIds == null || doctorUserIds.isEmpty()) {
+            throw new CareException(CareErrorCode.INVALID_ARGUMENT, "请至少选择一名会诊医生");
+        }
+        List<MedicalUser> candidates = consultationCandidates(actor, draftId, requestId);
+        Set<Long> allowedIds = candidates.stream().map(MedicalUser::id).collect(java.util.stream.Collectors.toSet());
+        if (!allowedIds.containsAll(doctorUserIds)) {
+            throw new CareException(CareErrorCode.FORBIDDEN, "只能联系已绑定当前患者的其他医生");
+        }
+
+        String planText = firstNonBlank(record.editedPlan(), record.refinedPlan());
+        Instant now = clock.instant();
+        int delivered = 0;
+        int queued = 0;
+        int created = 0;
+        for (Long doctorUserId : doctorUserIds) {
+            if (doctorUserId == null) continue;
+            ConsultationRecord existing = consultations.values().stream()
+                    .filter(item -> item.draftId().equals(record.id())
+                            && item.consultantUserId() == doctorUserId
+                            && "PENDING".equals(item.status()))
+                    .findFirst().orElse(null);
+            if (existing != null) {
+                continue;
+            }
+            MedicalUser doctor = identityRepository.findUserById(doctorUserId)
+                    .orElseThrow(() -> new CareException(CareErrorCode.NOT_FOUND, "会诊医生不存在"));
+            ConsultationRecord consultation = new ConsultationRecord(
+                    UUID.randomUUID().toString(), record.id(), actor.userId(), actor.role(), doctorUserId,
+                    record.patientUserId(), record.patientName(), record.patientCode(), record.title(),
+                    clean(record.doctorInput()), planText, clean(note), "PENDING", "", now, null);
+            consultations.put(consultation.id(), consultation);
+            created++;
+            CareSessionService.IssuedSession session = sessionService.issue(doctor, MedicalRole.DOCTOR, now);
+            String url = linkService.url("/doctor/consultation", session.accessToken(), MedicalRole.DOCTOR,
+                    Map.of("consultationId", consultation.id()));
+            String content = "【照护方案会诊请求】\n"
+                    + "发起医生：" + actor.displayName() + "\n"
+                    + "患者：" + record.patientName() + "（" + record.patientCode() + "）\n"
+                    + "方案：" + record.title() + "\n\n"
+                    + "请打开下面页面查看方案并提交建议。你只有查看和建议权限，不能修改或发送方案：\n"
+                    + url;
+            NotificationTarget target = identityRepository.listUserNotificationTargetsByRole(
+                    doctorUserId, MedicalRole.DOCTOR).stream().findFirst().orElse(null);
+            if (target != null && trySendNow(target, content)) {
+                delivered++;
+            } else if (target != null) {
+                enqueue(record.patientUserId(), target, "CARE_PLAN_CONSULTATION", content);
+                queued++;
+            }
+        }
+        return new ConsultationSendResult(created, delivered, queued);
+    }
+
+    public List<ConsultationAdviceSummary> consultationAdvice(CareActor actor, String draftId, String requestId) {
+        DraftRecord record = requireInitiator(actor, draftId, requestId);
+        return consultations.values().stream()
+                .filter(item -> item.draftId().equals(record.id()))
+                .sorted(Comparator.comparing(ConsultationRecord::createdAt).reversed())
+                .map(this::toAdviceSummary)
+                .toList();
+    }
+
+    public ConsultationDetails getConsultation(CareActor actor, String consultationId, String requestId) {
+        requireClinical(actor);
+        ConsultationRecord consultation = requireConsultation(consultationId);
+        if (consultation.consultantUserId() != actor.userId()) {
+            throw new CareException(CareErrorCode.FORBIDDEN, "你不是该会诊请求的指定医生");
+        }
+        return toConsultationDetails(consultation);
+    }
+
+    public ConsultationDetails submitConsultationAdvice(
+            CareActor actor, String consultationId, String advice, String requestId) {
+        requireClinical(actor);
+        ConsultationRecord consultation = requireConsultation(consultationId);
+        if (consultation.consultantUserId() != actor.userId()) {
+            throw new CareException(CareErrorCode.FORBIDDEN, "你不是该会诊请求的指定医生");
+        }
+        String cleanAdvice = clean(advice);
+        if (cleanAdvice.isBlank()) {
+            throw new CareException(CareErrorCode.INVALID_ARGUMENT, "请填写会诊建议");
+        }
+        if (!"PENDING".equals(consultation.status())) {
+            throw new CareException(CareErrorCode.CONFLICT, "该会诊建议已经提交，不能重复修改");
+        }
+        Instant now = clock.instant();
+        ConsultationRecord submitted = consultation.withAdvice(cleanAdvice, now);
+        consultations.put(consultation.id(), submitted);
+        MedicalUser initiator = identityRepository.findUserById(consultation.createdByUserId())
+                .orElseThrow(() -> new CareException(CareErrorCode.NOT_FOUND, "发起医生不存在"));
+        String url = linkService.url("/doctor/alerts-review", sessionService.issue(
+                initiator, consultation.originRole(), now).accessToken(), consultation.originRole(),
+                Map.of("draftId", consultation.draftId()));
+        String content = "【照护方案会诊建议】\n"
+                + "会诊医生：" + actor.displayName() + "\n"
+                + "患者：" + consultation.patientName() + "（" + consultation.patientCode() + "）\n"
+                + "方案：" + consultation.title() + "\n\n"
+                + cleanAdvice + "\n\n查看原方案和会诊记录：\n" + url;
+        NotificationTarget target = identityRepository.listUserNotificationTargetsByRole(
+                initiator.id(), consultation.originRole()).stream().findFirst().orElse(null);
+        if (target != null && !trySendNow(target, content)) {
+            enqueue(consultation.patientUserId(), target, "CARE_PLAN_CONSULTATION_ADVICE", content);
+        }
+        return toConsultationDetails(submitted);
     }
 
     public CarePlanDraftDetails update(CareActor actor, String draftId, DraftUpdateCommand command) {
         if (command == null) {
             throw new CareException(CareErrorCode.INVALID_ARGUMENT, "缺少照护草稿修改参数");
         }
-        DraftRecord record = requireDraft(actor, draftId, command.requestId());
+        DraftRecord record = requireInitiator(actor, draftId, command.requestId());
         if (record.confirmedAt() != null) {
             throw new CareException(CareErrorCode.CONFLICT, "方案已经确认发送，不能再修改");
         }
         DraftRecord updated = record.withEdit(command.title(), command.editedPlan(), clock.instant());
-        drafts.put(draftId, updated);
+        draftRepository.update(toData(updated));
         return toDetails(updated);
     }
 
     public DraftSendResult confirm(CareActor actor, String draftId, String requestId) {
-        DraftRecord record = requireDraft(actor, draftId, requestId);
+        DraftRecord record = requireInitiator(actor, draftId, requestId);
         if (record.confirmedAt() != null) {
             publishPlan(actor, record, firstNonBlank(record.editedPlan(), record.refinedPlan()), requestId);
             return new DraftSendResult(toDetails(record), 0, 0);
@@ -167,7 +295,7 @@ public class CarePlanDraftService {
         delivered += familyNotifyCount.delivered();
         queued += familyNotifyCount.queued();
         DraftRecord confirmed = record.confirmed(clock.instant(), finalText);
-        drafts.put(draftId, confirmed);
+        draftRepository.update(toData(confirmed));
         return new DraftSendResult(toDetails(confirmed), delivered, queued);
     }
 
@@ -560,9 +688,26 @@ public class CarePlanDraftService {
                 3, "", null, idempotency(type, patientUserId, target.userId(), content), now, now));
     }
 
+    private DraftRecord requireInitiator(CareActor actor, String draftId, String requestId) {
+        DraftRecord record = requireDraft(actor, draftId, requestId);
+        if (record.createdByUserId() != actor.userId()) {
+            throw new CareException(CareErrorCode.FORBIDDEN, "只有发起该方案的医生可以联系其他医生会诊");
+        }
+        return record;
+    }
+
+    private ConsultationRecord requireConsultation(String consultationId) {
+        ConsultationRecord record = consultations.get(clean(consultationId));
+        if (record == null) {
+            throw new CareException(CareErrorCode.NOT_FOUND, "会诊请求不存在或已失效");
+        }
+        return record;
+    }
+
     private DraftRecord requireDraft(CareActor actor, String draftId, String requestId) {
         requireClinical(actor);
-        DraftRecord record = Optional.ofNullable(drafts.get(draftId))
+        DraftRecord record = draftRepository.findById(draftId)
+                .map(this::fromData)
                 .orElseThrow(() -> new CareException(CareErrorCode.NOT_FOUND, "未找到待审核方案"));
         authorizationService.require(actor, record.patientUserId(), CarePermissions.PLAN_MANAGE,
                 "READ_PLAN_DRAFT", "CARE_PLAN_DRAFT", draftId, requestId);
@@ -573,6 +718,20 @@ public class CarePlanDraftService {
         if (actor == null || !actor.role().isClinical()) {
             throw new CareException(CareErrorCode.FORBIDDEN, "只有医生/医护身份可以处理照护方案");
         }
+    }
+
+    private CarePlanDraftRepository.DraftData toData(DraftRecord record) {
+        return new CarePlanDraftRepository.DraftData(
+                record.id(), record.createdByUserId(), record.patientUserId(), record.patientName(),
+                record.patientCode(), record.title(), record.doctorInput(), record.refinedPlan(),
+                record.editedPlan(), record.confirmedAt(), record.createdAt(), record.updatedAt());
+    }
+
+    private DraftRecord fromData(CarePlanDraftRepository.DraftData data) {
+        return new DraftRecord(
+                data.id(), data.createdByUserId(), data.patientUserId(), data.patientName(),
+                data.patientCode(), data.title(), data.doctorInput(), data.refinedPlan(),
+                data.editedPlan(), data.confirmedAt(), data.createdAt(), data.updatedAt());
     }
 
     private CarePlanDraftSummary toSummary(DraftRecord record) {
@@ -602,6 +761,21 @@ public class CarePlanDraftService {
                 record.createdAt(),
                 record.updatedAt(),
                 record.confirmedAt());
+    }
+
+    private ConsultationAdviceSummary toAdviceSummary(ConsultationRecord record) {
+        MedicalUser doctor = identityRepository.findUserById(record.consultantUserId()).orElse(null);
+        return new ConsultationAdviceSummary(
+                record.id(), record.consultantUserId(), doctor == null ? "医生" : doctor.displayName(),
+                record.status(), record.advice(), record.createdAt(), record.submittedAt());
+    }
+
+    private ConsultationDetails toConsultationDetails(ConsultationRecord record) {
+        MedicalUser initiator = identityRepository.findUserById(record.createdByUserId()).orElse(null);
+        return new ConsultationDetails(
+                record.id(), record.patientName(), record.patientCode(), record.title(), record.doctorInput(),
+                record.planText(), record.note(), initiator == null ? "发起医生" : initiator.displayName(),
+                record.status(), record.advice(), "PENDING".equals(record.status()), record.createdAt(), record.submittedAt());
     }
 
     private String idempotency(String type, long patientUserId, long targetUserId, String content) {
@@ -675,6 +849,32 @@ public class CarePlanDraftService {
         }
     }
 
+    private record ConsultationRecord(
+            String id,
+            String draftId,
+            long createdByUserId,
+            MedicalRole originRole,
+            long consultantUserId,
+            long patientUserId,
+            String patientName,
+            String patientCode,
+            String title,
+            String doctorInput,
+            String planText,
+            String note,
+            String status,
+            String advice,
+            Instant createdAt,
+            Instant submittedAt) {
+
+        ConsultationRecord withAdvice(String value, Instant now) {
+            return new ConsultationRecord(
+                    id, draftId, createdByUserId, originRole, consultantUserId, patientUserId,
+                    patientName, patientCode, title, doctorInput, planText, note,
+                    "SUBMITTED", value, createdAt, now);
+        }
+    }
+
     public record CarePlanDraftSummary(
             String id,
             long patientUserId,
@@ -706,6 +906,35 @@ public class CarePlanDraftService {
     }
 
     public record DraftSendResult(CarePlanDraftDetails draft, int deliveredCount, int queuedCount) {
+    }
+
+    public record ConsultationSendResult(int createdCount, int deliveredCount, int queuedCount) {
+    }
+
+    public record ConsultationAdviceSummary(
+            String id,
+            long consultantUserId,
+            String consultantDisplayName,
+            String status,
+            String advice,
+            Instant createdAt,
+            Instant submittedAt) {
+    }
+
+    public record ConsultationDetails(
+            String id,
+            String patientName,
+            String patientCode,
+            String title,
+            String doctorInput,
+            String planText,
+            String note,
+            String initiatorDisplayName,
+            String status,
+            String advice,
+            boolean editable,
+            Instant createdAt,
+            Instant submittedAt) {
     }
 
     private record NotifyCount(int delivered, int queued) {

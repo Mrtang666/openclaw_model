@@ -10,6 +10,7 @@ import com.example.spring.xhs.report.XhsDailyReportXlsxService;
 import com.example.spring.xhs.report.XhsReportArtifactStorage;
 import com.example.spring.xhs.source.XhsCollectionRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.sql.ResultSet;
@@ -17,8 +18,10 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 public class XhsScheduledReportExecutionService {
@@ -31,6 +34,7 @@ public class XhsScheduledReportExecutionService {
     private final XhsReportArtifactStorage storage;
     private final XhsConsoleUrlService consoleUrlService;
     private final XhsScheduledReportProperties properties;
+    private final Duration claimTimeout;
 
     public XhsScheduledReportExecutionService(
             JdbcTemplate jdbcTemplate,
@@ -40,7 +44,8 @@ public class XhsScheduledReportExecutionService {
             XhsDailyReportXlsxService xlsxService,
             XhsReportArtifactStorage storage,
             XhsConsoleUrlService consoleUrlService,
-            XhsScheduledReportProperties properties) {
+            XhsScheduledReportProperties properties,
+            @Value("${xhs.scheduled-report.claim-timeout:15m}") Duration claimTimeout) {
         this.jdbcTemplate = jdbcTemplate;
         this.collectionCoordinator = collectionCoordinator;
         this.reportService = reportService;
@@ -49,9 +54,27 @@ public class XhsScheduledReportExecutionService {
         this.storage = storage;
         this.consoleUrlService = consoleUrlService;
         this.properties = properties;
+        this.claimTimeout = claimTimeout == null || claimTimeout.isNegative() || claimTimeout.isZero()
+                ? Duration.ofMinutes(15) : claimTimeout;
     }
 
     public int processPending() {
+        String claimToken = UUID.randomUUID().toString();
+        Instant now = Instant.now();
+        Timestamp staleBefore = Timestamp.from(now.minus(claimTimeout));
+        jdbcTemplate.update("""
+                UPDATE xhs_report_runs
+                SET claim_token = ?, claimed_at = ?, updated_at = ?
+                WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id FROM xhs_report_runs
+                        WHERE status IN ('QUEUED', 'COLLECTING', 'ANALYZING', 'GENERATING')
+                          AND (claim_token IS NULL OR claimed_at < ?)
+                        ORDER BY created_at, id LIMIT 10
+                    ) claimable
+                )
+                  AND (claim_token IS NULL OR claimed_at < ?)
+                """, claimToken, Timestamp.from(now), Timestamp.from(now), staleBefore, staleBefore);
         List<RunRow> runs = jdbcTemplate.query("""
                 SELECT r.*, s.project_id, s.frequency, s.formats, s.collect_before_report,
                        s.collection_limit, s.top_post_limit, s.timezone,
@@ -59,24 +82,31 @@ public class XhsScheduledReportExecutionService {
                 FROM xhs_report_runs r
                 JOIN xhs_report_schedules s ON s.id = r.schedule_id
                 JOIN xhs_monitor_projects p ON p.id = s.project_id
-                WHERE r.status IN ('QUEUED', 'COLLECTING', 'ANALYZING')
-                ORDER BY r.created_at, r.id LIMIT 10
-                """, this::mapRun);
-        runs.forEach(this::process);
+                WHERE r.claim_token = ?
+                ORDER BY r.created_at, r.id
+                """, this::mapRun, claimToken);
+        runs.forEach(run -> process(run, claimToken));
         return runs.size();
     }
 
-    private void process(RunRow run) {
+    private void process(RunRow run, String claimToken) {
         try {
             switch (run.status()) {
                 case "QUEUED" -> start(run);
                 case "COLLECTING" -> pollCollection(run);
                 case "ANALYZING" -> pollAnalysis(run);
+                case "GENERATING" -> generate(run, run.partialReason(),
+                        run.periodEnd() == null ? Instant.now() : run.periodEnd());
                 default -> {
                 }
             }
         } catch (RuntimeException exception) {
             fail(run.id(), exception);
+        } finally {
+            jdbcTemplate.update("""
+                    UPDATE xhs_report_runs SET claim_token = NULL, claimed_at = NULL
+                    WHERE id = ? AND claim_token = ?
+                    """, run.id(), claimToken);
         }
     }
 
@@ -229,7 +259,8 @@ public class XhsScheduledReportExecutionService {
                 Arrays.stream(rs.getString("formats").split(",")).map(String::strip).toList(),
                 rs.getBoolean("collect_before_report"), rs.getInt("collection_limit"),
                 rs.getInt("top_post_limit"), rs.getString("timezone"), rs.getString("status"),
-                instant(rs, "deadline_at"), text(rs, "partial_reason"), instant(rs, "started_at"));
+                instant(rs, "deadline_at"), text(rs, "partial_reason"), instant(rs, "started_at"),
+                instant(rs, "period_end"));
     }
 
     private int count(String sql, Object... arguments) {
@@ -274,7 +305,7 @@ public class XhsScheduledReportExecutionService {
     private record RunRow(long id, long scheduleId, long projectId, String projectKey, String projectName,
                           String frequency, List<String> formats, boolean collectBeforeReport,
                           int collectionLimit, int topPostLimit, String timezone, String status,
-                          Instant deadlineAt, String partialReason, Instant startedAt) {
+                          Instant deadlineAt, String partialReason, Instant startedAt, Instant periodEnd) {
     }
 
     private record CollectionOutcome(String query, String status, int recordCount,

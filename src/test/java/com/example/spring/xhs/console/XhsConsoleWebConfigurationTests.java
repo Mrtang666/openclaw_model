@@ -33,8 +33,8 @@ class XhsConsoleWebConfigurationTests {
             String html = new String(input.readAllBytes(), StandardCharsets.UTF_8);
             assertThat(html)
                     .contains("data-view=\"authorization\"")
-                    .contains("styles.css?v=20260731-auth")
-                    .contains("app.js?v=20260731-auth");
+                    .contains("styles.css?v=20260804-performance-3")
+                    .contains("app.js?v=20260804-performance-3");
         }
     }
 }

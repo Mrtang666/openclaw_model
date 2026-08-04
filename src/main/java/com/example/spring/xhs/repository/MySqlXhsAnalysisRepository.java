@@ -10,6 +10,8 @@ import com.example.spring.xhs.model.XhsMetrics;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,16 +21,71 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
+import java.time.Duration;
 
 @Repository
 public class MySqlXhsAnalysisRepository implements XhsAnalysisRepository {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final Duration claimTimeout;
 
-    public MySqlXhsAnalysisRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+    @Autowired
+    public MySqlXhsAnalysisRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper,
+                                      @Value("${xhs.analysis.claim-timeout:15m}") Duration claimTimeout) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
+        this.claimTimeout = claimTimeout == null || claimTimeout.isNegative() || claimTimeout.isZero()
+                ? Duration.ofMinutes(15) : claimTimeout;
+    }
+
+    @Override
+    public List<XhsAnalysisClaim> claimUnanalyzed(String analysisVersion, int limit) {
+        String token = UUID.randomUUID().toString();
+        Instant now = Instant.now();
+        Instant staleBefore = now.minus(claimTimeout);
+        jdbcTemplate.update("""
+                UPDATE xhs_posts
+                SET analysis_lock_token = ?, analysis_locked_at = ?
+                WHERE id IN (
+                    SELECT id FROM (
+                        SELECT p.id
+                        FROM xhs_posts p
+                        WHERE (p.analysis_lock_token IS NULL OR p.analysis_locked_at < ?)
+                          AND NOT EXISTS (
+                              SELECT 1 FROM xhs_analysis_results a
+                              WHERE a.post_id = p.id AND a.analysis_version = ?)
+                        ORDER BY p.last_collected_at, p.id
+                        LIMIT ?
+                    ) claimable
+                )
+                  AND (analysis_lock_token IS NULL OR analysis_locked_at < ?)
+                """, token, Timestamp.from(now), Timestamp.from(staleBefore), analysisVersion,
+                Math.max(1, Math.min(limit, 100)), Timestamp.from(staleBefore));
+        return jdbcTemplate.query("""
+                SELECT p.id, p.project_id, pr.project_key, p.title, p.content, p.source_url,
+                       p.published_at, p.last_collected_at,
+                       COALESCE(m.liked_count, 0) liked_count,
+                       COALESCE(m.collected_count, 0) collected_count,
+                       COALESCE(m.comment_count, 0) comment_count,
+                       COALESCE(m.share_count, 0) share_count
+                FROM xhs_posts p
+                JOIN xhs_monitor_projects pr ON pr.id = p.project_id
+                LEFT JOIN xhs_metric_snapshots m ON m.id = (
+                    SELECT m2.id FROM xhs_metric_snapshots m2
+                    WHERE m2.post_id = p.id ORDER BY m2.snapshot_at DESC, m2.id DESC LIMIT 1)
+                WHERE p.analysis_lock_token = ?
+                ORDER BY p.last_collected_at, p.id
+                """, (rs, row) -> new XhsAnalysisClaim(mapCandidate(rs, row), token), token);
+    }
+
+    @Override
+    public void releaseClaim(XhsAnalysisClaim claim) {
+        jdbcTemplate.update("""
+                UPDATE xhs_posts SET analysis_lock_token = NULL, analysis_locked_at = NULL
+                WHERE id = ? AND analysis_lock_token = ?
+                """, claim.candidate().postId(), claim.token());
     }
 
     @Override
@@ -82,34 +139,43 @@ public class MySqlXhsAnalysisRepository implements XhsAnalysisRepository {
     @Override
     public XhsTrendSignals loadTrendSignals(long postId, long projectId, String riskCategory, Instant since) {
         List<MetricPoint> points = jdbcTemplate.query("""
-                        SELECT snapshot_at, liked_count, collected_count, comment_count, share_count
-                        FROM xhs_metric_snapshots
-                        WHERE post_id = ?
-                        ORDER BY snapshot_at DESC, id DESC
-                        LIMIT 2
+                        SELECT metrics.snapshot_at, metrics.engagement, stats.recurrence
+                        FROM (
+                            SELECT COUNT(DISTINCT p.id) recurrence
+                            FROM xhs_analysis_results a
+                            JOIN xhs_posts p ON p.id = a.post_id
+                            WHERE p.project_id = ? AND a.risk_category = ? AND a.analyzed_at >= ?
+                        ) stats
+                        LEFT JOIN (
+                            SELECT snapshot_at,
+                                   GREATEST(0, liked_count)
+                                   + GREATEST(0, collected_count) * 2
+                                   + GREATEST(0, comment_count) * 3
+                                   + GREATEST(0, share_count) * 4 engagement
+                            FROM xhs_metric_snapshots
+                            WHERE post_id = ?
+                            ORDER BY snapshot_at DESC, id DESC
+                            LIMIT 2
+                        ) metrics ON 1 = 1
+                        ORDER BY metrics.snapshot_at DESC
                         """,
-                (rs, row) -> new MetricPoint(
-                        rs.getTimestamp("snapshot_at").toInstant(),
-                        weightedEngagement(
-                                rs.getLong("liked_count"), rs.getLong("collected_count"),
-                                rs.getLong("comment_count"), rs.getLong("share_count"))),
-                postId);
+                (rs, row) -> {
+                    Timestamp snapshot = rs.getTimestamp("snapshot_at");
+                    return new MetricPoint(snapshot == null ? null : snapshot.toInstant(),
+                            rs.getLong("engagement"), rs.getInt("recurrence"));
+                },
+                projectId, riskCategory, Timestamp.from(since), postId);
         double growthPerHour = 0;
-        if (points.size() == 2) {
-            MetricPoint latest = points.get(0);
-            MetricPoint previous = points.get(1);
+        List<MetricPoint> snapshots = points.stream().filter(point -> point.snapshotAt() != null).toList();
+        if (snapshots.size() == 2) {
+            MetricPoint latest = snapshots.get(0);
+            MetricPoint previous = snapshots.get(1);
             double hours = Math.max(1.0 / 60.0,
                     java.time.Duration.between(previous.snapshotAt(), latest.snapshotAt()).toMillis() / 3_600_000.0);
             growthPerHour = Math.max(0, latest.engagement() - previous.engagement()) / hours;
         }
-        Integer recurrence = jdbcTemplate.queryForObject("""
-                        SELECT COUNT(DISTINCT p.id)
-                        FROM xhs_analysis_results a
-                        JOIN xhs_posts p ON p.id = a.post_id
-                        WHERE p.project_id = ? AND a.risk_category = ? AND a.analyzed_at >= ?
-                        """,
-                Integer.class, projectId, riskCategory, Timestamp.from(since));
-        return new XhsTrendSignals(growthPerHour, recurrence == null ? 0 : recurrence);
+        int recurrence = points.isEmpty() ? 0 : points.get(0).recurrence();
+        return new XhsTrendSignals(growthPerHour, recurrence);
     }
 
     @Override
@@ -257,6 +323,6 @@ public class MySqlXhsAnalysisRepository implements XhsAnalysisRepository {
                 + Math.max(0, comments) * 3 + Math.max(0, shares) * 4;
     }
 
-    private record MetricPoint(Instant snapshotAt, long engagement) {
+    private record MetricPoint(Instant snapshotAt, long engagement, int recurrence) {
     }
 }

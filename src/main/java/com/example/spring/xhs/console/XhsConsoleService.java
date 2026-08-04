@@ -66,6 +66,28 @@ public class XhsConsoleService {
                 """, this::mapProject);
     }
 
+    public AnalysisMetrics analysisMetrics(String projectKey, int days) {
+        String filter = projectKey == null || projectKey.isBlank() ? null : projectKey(projectKey);
+        Instant since = Instant.now().minusSeconds(Math.max(1, Math.min(days, 90)) * 86400L);
+        return jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) calls,
+                       COALESCE(SUM(e.prompt_tokens), 0) prompt_tokens,
+                       COALESCE(SUM(e.completion_tokens), 0) completion_tokens,
+                       COALESCE(SUM(e.total_tokens), 0) total_tokens,
+                       COALESCE(ROUND(AVG(e.duration_ms)), 0) average_duration_ms,
+                       COALESCE(SUM(CASE WHEN e.status = 'FALLBACK' THEN 1 ELSE 0 END), 0) fallback_calls,
+                       COALESCE(SUM(CASE WHEN e.status = 'CACHE' THEN 1 ELSE 0 END), 0) cache_calls
+                FROM xhs_analysis_executions e
+                JOIN xhs_posts p ON p.id = e.post_id
+                JOIN xhs_monitor_projects pr ON pr.id = p.project_id
+                WHERE e.created_at >= ? AND (? IS NULL OR pr.project_key = ?)
+                """, (rs, row) -> new AnalysisMetrics(
+                rs.getLong("calls"), rs.getLong("prompt_tokens"), rs.getLong("completion_tokens"),
+                rs.getLong("total_tokens"), rs.getLong("average_duration_ms"), rs.getLong("fallback_calls"),
+                rs.getLong("cache_calls")),
+                Timestamp.from(since), filter, filter);
+    }
+
     @Transactional
     public ProjectView createProject(String projectKey, String name, List<String> terms) {
         String key = projectKey(projectKey);
@@ -239,9 +261,49 @@ public class XhsConsoleService {
                 """, this::mapJob, filter, filter, safeLimit(limit, 50));
     }
 
-    public List<OpinionRow> opinions(
+    public OpinionPage opinions(
             String projectKey, String keyword, String sentiment, Instant publishedFrom, Instant publishedTo,
-            String sortBy, String sortDirection, int minimumRiskScore, int limit) {
+            String sortBy, String sortDirection, int minimumRiskScore, int page, int pageSize) {
+        StringBuilder where = new StringBuilder(" WHERE a.risk_score >= ?");
+        List<Object> arguments = new ArrayList<>();
+        arguments.add(Math.max(0, Math.min(minimumRiskScore, 100)));
+        if (projectKey != null && !projectKey.isBlank()) {
+            where.append(" AND pr.project_key = ?");
+            arguments.add(projectKey(projectKey));
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            where.append(" AND (p.title LIKE ? OR p.content LIKE ? OR a.summary LIKE ?)");
+            String like = "%" + keyword.strip() + "%";
+            arguments.add(like);
+            arguments.add(like);
+            arguments.add(like);
+        }
+        if (sentiment != null && !sentiment.isBlank()) {
+            where.append(" AND a.sentiment = ?");
+            arguments.add(sentiment.strip().toUpperCase(Locale.ROOT));
+        }
+        if (publishedFrom != null) {
+            where.append(" AND p.published_at >= ?");
+            arguments.add(Timestamp.from(publishedFrom));
+        }
+        if (publishedTo != null) {
+            where.append(" AND p.published_at <= ?");
+            arguments.add(Timestamp.from(publishedTo));
+        }
+        String joins = """
+                FROM xhs_posts p
+                JOIN xhs_monitor_projects pr ON pr.id = p.project_id
+                JOIN xhs_analysis_results a ON a.id = (
+                    SELECT a2.id FROM xhs_analysis_results a2
+                    WHERE a2.post_id = p.id ORDER BY a2.analyzed_at DESC, a2.id DESC LIMIT 1)
+                """;
+        Integer totalValue = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) " + joins + where, Integer.class, arguments.toArray());
+        int safePageSize = Math.max(10, Math.min(pageSize <= 0 ? 50 : pageSize, 100));
+        int safePage = Math.max(1, page);
+        int total = totalValue == null ? 0 : totalValue;
+        int totalPages = Math.max(1, (total + safePageSize - 1) / safePageSize);
+        safePage = Math.min(safePage, totalPages);
         StringBuilder sql = new StringBuilder("""
                 SELECT p.id, pr.project_key, p.title, p.author_key, p.source_url, p.published_at,
                        a.summary, a.sentiment, a.risk_category, a.risk_score, a.analyzed_at,
@@ -249,45 +311,20 @@ public class XhsConsoleService {
                        COALESCE(m.collected_count, 0) collected_count,
                        COALESCE(m.comment_count, 0) comment_count,
                        COALESCE(m.share_count, 0) share_count
-                FROM xhs_analysis_results a
-                JOIN xhs_posts p ON p.id = a.post_id
-                JOIN xhs_monitor_projects pr ON pr.id = p.project_id
+                """).append(joins).append("""
                 LEFT JOIN xhs_metric_snapshots m ON m.id = (
                     SELECT m2.id FROM xhs_metric_snapshots m2
                     WHERE m2.post_id = p.id ORDER BY m2.snapshot_at DESC, m2.id DESC LIMIT 1)
-                WHERE a.risk_score >= ?
-                """);
-        List<Object> arguments = new ArrayList<>();
-        arguments.add(Math.max(0, Math.min(minimumRiskScore, 100)));
-        if (projectKey != null && !projectKey.isBlank()) {
-            sql.append(" AND pr.project_key = ?");
-            arguments.add(projectKey(projectKey));
-        }
-        if (keyword != null && !keyword.isBlank()) {
-            sql.append(" AND (p.title LIKE ? OR p.content LIKE ? OR a.summary LIKE ?)");
-            String like = "%" + keyword.strip() + "%";
-            arguments.add(like);
-            arguments.add(like);
-            arguments.add(like);
-        }
-        if (sentiment != null && !sentiment.isBlank()) {
-            sql.append(" AND a.sentiment = ?");
-            arguments.add(sentiment.strip().toUpperCase(Locale.ROOT));
-        }
-        if (publishedFrom != null) {
-            sql.append(" AND p.published_at >= ?");
-            arguments.add(Timestamp.from(publishedFrom));
-        }
-        if (publishedTo != null) {
-            sql.append(" AND p.published_at <= ?");
-            arguments.add(Timestamp.from(publishedTo));
-        }
+                """).append(where);
         sql.append(" ORDER BY CASE WHEN p.published_at IS NULL THEN 1 ELSE 0 END, ");
         sql.append(opinionSort(sortBy));
         sql.append(" ").append("ASC".equalsIgnoreCase(sortDirection) ? "ASC" : "DESC");
-        sql.append(", p.id DESC LIMIT ?");
-        arguments.add(safeLimit(limit, 50));
-        return jdbcTemplate.query(sql.toString(), this::mapOpinion, arguments.toArray());
+        sql.append(", p.id DESC LIMIT ? OFFSET ?");
+        List<Object> pageArguments = new ArrayList<>(arguments);
+        pageArguments.add(safePageSize);
+        pageArguments.add((safePage - 1) * safePageSize);
+        List<OpinionRow> items = jdbcTemplate.query(sql.toString(), this::mapOpinion, pageArguments.toArray());
+        return new OpinionPage(items, safePage, safePageSize, total, totalPages);
     }
 
     private String opinionSort(String sortBy) {
@@ -332,6 +369,29 @@ public class XhsConsoleService {
                 """, (rs, row) -> new CommentView(rs.getLong("id"), anonymousAuthor(rs.getString("author_key")),
                         rs.getString("content"), rs.getLong("liked_count"), instant(rs, "published_at")), postId);
         return post.withComments(comments);
+    }
+
+    @Transactional
+    public AnalysisFeedback submitAnalysisFeedback(long postId, String feedbackType, String note) {
+        String type = feedbackType == null ? "" : feedbackType.strip().toUpperCase(Locale.ROOT);
+        if (!List.of("CORRECT", "SENTIMENT_WRONG", "RISK_TOO_HIGH", "RISK_TOO_LOW").contains(type)) {
+            throw new IllegalArgumentException("不支持的分析反馈类型");
+        }
+        Integer exists = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM xhs_posts WHERE id = ?", Integer.class, postId);
+        if (exists == null || exists == 0) {
+            throw new IllegalArgumentException("帖子不存在");
+        }
+        String safeNote = note == null ? "" : note.strip();
+        if (safeNote.length() > 1000) {
+            throw new IllegalArgumentException("反馈说明不能超过 1000 字");
+        }
+        Instant now = Instant.now();
+        jdbcTemplate.update("""
+                INSERT INTO xhs_analysis_feedback(post_id, feedback_type, note, status, created_at)
+                VALUES (?, ?, ?, 'OPEN', ?)
+                """, postId, type, safeNote.isBlank() ? null : safeNote, Timestamp.from(now));
+        Long id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+        return new AnalysisFeedback(id == null ? 0 : id, postId, type, safeNote, "OPEN", now);
     }
 
     public List<XhsIncidentView> incidents(String projectKey, String status, int limit) {
@@ -650,6 +710,10 @@ public class XhsConsoleService {
                                int activeIncidentCount, int failedJobCount) {
     }
 
+    public record AnalysisMetrics(long calls, long promptTokens, long completionTokens,
+                                  long totalTokens, long averageDurationMs, long fallbackCalls, long cacheCalls) {
+    }
+
     public record JobView(String jobKey, String projectKey, String projectName, String query, String status,
                           boolean complete, int recordCount, int attemptCount, String errorCode,
                           String errorMessage, Instant startedAt, Instant finishedAt) {
@@ -661,8 +725,15 @@ public class XhsConsoleService {
                              String sourceUrl, Instant publishedAt, Instant analyzedAt) {
     }
 
+    public record OpinionPage(List<OpinionRow> items, int page, int pageSize, int total, int totalPages) {
+    }
+
     public record CommentView(long commentId, String authorDisplayName, String content, long likedCount,
                               Instant publishedAt) {
+    }
+
+    public record AnalysisFeedback(long id, long postId, String feedbackType, String note,
+                                   String status, Instant createdAt) {
     }
 
     public record PostDetail(long postId, String projectKey, String title, String content,

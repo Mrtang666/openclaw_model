@@ -72,6 +72,13 @@ public class XhsConsoleController {
         return healthService.health();
     }
 
+    @GetMapping("/analysis-metrics")
+    public XhsConsoleService.AnalysisMetrics analysisMetrics(
+            @RequestParam(required = false) String projectKey,
+            @RequestParam(defaultValue = "7") int days) {
+        return service.analysisMetrics(projectKey, days);
+    }
+
     @GetMapping("/authorization")
     public XhsAuthorizationService.AuthorizationStatus authorization() {
         return authorizationService.status();
@@ -152,7 +159,7 @@ public class XhsConsoleController {
     }
 
     @GetMapping("/opinions")
-    public List<XhsConsoleService.OpinionRow> opinions(
+    public XhsConsoleService.OpinionPage opinions(
             @RequestParam(required = false) String projectKey,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String sentiment,
@@ -161,14 +168,22 @@ public class XhsConsoleController {
             @RequestParam(defaultValue = "publishedAt") String sortBy,
             @RequestParam(defaultValue = "DESC") String sortDirection,
             @RequestParam(defaultValue = "0") int minimumRiskScore,
-            @RequestParam(defaultValue = "50") int limit) {
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "50") int pageSize) {
         return service.opinions(projectKey, keyword, sentiment, publishedFrom, publishedTo,
-                sortBy, sortDirection, minimumRiskScore, limit);
+                sortBy, sortDirection, minimumRiskScore, page, pageSize);
     }
 
     @GetMapping("/posts/{postId}")
     public XhsConsoleService.PostDetail post(@PathVariable long postId) {
         return service.post(postId);
+    }
+
+    @PostMapping("/posts/{postId}/feedback")
+    @ResponseStatus(HttpStatus.CREATED)
+    public XhsConsoleService.AnalysisFeedback submitAnalysisFeedback(
+            @PathVariable long postId, @RequestBody AnalysisFeedbackRequest request) {
+        return service.submitAnalysisFeedback(postId, request.feedbackType(), request.note());
     }
 
     @GetMapping("/posts/{postId}/open")
@@ -328,6 +343,9 @@ public class XhsConsoleController {
     }
 
     public record AuthorizationCookieRequest(String cookie) {
+    }
+
+    public record AnalysisFeedbackRequest(String feedbackType, String note) {
     }
 
     private ResponseEntity<String> linkError(HttpStatus status, String message) {

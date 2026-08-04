@@ -8,10 +8,20 @@ import com.example.spring.xhs.analysis.XhsTrendSignals;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 public interface XhsAnalysisRepository {
 
     List<XhsAnalysisCandidate> findUnanalyzed(String analysisVersion, int limit);
+
+    default List<XhsAnalysisClaim> claimUnanalyzed(String analysisVersion, int limit) {
+        return findUnanalyzed(analysisVersion, limit).stream()
+                .map(candidate -> new XhsAnalysisClaim(candidate, "legacy-" + UUID.randomUUID()))
+                .toList();
+    }
+
+    default void releaseClaim(XhsAnalysisClaim claim) {
+    }
 
     void saveAnalysis(XhsAnalysisResult result);
 

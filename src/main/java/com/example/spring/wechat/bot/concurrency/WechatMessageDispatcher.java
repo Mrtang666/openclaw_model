@@ -20,6 +20,7 @@ public final class WechatMessageDispatcher implements AutoCloseable {
     private final Map<ConversationKey, Mailbox> mailboxes = new ConcurrentHashMap<>();
     private final AtomicInteger queuedTasks = new AtomicInteger();
     private final AtomicInteger activeTasks = new AtomicInteger();
+    private final AtomicBoolean closed = new AtomicBoolean();
 
     public WechatMessageDispatcher(WechatConcurrencyProperties properties) {
         int threads = properties.getWorkerThreads();
@@ -41,7 +42,7 @@ public final class WechatMessageDispatcher implements AutoCloseable {
     }
 
     public void submit(ConversationKey key, Runnable task) {
-        if (workers.isShutdown()) {
+        if (closed.get() || workers.isShutdown()) {
             throw new RejectedExecutionException("微信消息处理器已停止");
         }
         Mailbox mailbox = mailboxes.computeIfAbsent(key, ignored -> new Mailbox());
@@ -65,6 +66,14 @@ public final class WechatMessageDispatcher implements AutoCloseable {
     private void scheduleNext(ConversationKey key, Mailbox mailbox) {
         Runnable next;
         synchronized (mailbox) {
+            if (closed.get()) {
+                int dropped = mailbox.queue.size();
+                mailbox.queue.clear();
+                mailbox.running.set(false);
+                mailboxes.remove(key, mailbox);
+                subtractQueued(dropped);
+                return;
+            }
             next = mailbox.queue.poll();
             if (next == null) {
                 mailbox.running.set(false);
@@ -86,6 +95,13 @@ public final class WechatMessageDispatcher implements AutoCloseable {
         } catch (RejectedExecutionException exception) {
             synchronized (mailbox) {
                 mailbox.running.set(false);
+                if (closed.get()) {
+                    int dropped = mailbox.queue.size();
+                    mailbox.queue.clear();
+                    mailboxes.remove(key, mailbox);
+                    subtractQueued(dropped);
+                    return;
+                }
             }
             mailboxes.remove(key, mailbox);
             throw exception;
@@ -99,9 +115,29 @@ public final class WechatMessageDispatcher implements AutoCloseable {
 
     @Override
     public void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
         workers.shutdownNow();
-        mailboxes.clear();
-        queuedTasks.set(0);
+        for (Map.Entry<ConversationKey, Mailbox> entry : mailboxes.entrySet()) {
+            ConversationKey key = entry.getKey();
+            Mailbox mailbox = entry.getValue();
+            if (mailbox == null) {
+                continue;
+            }
+            int dropped;
+            synchronized (mailbox) {
+                dropped = mailbox.queue.size();
+                mailbox.queue.clear();
+                mailbox.running.set(false);
+            }
+            subtractQueued(dropped);
+            mailboxes.remove(key, mailbox);
+        }
+    }
+
+    private void subtractQueued(int count) {
+        queuedTasks.updateAndGet(current -> Math.max(0, current - Math.max(0, count)));
     }
 
     private static final class Mailbox {

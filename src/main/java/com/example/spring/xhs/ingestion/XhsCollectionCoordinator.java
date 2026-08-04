@@ -5,6 +5,7 @@ import com.example.spring.xhs.model.XhsCollectionJob;
 import com.example.spring.xhs.model.XhsImportResult;
 import com.example.spring.xhs.model.XhsSourceType;
 import com.example.spring.xhs.repository.XhsCollectionJobRepository;
+import com.example.spring.xhs.repository.XhsCollectionClaim;
 import com.example.spring.xhs.repository.XhsOpinionRepository;
 import com.example.spring.xhs.source.XhsCollectionRequest;
 import com.example.spring.xhs.source.XhsCollectionStatus;
@@ -81,25 +82,27 @@ public class XhsCollectionCoordinator {
         if (sourceClient == null || !properties.enabled()) {
             return 0;
         }
-        List<XhsCollectionJob> jobs = jobRepository.findPending(20);
-        jobs.forEach(this::poll);
-        return jobs.size();
+        List<XhsCollectionClaim> claims = jobRepository.claimPending(20);
+        claims.forEach(this::poll);
+        return claims.size();
     }
 
-    private void poll(XhsCollectionJob job) {
-        if (job.attemptCount() >= properties.maxAttempts()) {
-            jobRepository.finish(job.jobKey(), XhsCollectionStatus.FAILED, false, 0, "",
-                    "POLL_LIMIT", "采集侧车轮询次数达到上限", Instant.now());
-            return;
-        }
+    private void poll(XhsCollectionClaim claim) {
+        XhsCollectionJob job = claim.job();
         try {
+            if (job.attemptCount() >= properties.maxAttempts()) {
+                jobRepository.finish(claim, XhsCollectionStatus.FAILED, false, 0, "",
+                        "POLL_LIMIT", "采集侧车轮询次数达到上限", Instant.now());
+                return;
+            }
             XhsCollectorJobResult result = sourceClient.getJob(job.externalJobId());
             if (!result.status().terminal()) {
-                jobRepository.recordPoll(job.jobKey(), XhsCollectionStatus.RUNNING);
+                jobRepository.recordPoll(claim, XhsCollectionStatus.RUNNING, "",
+                        Instant.now().plusSeconds(10));
                 return;
             }
             if (result.status() == XhsCollectionStatus.FAILED) {
-                jobRepository.finish(job.jobKey(), XhsCollectionStatus.FAILED, false, 0,
+                jobRepository.finish(claim, XhsCollectionStatus.FAILED, false, 0,
                         result.nextCursor(), result.errorCode(), result.errorMessage(), Instant.now());
                 return;
             }
@@ -110,10 +113,14 @@ public class XhsCollectionCoordinator {
             XhsCollectionStatus finalStatus = result.complete()
                     ? XhsCollectionStatus.SUCCEEDED
                     : XhsCollectionStatus.PARTIAL;
-            jobRepository.finish(job.jobKey(), finalStatus, result.complete(), imported.postCount(),
+            jobRepository.finish(claim, finalStatus, result.complete(), imported.postCount(),
                     result.nextCursor(), result.errorCode(), result.errorMessage(), Instant.now());
         } catch (RuntimeException exception) {
-            jobRepository.recordPoll(job.jobKey(), XhsCollectionStatus.RUNNING);
+            long delaySeconds = Math.min(900L, Math.max(10L, 5L * (1L << Math.min(job.attemptCount(), 7))));
+            jobRepository.recordPoll(claim, XhsCollectionStatus.RUNNING, safeMessage(exception),
+                    Instant.now().plusSeconds(delaySeconds));
+        } finally {
+            jobRepository.releaseClaim(claim);
         }
     }
 

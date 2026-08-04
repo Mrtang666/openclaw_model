@@ -23,6 +23,10 @@ import com.example.spring.wechat.conversation.tools.ImageGenerationWechatTool;
 import com.example.spring.wechat.conversation.tools.VoiceSynthesisWechatTool;
 import com.example.spring.wechat.conversation.tools.WeatherWechatTool;
 import com.example.spring.wechat.conversation.tools.WechatToolRegistry;
+import com.example.spring.wechat.context.ContextBudgetReport;
+import com.example.spring.wechat.context.RelevanceLevel;
+import com.example.spring.wechat.context.WechatContextOrchestrator;
+import com.example.spring.wechat.context.WechatContextPackage;
 import com.example.spring.wechat.voice.synthesis.model.VoiceSynthesisSegment;
 import com.example.spring.wechat.voice.synthesis.service.VoiceSynthesisService;
 import com.example.spring.weather.model.WeatherResult;
@@ -281,6 +285,41 @@ class WechatConversationServiceTests {
                 .contains("conversation_summary / 会话摘要")
                 .contains("小红书舆情复盘");
         assertThat(requestCaptor.getValue().userText()).isEqualTo("继续刚才的复盘");
+    }
+
+    @Test
+    void functionCallingUsesMemoryGraphContextWhenAvailable() {
+        ChatService chatService = mock(ChatService.class);
+        WeatherService weatherService = mock(WeatherService.class);
+        FunctionCallingAgentLoop loop = mock(FunctionCallingAgentLoop.class);
+        WechatContextOrchestrator orchestrator = mock(WechatContextOrchestrator.class);
+        when(orchestrator.build(any())).thenReturn(new WechatContextPackage(
+                RelevanceLevel.STRONG,
+                "【context_policy / 上下文策略】\n相关性：STRONG\n\n【recent_turns / 最近完整对话】\n用户：前文\n助手：回复",
+                List.of(),
+                new ContextBudgetReport(128000, 8000, 12000, 108000, 86400, 100, false)));
+        when(loop.run(any())).thenReturn(Optional.of(WechatReply.text("已结合 Memory Graph 回答")));
+        WechatToolRegistry toolRegistry = new WechatToolRegistry(List.of(new ChatWechatTool(chatService)));
+        WechatConversationService service = new WechatConversationService(
+                chatService,
+                weatherService,
+                null,
+                null,
+                null,
+                new WeatherIntentParser(),
+                null,
+                toolRegistry);
+        service.configureFunctionCallingAgentLoop(loop, "function-calling");
+        service.configureContextOrchestrator(() -> orchestrator);
+
+        WechatReply reply = service.handleWechat(new WechatIncomingMessage("wx-memory-graph", "继续"));
+
+        assertThat(reply.text()).isEqualTo("已结合 Memory Graph 回答");
+        ArgumentCaptor<FunctionCallingAgentRequest> requestCaptor = ArgumentCaptor.forClass(FunctionCallingAgentRequest.class);
+        verify(loop).run(requestCaptor.capture());
+        assertThat(requestCaptor.getValue().historyText())
+                .contains("context_policy / 上下文策略")
+                .contains("相关性：STRONG");
     }
 
     @Test

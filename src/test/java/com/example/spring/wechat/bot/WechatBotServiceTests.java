@@ -1,6 +1,7 @@
 package com.example.spring.wechat.bot;
 
 import com.example.spring.agent.AgentService;
+import com.example.spring.agent.interrupts.AgentInterruptService;
 import com.example.spring.wechat.adapter.WechatClient;
 import com.example.spring.wechat.bot.concurrency.WechatConcurrencyProperties;
 import com.example.spring.wechat.bot.multiclient.ClawBotConnectionProperties;
@@ -32,6 +33,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
 
@@ -90,6 +92,29 @@ class WechatBotServiceTests {
         assertThat(client.sentToUserId).isEqualTo("user@im.wechat");
         assertThat(new ArrayList<>(client.sentTexts)).containsExactly("南京天气结果");
         assertThat(service.status().state()).isEqualTo(WechatBotState.RUNNING);
+        service.stop();
+    }
+
+    @Test
+    void interruptTextBypassesConversationQueueAndSignalsActiveRun() throws Exception {
+        FakeWechatClient client = new FakeWechatClient(1);
+        AgentService agentService = mock(AgentService.class);
+        AgentInterruptService interruptService = new AgentInterruptService();
+        WechatBotService service = new WechatBotService(() -> client, agentService, interruptService);
+
+        service.start();
+        String connectionId = service.managerSnapshot().connections().get(0).connectionId();
+        String sessionKey = "clawbot:" + connectionId + ":user@im.wechat";
+        interruptService.markRunStarted(sessionKey);
+        client.loginFuture.complete(new WechatLoginInfo("bot-1"));
+        client.updates.add(List.of(new WechatIncomingMessage("user@im.wechat", "取消")));
+
+        assertThat(client.sentLatch.await(3, TimeUnit.SECONDS)).isTrue();
+        assertThat(client.sentToUserId).isEqualTo("user@im.wechat");
+        assertThat(new ArrayList<>(client.sentTexts)).singleElement().asString().contains("取消");
+        assertThat(interruptService.isInterrupted(sessionKey)).isTrue();
+        verify(agentService, never()).handleStreaming(anyString(), any());
+        interruptService.markRunFinished(sessionKey);
         service.stop();
     }
 

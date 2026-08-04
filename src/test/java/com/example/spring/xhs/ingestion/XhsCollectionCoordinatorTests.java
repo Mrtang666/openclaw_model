@@ -5,6 +5,7 @@ import com.example.spring.xhs.model.XhsCollectionJob;
 import com.example.spring.xhs.model.XhsImportResult;
 import com.example.spring.xhs.model.XhsSourceType;
 import com.example.spring.xhs.repository.XhsCollectionJobRepository;
+import com.example.spring.xhs.repository.XhsCollectionClaim;
 import com.example.spring.xhs.repository.XhsOpinionRepository;
 import com.example.spring.xhs.source.XhsCollectionRequest;
 import com.example.spring.xhs.source.XhsCollectionStatus;
@@ -59,6 +60,7 @@ class XhsCollectionCoordinatorTests {
         assertThat(jobs.finishedStatus).isEqualTo(XhsCollectionStatus.SUCCEEDED);
         assertThat(jobs.complete).isTrue();
         assertThat(jobs.recordCount).isEqualTo(1);
+        assertThat(jobs.releasedClaims).isEqualTo(1);
     }
 
     @Test
@@ -141,6 +143,7 @@ class XhsCollectionCoordinatorTests {
         private String nextCursor;
         private String errorCode;
         private String errorMessage;
+        private int releasedClaims;
 
         @Override
         public void create(String jobKey, long projectId, XhsSourceType sourceType, String query, Instant now) {
@@ -158,6 +161,11 @@ class XhsCollectionCoordinatorTests {
 
         @Override
         public void recordPoll(String jobKey, XhsCollectionStatus status) {
+        }
+
+        @Override
+        public void releaseClaim(XhsCollectionClaim claim) {
+            releasedClaims++;
         }
 
         @Override

@@ -8,6 +8,7 @@ import com.example.spring.wechat.email.model.EmailMessage;
 import com.example.spring.xhs.config.XhsScheduledReportProperties;
 import com.example.spring.xhs.report.XhsReportArtifactStorage;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,7 +16,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 public class XhsScheduledReportDeliveryService {
@@ -26,20 +29,46 @@ public class XhsScheduledReportDeliveryService {
     private final WechatBotService wechatBotService;
     private final XhsReportArtifactStorage storage;
     private final XhsScheduledReportProperties properties;
+    private final Duration claimTimeout;
 
     public XhsScheduledReportDeliveryService(
             JdbcTemplate jdbcTemplate, EmailClient emailClient, EmailProperties emailProperties,
             WechatBotService wechatBotService, XhsReportArtifactStorage storage,
-            XhsScheduledReportProperties properties) {
+            XhsScheduledReportProperties properties,
+            @Value("${xhs.scheduled-report.delivery-claim-timeout:5m}") Duration claimTimeout) {
         this.jdbcTemplate = jdbcTemplate;
         this.emailClient = emailClient;
         this.emailProperties = emailProperties;
         this.wechatBotService = wechatBotService;
         this.storage = storage;
         this.properties = properties;
+        this.claimTimeout = claimTimeout == null || claimTimeout.isNegative() || claimTimeout.isZero()
+                ? Duration.ofMinutes(5) : claimTimeout;
     }
 
     public int dispatchPending() {
+        String claimToken = UUID.randomUUID().toString();
+        Instant now = Instant.now();
+        Timestamp staleBefore = Timestamp.from(now.minus(claimTimeout));
+        jdbcTemplate.update("""
+                UPDATE xhs_report_deliveries
+                SET status = 'PENDING', claim_token = NULL, claimed_at = NULL, updated_at = ?
+                WHERE status = 'PROCESSING' AND claimed_at < ?
+                """, Timestamp.from(now), staleBefore);
+        jdbcTemplate.update("""
+                UPDATE xhs_report_deliveries
+                SET status = 'PROCESSING', claim_token = ?, claimed_at = ?, updated_at = ?
+                WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id FROM xhs_report_deliveries
+                        WHERE status = 'PENDING' AND next_attempt_at <= ?
+                          AND attempt_count < ?
+                        ORDER BY next_attempt_at, id LIMIT 20
+                    ) claimable
+                )
+                  AND status = 'PENDING'
+                """, claimToken, Timestamp.from(now), Timestamp.from(now), Timestamp.from(now),
+                properties.maxDeliveryAttempts());
         List<Delivery> deliveries = jdbcTemplate.query("""
                 SELECT d.id, d.run_id, d.attempt_count, r.channel,
                        r.connection_id, r.target_value, s.name schedule_name,
@@ -49,11 +78,10 @@ public class XhsScheduledReportDeliveryService {
                 JOIN xhs_report_runs rr ON rr.id = d.run_id
                 JOIN xhs_report_schedules s ON s.id = rr.schedule_id
                 JOIN xhs_monitor_projects p ON p.id = s.project_id
-                WHERE d.status = 'PENDING' AND d.next_attempt_at <= ?
-                  AND d.attempt_count < ?
+                WHERE d.status = 'PROCESSING' AND d.claim_token = ?
                 ORDER BY d.next_attempt_at, d.id LIMIT 20
-                """, this::mapDelivery, Timestamp.from(Instant.now()), properties.maxDeliveryAttempts());
-        deliveries.forEach(this::dispatch);
+                """, this::mapDelivery, claimToken);
+        deliveries.forEach(delivery -> dispatch(delivery, claimToken));
         return deliveries.size();
     }
 
@@ -81,7 +109,7 @@ public class XhsScheduledReportDeliveryService {
                 """, Timestamp.from(now), runIds.get(0));
     }
 
-    private void dispatch(Delivery delivery) {
+    private void dispatch(Delivery delivery, String claimToken) {
         try {
             List<Artifact> artifacts = artifacts(delivery.runId());
             if (artifacts.isEmpty()) {
@@ -98,12 +126,16 @@ public class XhsScheduledReportDeliveryService {
             jdbcTemplate.update("""
                     UPDATE xhs_report_deliveries
                     SET status = 'SENT', attempt_count = attempt_count + 1, sent_at = ?, last_error = NULL, updated_at = ?
-                    WHERE id = ?
-                    """, Timestamp.from(now), Timestamp.from(now), delivery.id());
+                    WHERE id = ? AND status = 'PROCESSING' AND claim_token = ?
+                    """, Timestamp.from(now), Timestamp.from(now), delivery.id(), claimToken);
         } catch (RuntimeException exception) {
-            recordFailure(delivery, exception);
+            recordFailure(delivery, exception, claimToken);
         }
         refreshRun(delivery.runId());
+        jdbcTemplate.update("""
+                UPDATE xhs_report_deliveries SET status = 'PENDING', claim_token = NULL, claimed_at = NULL
+                WHERE id = ? AND status = 'PROCESSING' AND claim_token = ?
+                """, delivery.id(), claimToken);
     }
 
     private void sendEmail(Delivery delivery, List<Artifact> artifacts) {
@@ -143,7 +175,7 @@ public class XhsScheduledReportDeliveryService {
         }
     }
 
-    private void recordFailure(Delivery delivery, Throwable throwable) {
+    private void recordFailure(Delivery delivery, Throwable throwable, String claimToken) {
         int attempt = delivery.attemptCount() + 1;
         boolean terminal = attempt >= properties.maxDeliveryAttempts();
         Instant now = Instant.now();
@@ -151,14 +183,14 @@ public class XhsScheduledReportDeliveryService {
         jdbcTemplate.update("""
                 UPDATE xhs_report_deliveries
                 SET status = ?, attempt_count = ?, next_attempt_at = ?, last_error = ?, updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND status = 'PROCESSING' AND claim_token = ?
                 """, terminal ? "FAILED" : "PENDING", attempt, Timestamp.from(next),
-                safeMessage(throwable), Timestamp.from(now), delivery.id());
+                safeMessage(throwable), Timestamp.from(now), delivery.id(), claimToken);
     }
 
     private void refreshRun(long runId) {
         Integer pending = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM xhs_report_deliveries WHERE run_id = ? AND status = 'PENDING'",
+                "SELECT COUNT(*) FROM xhs_report_deliveries WHERE run_id = ? AND status IN ('PENDING', 'PROCESSING')",
                 Integer.class, runId);
         if (pending != null && pending > 0) {
             return;

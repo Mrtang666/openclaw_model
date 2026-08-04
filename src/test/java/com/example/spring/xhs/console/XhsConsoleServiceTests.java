@@ -28,4 +28,20 @@ class XhsConsoleServiceTests {
                 .hasMessageContaining("完整项目标识");
         verifyNoInteractions(jdbcTemplate);
     }
+
+    @Test
+    void rejectsUnsupportedAnalysisFeedbackBeforeDatabaseAccess() {
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        XhsConsoleService service = new XhsConsoleService(
+                jdbcTemplate,
+                new ObjectMapper(),
+                mock(XhsCollectionCoordinator.class),
+                mock(XhsDailyReportService.class),
+                mock(XhsReportArtifactStorage.class));
+
+        assertThatThrownBy(() -> service.submitAnalysisFeedback(42L, "UNKNOWN", "invalid type"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("反馈类型");
+        verifyNoInteractions(jdbcTemplate);
+    }
 }

@@ -21,6 +21,7 @@ const views = {
 };
 
 let authorizationPollTimer;
+let opinionRequestController;
 
 const content = document.querySelector("#content");
 const notice = document.querySelector("#notice");
@@ -330,13 +331,20 @@ function isoDateTime(value) {
   return value ? new Date(value).toISOString() : "";
 }
 
-async function loadOpinions(data) {
+async function loadOpinions(data, page = 1) {
   const results = document.querySelector("#opinion-results");
+  opinionRequestController?.abort();
+  opinionRequestController = new AbortController();
   try {
-    const rows = await api(`/opinions${query({ projectKey: state.projectKey, keyword: data.get("keyword"), sentiment: data.get("sentiment"), minimumRiskScore: data.get("minimumRiskScore"), publishedFrom: isoDateTime(data.get("publishedFrom")), publishedTo: isoDateTime(data.get("publishedTo")), sortBy: data.get("sortBy") || "publishedAt", sortDirection: data.get("sortDirection") || "DESC", limit: 100 })}`);
+    const result = await api(`/opinions${query({ projectKey: state.projectKey, keyword: data.get("keyword"), sentiment: data.get("sentiment"), minimumRiskScore: data.get("minimumRiskScore"), publishedFrom: isoDateTime(data.get("publishedFrom")), publishedTo: isoDateTime(data.get("publishedTo")), sortBy: data.get("sortBy") || "publishedAt", sortDirection: data.get("sortDirection") || "DESC", page, pageSize: 50 })}`, { signal: opinionRequestController.signal });
+    const rows = result.items || [];
     results.innerHTML = `<div class="panel-header"><h2>分析结果</h2><span class="muted">${rows.length} 条</span></div><div class="table-wrap">${rows.length ? `<table><thead><tr><th>风险</th><th>情感</th><th>帖子标题</th><th>作者</th><th>互动</th><th>发布时间</th><th>原帖</th></tr></thead><tbody>${rows.map(row => `<tr data-post="${row.postId}"><td><span class="tag ${riskClass(row.riskLevel)}">${row.riskScore} · ${riskLabel(row.riskLevel)}</span></td><td><span class="tag ${String(row.sentiment).toLowerCase()}">${sentimentLabel(row.sentiment)}</span></td><td class="title-cell"><button class="button text" data-detail="${row.postId}">${escapeHtml(row.title || "无标题")}</button></td><td>${escapeHtml(row.authorDisplayName)}</td><td>${row.likedCount} 赞 · ${row.commentCount} 评</td><td>${formatDate(row.publishedAt)}</td><td><a class="button text" href="${postOpenUrl(row.postId)}" target="_blank" rel="noopener noreferrer">打开原帖</a></td></tr>`).join("")}</tbody></table>` : empty("没有符合条件的舆情数据")}</div>`;
+    results.insertAdjacentHTML("beforeend", `<div class="pagination"><span class="muted">共 ${result.total} 条 · 第 ${result.page}/${result.totalPages} 页</span><div class="inline-actions"><button class="button secondary" data-opinion-page="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><button class="button secondary" data-opinion-page="${result.page + 1}" ${result.page >= result.totalPages ? "disabled" : ""}>下一页</button></div></div>`);
+    results.querySelectorAll("[data-opinion-page]").forEach(button => button.addEventListener("click", () => loadOpinions(data, Number(button.dataset.opinionPage))));
     results.querySelectorAll("[data-detail]").forEach(button => button.addEventListener("click", () => openPost(button.dataset.detail)));
-  } catch (error) { results.innerHTML = empty(error.message); }
+  } catch (error) {
+    if (error.name !== "AbortError") results.innerHTML = empty(error.message);
+  }
 }
 
 async function openPost(postId) {
@@ -354,8 +362,39 @@ async function openPost(postId) {
       <h3>分析摘要</h3><p>${escapeHtml(post.summary || "尚未完成分析")}</p>
       <h3>风险依据</h3><p>${escapeHtml(formatJson(post.evidence))}</p>
       <a class="button primary" href="${postOpenUrl(post.postId)}" target="_blank" rel="noopener noreferrer">打开小红书原帖</a>
+      <section class="feedback-panel">
+        <h3>分析反馈</h3>
+        <p class="muted">反馈仅用于后续评估和优化，不会直接修改本次分析结果。</p>
+        <div class="inline-actions">
+          <button class="button secondary" type="button" data-analysis-feedback="CORRECT">分析准确</button>
+          <button class="button secondary" type="button" data-analysis-feedback="SENTIMENT_WRONG">情感判断有误</button>
+          <button class="button secondary" type="button" data-analysis-feedback="RISK_TOO_HIGH">风险评分过高</button>
+          <button class="button secondary" type="button" data-analysis-feedback="RISK_TOO_LOW">风险评分过低</button>
+        </div>
+      </section>
       <h3>已采集评论</h3>${post.comments.length ? post.comments.map(comment => `<article class="comment"><header><span>${escapeHtml(comment.authorDisplayName)}</span><span>${comment.likedCount} 赞 · ${formatDate(comment.publishedAt)}</span></header><p>${escapeHtml(comment.content)}</p></article>`).join("") : `<p class="muted">暂无评论数据</p>`}`;
+    document.querySelectorAll("[data-analysis-feedback]").forEach(button => button.addEventListener("click", () => submitPostFeedback(post.postId, button.dataset.analysisFeedback, button)));
   } catch (error) { document.querySelector("#drawer-content").innerHTML = empty(error.message); }
+}
+
+async function submitPostFeedback(postId, feedbackType, button) {
+  let note = "";
+  if (feedbackType !== "CORRECT") {
+    note = window.prompt("补充说明（可选）", "");
+    if (note === null) return;
+  }
+  button.disabled = true;
+  try {
+    await api(`/posts/${postId}/feedback`, {
+      method: "POST",
+      body: JSON.stringify({ feedbackType, note }),
+    });
+    showNotice("分析反馈已记录", true);
+  } catch (error) {
+    showNotice(error.message);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function closeDrawer() {
@@ -631,8 +670,14 @@ async function createAlertRule(event) {
 }
 
 async function renderSystem() {
-  const health = await api("/health");
-  content.innerHTML = `<section class="panel"><div class="panel-header"><h2>服务检查</h2><span class="tag ${health.status === "UP" ? "normal" : "warning"}">${health.status}</span></div><div class="panel-body"><div class="detail-meta"><div><span>管理接口</span><strong>正常</strong></div><div><span>数据库</span><strong>${health.databaseUp ? "正常" : "异常"}</strong></div><div><span>采集配置</span><strong>${health.collectorEnabled ? "已启用" : "未启用"}</strong></div><div><span>采集 Sidecar</span><strong>${health.collectorUp ? "正常" : "异常"}</strong></div><div><span>运行中任务</span><strong>${health.runningJobs}</strong></div><div><span>检查时间</span><strong>${formatDate(health.checkedAt)}</strong></div></div><p class="muted">${escapeHtml(health.collectorMessage)}</p></div></section>`;
+  const [health, metrics] = await Promise.all([
+    api("/health"),
+    api(`/analysis-metrics${query({ projectKey: state.projectKey, days: 7 })}`),
+  ]);
+  const fallbackRate = metrics.calls ? Math.round(metrics.fallbackCalls * 100 / metrics.calls) : 0;
+  const cacheRate = metrics.calls ? Math.round(metrics.cacheCalls * 100 / metrics.calls) : 0;
+  content.innerHTML = `<section class="panel"><div class="panel-header"><h2>服务检查</h2><span class="tag ${health.status === "UP" ? "normal" : "warning"}">${health.status}</span></div><div class="panel-body"><div class="detail-meta"><div><span>管理接口</span><strong>正常</strong></div><div><span>数据库</span><strong>${health.databaseUp ? "正常" : "异常"}</strong></div><div><span>采集配置</span><strong>${health.collectorEnabled ? "已启用" : "未启用"}</strong></div><div><span>采集 Sidecar</span><strong>${health.collectorUp ? "正常" : "异常"}</strong></div><div><span>运行中任务</span><strong>${health.runningJobs}</strong></div><div><span>检查时间</span><strong>${formatDate(health.checkedAt)}</strong></div></div><p class="muted">${escapeHtml(health.collectorMessage)}</p></div></section>
+    <section class="panel"><div class="panel-header"><h2>近 7 天模型消耗</h2><span class="muted">${state.projectKey ? "当前项目" : "全部项目"}</span></div><div class="panel-body"><div class="detail-meta"><div><span>分析执行</span><strong>${metrics.calls}</strong></div><div><span>输入 Token</span><strong>${metrics.promptTokens}</strong></div><div><span>输出 Token</span><strong>${metrics.completionTokens}</strong></div><div><span>总 Token</span><strong>${metrics.totalTokens}</strong></div><div><span>平均耗时</span><strong>${metrics.averageDurationMs} ms</strong></div><div><span>缓存命中率</span><strong>${cacheRate}%</strong></div><div><span>规则降级率</span><strong>${fallbackRate}%</strong></div></div></div></section>`;
 }
 
 async function renderAuthorization() {

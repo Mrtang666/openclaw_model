@@ -39,17 +39,18 @@ public class ClawBotManagementController {
             ClawBotConnectionSnapshot connection = role == null || role.isBlank()
                     ? botService.addConnection()
                     : botService.addConnection(role);
-            return ResponseEntity.status(HttpStatus.CREATED)
-                    .cacheControl(CacheControl.noStore())
-                    .body(connection);
+            return created(connection);
         } catch (IllegalStateException exception) {
-            return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body(Map.of("message", exception.getMessage()));
+            return conflict(exception);
         }
     }
 
-    ResponseEntity<?> addConnection() {
-        return addConnection(null);
+    public ResponseEntity<?> addConnection() {
+        try {
+            return created(botService.addConnection());
+        } catch (IllegalStateException exception) {
+            return conflict(exception);
+        }
     }
 
     @DeleteMapping("/connections/{connectionId}")
@@ -71,5 +72,16 @@ public class ClawBotManagementController {
             return ResponseEntity.status(HttpStatus.CONFLICT)
                     .body(Map.of("message", exception.getMessage()));
         }
+    }
+
+    private ResponseEntity<ClawBotConnectionSnapshot> created(ClawBotConnectionSnapshot connection) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .cacheControl(CacheControl.noStore())
+                .body(connection);
+    }
+
+    private ResponseEntity<Map<String, String>> conflict(IllegalStateException exception) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("message", exception.getMessage()));
     }
 }

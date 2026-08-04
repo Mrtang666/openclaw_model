@@ -11,5 +11,14 @@ public record XhsAlertDelivery(
         int riskScore,
         String riskLevel,
         int postCount,
-        int attemptCount) {
+        int attemptCount,
+        String claimToken) {
+
+    public XhsAlertDelivery(long deliveryId, long alertEventId, String projectKey,
+                            String connectionId, String recipientId, String incidentTitle,
+                            String riskCategory, int riskScore, String riskLevel,
+                            int postCount, int attemptCount) {
+        this(deliveryId, alertEventId, projectKey, connectionId, recipientId, incidentTitle,
+                riskCategory, riskScore, riskLevel, postCount, attemptCount, "");
+    }
 }

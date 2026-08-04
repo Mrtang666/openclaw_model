@@ -3,6 +3,7 @@ package com.example.spring.xhs.analysis;
 import com.example.spring.xhs.config.XhsAnalysisProperties;
 import com.example.spring.xhs.model.XhsMetrics;
 import com.example.spring.xhs.repository.XhsAnalysisRepository;
+import com.example.spring.xhs.repository.XhsAnalysisClaim;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -35,11 +36,39 @@ class XhsAnalysisPipelineTests {
         assertThat(repository.incidentKey).hasSize(64);
     }
 
+    @Test
+    void continuesBatchWhenOneCandidateFails() {
+        FakeRepository repository = new FakeRepository();
+        repository.candidates.add(new XhsAnalysisCandidate(
+                11, 7, "brand-a", "失败帖子", "正文", "url",
+                Instant.now(), Instant.now(), new XhsMetrics(0, 0, 0, 0)));
+        repository.candidates.add(new XhsAnalysisCandidate(
+                12, 7, "brand-a", "正常帖子", "正文", "url",
+                Instant.now(), Instant.now(), new XhsMetrics(0, 0, 0, 0)));
+        XhsSemanticAnalyzer analyzer = candidate -> {
+            if (candidate.postId() == 11) {
+                throw new IllegalStateException("temporary model error");
+            }
+            return new XhsSemanticAssessment(XhsSentiment.NEUTRAL, 0, List.of(), "GENERAL",
+                    1, 0.9, "正常", List.of());
+        };
+        XhsAnalysisPipeline pipeline = new XhsAnalysisPipeline(
+                repository, analyzer, new XhsRiskScorer(),
+                new XhsAnalysisProperties(true, "test-v1", 20, 60, 0.65));
+
+        int processed = pipeline.processPending();
+
+        assertThat(processed).isEqualTo(2);
+        assertThat(repository.saved.postId()).isEqualTo(12);
+        assertThat(repository.releasedClaims).isEqualTo(2);
+    }
+
     private static final class FakeRepository implements XhsAnalysisRepository {
         private final List<XhsAnalysisCandidate> candidates = new ArrayList<>();
         private XhsAnalysisResult saved;
         private String incidentKey;
         private long incidentPostId;
+        private int releasedClaims;
 
         @Override
         public List<XhsAnalysisCandidate> findUnanalyzed(String analysisVersion, int limit) {
@@ -49,6 +78,11 @@ class XhsAnalysisPipelineTests {
         @Override
         public void saveAnalysis(XhsAnalysisResult result) {
             saved = result;
+        }
+
+        @Override
+        public void releaseClaim(XhsAnalysisClaim claim) {
+            releasedClaims++;
         }
 
         @Override

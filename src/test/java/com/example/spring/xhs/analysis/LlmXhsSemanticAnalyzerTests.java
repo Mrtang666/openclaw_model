@@ -1,6 +1,7 @@
 package com.example.spring.xhs.analysis;
 
 import com.example.spring.chat.ChatService;
+import com.example.spring.xhs.config.XhsAnalysisProperties;
 import com.example.spring.xhs.model.XhsMetrics;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -11,6 +12,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 class LlmXhsSemanticAnalyzerTests {
 
@@ -44,6 +47,26 @@ class LlmXhsSemanticAnalyzerTests {
 
         assertThat(result.riskCategory()).isEqualTo("CONSUMER_SAFETY");
         assertThat(result.confidence()).isEqualTo(0.55);
+    }
+
+    @Test
+    void reusesSemanticCacheWithoutCallingModel() {
+        XhsAnalysisLlmClient llmClient = mock(XhsAnalysisLlmClient.class);
+        XhsSemanticCache cache = mock(XhsSemanticCache.class);
+        XhsAnalysisTelemetry telemetry = mock(XhsAnalysisTelemetry.class);
+        XhsAnalysisCandidate candidate = candidate("相同的帖子内容");
+        XhsSemanticAssessment cached = new XhsSemanticAssessment(
+                XhsSentiment.NEUTRAL, 0, java.util.List.of("GENERAL"), "GENERAL",
+                1, 0.9, "缓存结果", java.util.List.of());
+        when(cache.find(candidate, "v2")).thenReturn(new XhsSemanticCache.Cached(cached, "qwen-plus"));
+
+        XhsSemanticAssessment result = new LlmXhsSemanticAnalyzer(
+                llmClient, new ObjectMapper(), telemetry, cache,
+                new XhsAnalysisProperties(true, "v2", 20, 60, 0.65)).analyze(candidate);
+
+        assertThat(result).isEqualTo(cached);
+        verifyNoInteractions(llmClient);
+        verify(telemetry).cache(candidate.postId(), "v2", "qwen-plus");
     }
 
     private XhsAnalysisCandidate candidate(String content) {

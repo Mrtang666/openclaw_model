@@ -5,6 +5,11 @@ import com.example.spring.tool.protocol.function.FunctionCallingMessage;
 import com.example.spring.tool.protocol.function.FunctionCallingModelResponse;
 import com.example.spring.tool.protocol.function.FunctionCallingToolCall;
 import com.example.spring.tool.protocol.validation.ToolCallValidator;
+import com.example.spring.agent.trace.AgentRunHandle;
+import com.example.spring.agent.trace.AgentRunStatus;
+import com.example.spring.agent.trace.AgentRunStepStatus;
+import com.example.spring.agent.trace.AgentRunTraceService;
+import com.example.spring.agent.interrupts.AgentInterruptService;
 import com.example.spring.skill.SkillDefinition;
 import com.example.spring.skill.SkillManager;
 import com.example.spring.skill.SkillReference;
@@ -39,6 +44,164 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class FunctionCallingAgentLoopTests {
+
+    @Test
+    void stopsBeforeExecutingToolsWhenInterruptArrivesAfterModelRound() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        AgentInterruptService interruptService = new AgentInterruptService();
+        FakeWeatherTool weather = new FakeWeatherTool();
+        WechatToolRegistry registry = new WechatToolRegistry(List.of(weather));
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client,
+                registry,
+                5,
+                null,
+                interruptService);
+        when(client.chat(anyList(), anyList())).thenAnswer(invocation -> {
+            interruptService.requestInterrupt("user-1", "cancel");
+            return Optional.of(new FunctionCallingModelResponse(
+                    "",
+                    List.of(new FunctionCallingToolCall(
+                            "call_weather_1",
+                            "weather",
+                            Map.of("city", "Hangzhou")))));
+        });
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "Check Hangzhou weather and send it later",
+                "No previous context",
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                }))
+                .orElseThrow();
+
+        assertThat(reply.text()).contains("取消");
+        assertThat(weather.callCount).isZero();
+        assertThat(interruptService.isInterrupted("user-1")).isFalse();
+    }
+
+    @Test
+    void onlySendsSelectedToolsToModelWhenToolSelectionIsEnabled() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        WechatToolRegistry registry = new WechatToolRegistry(List.of(new FakeWeatherTool(), new FakeImageTool()));
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client,
+                registry,
+                5,
+                new ToolSelectionService(true, 1),
+                null);
+        when(client.chat(anyList(), anyList())).thenReturn(Optional.of(new FunctionCallingModelResponse("ok", List.of())));
+
+        loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "Check Hangzhou weather",
+                "No previous context",
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                }))
+                .orElseThrow();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<com.example.spring.wechat.conversation.tools.WechatToolDefinition>> toolsCaptor =
+                ArgumentCaptor.forClass(List.class);
+        verify(client).chat(anyList(), toolsCaptor.capture());
+        assertThat(toolsCaptor.getValue()).extracting(com.example.spring.wechat.conversation.tools.WechatToolDefinition::name)
+                .containsExactly("weather");
+    }
+
+    @Test
+    void tracesFinalAnswerRun() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        AgentRunTraceService traceService = mock(AgentRunTraceService.class);
+        AgentRunHandle handle = new AgentRunHandle(11L, "run-11");
+        when(traceService.startWechatRun("clawbot:connection-1:wechat-user-1", "你好", "No previous context"))
+                .thenReturn(handle);
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client,
+                new WechatToolRegistry(List.of(new FakeWeatherTool())),
+                5,
+                traceService);
+        when(client.chat(anyList(), anyList())).thenReturn(Optional.of(
+                new FunctionCallingModelResponse("ok", List.of())));
+
+        WechatReply reply = loop.run(request("你好", WechatConversationMode.GENERAL)).orElseThrow();
+
+        assertThat(reply.text()).isEqualTo("ok");
+        verify(traceService).startWechatRun(
+                "clawbot:connection-1:wechat-user-1",
+                "你好",
+                "No previous context");
+        verify(traceService).recordModelRound(
+                handle,
+                1,
+                "messages=2",
+                "final_answer",
+                Map.of("tool_count", 0));
+        verify(traceService).complete(handle, AgentRunStatus.SUCCEEDED, "FINAL_ANSWER", "ok");
+    }
+
+    @Test
+    void tracesToolCallsAndStopReason() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        AgentRunTraceService traceService = mock(AgentRunTraceService.class);
+        AgentRunHandle handle = new AgentRunHandle(12L, "run-12");
+        when(traceService.startWechatRun("user-1", "Is Hangzhou suitable for going out today?", "No previous context"))
+                .thenReturn(handle);
+        WechatToolRegistry registry = new WechatToolRegistry(List.of(new FakeWeatherTool()));
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(client, registry, 5, traceService);
+        when(client.chat(anyList(), anyList()))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "",
+                        List.of(new FunctionCallingToolCall(
+                                "call_weather_1",
+                                "weather",
+                                Map.of("city", "Hangzhou"))))))
+                .thenReturn(Optional.of(new FunctionCallingModelResponse(
+                        "Hangzhou is sunny today.",
+                        List.of())));
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "Is Hangzhou suitable for going out today?",
+                "No previous context",
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                })).orElseThrow();
+
+        assertThat(reply.text()).isEqualTo("Hangzhou is sunny today.");
+        verify(traceService).recordModelRound(
+                handle,
+                1,
+                "messages=2",
+                "tool_calls=[weather]",
+                Map.of("tool_count", 1));
+        verify(traceService).recordToolCall(
+                handle,
+                1,
+                "weather",
+                "{city=Hangzhou}");
+        verify(traceService).recordToolResult(
+                handle,
+                1,
+                "weather",
+                AgentRunStepStatus.SUCCESS,
+                "{city=Hangzhou}",
+                "weather result for Hangzhou: sunny");
+        verify(traceService).complete(handle, AgentRunStatus.SUCCEEDED, "FINAL_ANSWER", "Hangzhou is sunny today.");
+    }
 
     @Test
     void appliesDifferentSystemPromptsForPatientCaregiverAndDoctorModes() {
@@ -169,8 +332,16 @@ class FunctionCallingAgentLoopTests {
     @Test
     void taxiToolResultEndsCurrentAgentTurnWithoutAnotherModelRound() {
         DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        AgentRunTraceService traceService = mock(AgentRunTraceService.class);
+        AgentRunHandle handle = new AgentRunHandle(13L, "run-13");
+        when(traceService.startWechatRun("user-1", "打开滴滴 1", "报价编号 quote-1"))
+                .thenReturn(handle);
         FakeTaxiTool taxi = new FakeTaxiTool();
-        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(client, new WechatToolRegistry(List.of(taxi)), 5);
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client,
+                new WechatToolRegistry(List.of(taxi)),
+                5,
+                traceService);
         when(client.chat(anyList(), anyList())).thenReturn(Optional.of(new FunctionCallingModelResponse("",
                 List.of(new FunctionCallingToolCall("taxi-1", "taxi_service", Map.of("operation", "open_didi_app"))))));
 
@@ -180,6 +351,15 @@ class FunctionCallingAgentLoopTests {
         assertThat(reply.text()).contains("滴滴链接");
         assertThat(taxi.callCount).isEqualTo(1);
         verify(client, org.mockito.Mockito.times(1)).chat(anyList(), anyList());
+        verify(traceService).recordPolicyDecision(
+                handle,
+                1,
+                "taxi_service",
+                AgentRunStepStatus.SUCCESS,
+                "END_TURN_AFTER_TERMINAL_TOOL",
+                "{operation=open_didi_app}",
+                "工具执行后直接结束本轮 Agent",
+                Map.of("stop_reason", "SPECIAL_TOOL_DONE"));
     }
 
     @Test
@@ -477,9 +657,13 @@ class FunctionCallingAgentLoopTests {
     @Test
     void skipsDuplicateSuccessfulToolCallAndReturnsCachedResultToModel() {
         DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        AgentRunTraceService traceService = mock(AgentRunTraceService.class);
+        AgentRunHandle handle = new AgentRunHandle(14L, "run-14");
+        when(traceService.startWechatRun("user-1", "Check Hangzhou weather twice", "No previous context"))
+                .thenReturn(handle);
         FakeWeatherTool weatherTool = new FakeWeatherTool();
         WechatToolRegistry registry = new WechatToolRegistry(List.of(weatherTool));
-        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(client, registry, 5);
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(client, registry, 5, traceService);
 
         when(client.chat(anyList(), anyList()))
                 .thenReturn(Optional.of(new FunctionCallingModelResponse(
@@ -524,6 +708,15 @@ class FunctionCallingAgentLoopTests {
                     assertThat(message.toolCallId()).isEqualTo("call_weather_2");
                     assertThat(message.content()).contains("weather result for Hangzhou");
                 });
+        verify(traceService).recordPolicyDecision(
+                handle,
+                2,
+                "weather",
+                AgentRunStepStatus.SKIPPED,
+                "SKIP_DUPLICATE_TOOL_CALL",
+                "{city=Hangzhou}",
+                "跳过重复工具调用，复用已成功的工具结果",
+                Map.of("signature", "weather|{city=Hangzhou}"));
     }
 
 
@@ -803,11 +996,16 @@ class FunctionCallingAgentLoopTests {
     @Test
     void skipsWebSearchWhenRagContextAlreadyProvidesEvidence() {
         DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        AgentRunTraceService traceService = mock(AgentRunTraceService.class);
+        AgentRunHandle handle = new AgentRunHandle(15L, "run-15");
+        when(traceService.startWechatRun("user-1", "OpenClaw RAG 流程是什么", "No previous context"))
+                .thenReturn(handle);
         FakeSuccessfulWebSearchTool webSearch = new FakeSuccessfulWebSearchTool();
         FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
                 client,
                 new WechatToolRegistry(List.of(webSearch)),
-                5);
+                5,
+                traceService);
         when(client.chat(anyList(), anyList()))
                 .thenReturn(Optional.of(new FunctionCallingModelResponse(
                         "",
@@ -846,6 +1044,15 @@ class FunctionCallingAgentLoopTests {
                     assertThat(message.toolCallId()).isEqualTo("call_search_1");
                     assertThat(message.content()).contains("知识库", "web_search");
                 });
+        verify(traceService).recordPolicyDecision(
+                handle,
+                1,
+                "web_search",
+                AgentRunStepStatus.SKIPPED,
+                "SKIP_WEB_SEARCH_RAG_EVIDENCE",
+                "{query=OpenClaw RAG 流程}",
+                "知识库 RAG 已提供相关证据，跳过 web_search",
+                Map.of("reason", "RAG_HAS_EVIDENCE"));
     }
 
     @Test

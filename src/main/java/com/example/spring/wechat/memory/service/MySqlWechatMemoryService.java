@@ -547,6 +547,7 @@ public class MySqlWechatMemoryService implements WechatMemoryService {
                     newCoveredMessageId,
                     Timestamp.from(now));
             maintainMemoryGraphWindow(conversationId, summary.strip());
+            ingestLongTermMemories(conversationId, transcript(messages));
             return true;
         } catch (RuntimeException exception) {
             log.warn("微信会话摘要生成失败，conversationId={}, error={}",
@@ -637,6 +638,22 @@ public class MySqlWechatMemoryService implements WechatMemoryService {
         return prompt.toString();
     }
 
+    private String transcript(List<MessageRow> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return "";
+        }
+        StringBuilder transcript = new StringBuilder();
+        for (MessageRow message : messages) {
+            if (message == null || message.content() == null || message.content().isBlank()) {
+                continue;
+            }
+            transcript.append("USER".equals(message.role()) ? "用户：" : "助手：")
+                    .append(message.content().strip())
+                    .append('\n');
+        }
+        return transcript.toString().strip();
+    }
+
     private void maintainMemoryGraphWindow(long conversationId, String summary) {
         if (memoryGraphMaintenanceService == null || summary == null || summary.isBlank()) {
             return;
@@ -650,6 +667,22 @@ public class MySqlWechatMemoryService implements WechatMemoryService {
                             summary));
         } catch (RuntimeException exception) {
             log.warn("Memory Graph 会话窗口维护失败，conversationId={}, error={}",
+                    conversationId, rootMessage(exception));
+        }
+    }
+
+    private void ingestLongTermMemories(long conversationId, String transcript) {
+        if (memoryGraphMaintenanceService == null || transcript == null || transcript.isBlank()) {
+            return;
+        }
+        try {
+            conversationOwner(conversationId).ifPresent(owner ->
+                    memoryGraphMaintenanceService.ingestLongTermMemories(
+                            owner.wechatUserId(),
+                            conversationId,
+                            transcript));
+        } catch (RuntimeException exception) {
+            log.warn("Memory Graph 长期记忆摄入失败，conversationId={}, error={}",
                     conversationId, rootMessage(exception));
         }
     }

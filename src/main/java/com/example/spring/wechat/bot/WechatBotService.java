@@ -1,6 +1,7 @@
 package com.example.spring.wechat.bot;
 
 import com.example.spring.agent.AgentService;
+import com.example.spring.agent.interrupts.AgentInterruptService;
 import com.example.spring.wechat.image.generation.model.ImageGenerationResult;
 import com.example.spring.wechat.adapter.WechatClient;
 import com.example.spring.wechat.adapter.WechatClientFactory;
@@ -71,6 +72,7 @@ public class WechatBotService {
     private final ReminderRecipientBindingService reminderRecipientBindingService;
     private final WechatReplyPresentationService replyPresentationService;
     private final MedicalLoginSessionService medicalLoginSessionService;
+    private final AgentInterruptService interruptService;
     private final ExecutorService receiverExecutor = Executors.newCachedThreadPool(task -> {
         Thread thread = new Thread(task, "wechat-receiver-" + UUID.randomUUID());
         thread.setDaemon(true);
@@ -122,7 +124,8 @@ public class WechatBotService {
             WechatConcurrencyProperties concurrencyProperties,
             ReminderRecipientBindingService reminderRecipientBindingService,
             ObjectProvider<WechatReplyPresentationService> replyPresentationServiceProvider,
-            ObjectProvider<MedicalLoginSessionService> medicalLoginSessionServiceProvider) {
+            ObjectProvider<MedicalLoginSessionService> medicalLoginSessionServiceProvider,
+            ObjectProvider<AgentInterruptService> interruptServiceProvider) {
         this(
                 clientFactory,
                 (sessionKey, message, requestedRole) -> requestedRole == null || requestedRole.isBlank()
@@ -134,7 +137,8 @@ public class WechatBotService {
                 concurrencyProperties,
                 reminderRecipientBindingService,
                 replyPresentationServiceProvider == null ? null : replyPresentationServiceProvider.getIfAvailable(),
-                medicalLoginSessionServiceProvider == null ? null : medicalLoginSessionServiceProvider.getIfAvailable());
+                medicalLoginSessionServiceProvider == null ? null : medicalLoginSessionServiceProvider.getIfAvailable(),
+                interruptServiceProvider == null ? null : interruptServiceProvider.getIfAvailable());
     }
 
     public WechatBotService(
@@ -175,6 +179,7 @@ public class WechatBotService {
                 concurrencyProperties,
                 null,
                 null,
+                null,
                 null);
     }
 
@@ -184,6 +189,14 @@ public class WechatBotService {
             agentService.handleStreaming(message.text() == null ? "" : message.text(), reply::append);
             return WechatReply.text(reply.toString().strip());
         }, null, null, new ClawBotConnectionProperties(), new WechatConcurrencyProperties(), null, null, null);
+    }
+
+    WechatBotService(WechatClientFactory clientFactory, AgentService agentService, AgentInterruptService interruptService) {
+        this(clientFactory, (sessionKey, message, requestedRole) -> {
+            StringBuilder reply = new StringBuilder();
+            agentService.handleStreaming(message.text() == null ? "" : message.text(), reply::append);
+            return WechatReply.text(reply.toString().strip());
+        }, null, null, new ClawBotConnectionProperties(), new WechatConcurrencyProperties(), null, null, null, interruptService);
     }
 
     private WechatBotService(
@@ -196,6 +209,30 @@ public class WechatBotService {
             ReminderRecipientBindingService reminderRecipientBindingService,
             WechatReplyPresentationService replyPresentationService,
             MedicalLoginSessionService medicalLoginSessionService) {
+        this(
+                clientFactory,
+                messageHandler,
+                loginPageSessionService,
+                loginPageUrlService,
+                connectionProperties,
+                concurrencyProperties,
+                reminderRecipientBindingService,
+                replyPresentationService,
+                medicalLoginSessionService,
+                null);
+    }
+
+    private WechatBotService(
+            WechatClientFactory clientFactory,
+            WechatMessageHandler messageHandler,
+            WechatLoginPageSessionService loginPageSessionService,
+            WechatLoginPageUrlService loginPageUrlService,
+            ClawBotConnectionProperties connectionProperties,
+            WechatConcurrencyProperties concurrencyProperties,
+            ReminderRecipientBindingService reminderRecipientBindingService,
+            WechatReplyPresentationService replyPresentationService,
+            MedicalLoginSessionService medicalLoginSessionService,
+            AgentInterruptService interruptService) {
         this.clientFactory = clientFactory;
         this.messageHandler = messageHandler;
         this.loginPageSessionService = loginPageSessionService;
@@ -205,6 +242,7 @@ public class WechatBotService {
         this.reminderRecipientBindingService = reminderRecipientBindingService;
         this.replyPresentationService = replyPresentationService;
         this.medicalLoginSessionService = medicalLoginSessionService;
+        this.interruptService = interruptService;
         this.messageDispatcher = new WechatMessageDispatcher(concurrencyProperties);
         this.modelSlots = new Semaphore(concurrencyProperties.getModelMaxConcurrency(), true);
     }
@@ -449,6 +487,9 @@ public class WechatBotService {
                 hasFiles ? message.files().size() : 0);
         try {
             ConversationKey key = new ConversationKey(runtime.connectionId, message.fromUserId());
+            if (handleInterruptMessage(runtime, key, message, text)) {
+                return;
+            }
             runtime.queuedMessages.incrementAndGet();
             messageDispatcher.submit(key, () -> {
                 runtime.queuedMessages.decrementAndGet();
@@ -464,6 +505,25 @@ public class WechatBotService {
             log.warn("微信消息接收处理失败，connectionId={}, fromUserId={}, error={}",
                     runtime.connectionId, message.fromUserId(), runtime.lastError);
         }
+    }
+
+    private boolean handleInterruptMessage(
+            ClientRuntime runtime,
+            ConversationKey key,
+            WechatIncomingMessage message,
+            String text) {
+        if (interruptService == null || !interruptService.looksLikeInterrupt(text)) {
+            return false;
+        }
+        boolean accepted = interruptService.requestInterrupt(key.sessionKey(), text);
+        if (!accepted) {
+            return false;
+        }
+        sendText(runtime.client, message.fromUserId(), "已收到取消请求，我会停止当前任务的后续步骤。");
+        runtime.lastActivityAt = Instant.now();
+        log.info("Wechat Agent interrupt request accepted, connectionId={}, fromUserId={}",
+                runtime.connectionId, message.fromUserId());
+        return true;
     }
 
     private void bindMedicalIdentity(ClientRuntime runtime, WechatIncomingMessage message) {

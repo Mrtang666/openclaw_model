@@ -52,6 +52,7 @@ document.querySelectorAll("[data-close-dialog]").forEach(button => button.addEve
 
 function setView(view) {
   state.view = view;
+  document.body.dataset.view = view;
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
   document.querySelector("#page-title").textContent = views[view][0];
   document.querySelector("#page-subtitle").textContent = views[view][1];
@@ -146,6 +147,10 @@ async function renderOverview() {
     ["待处理事件", overview.activeIncidentCount, "danger"], ["失败任务", overview.failedJobCount, "warning"],
   ];
   content.innerHTML = `
+    <section class="overview-hero">
+      <div><span class="overview-kicker">今日舆情态势</span><h2>从声量中识别<br><em>真正的风险信号</em></h2><p>当前范围已采集 ${overview.postCount} 篇帖子，其中 ${overview.negativeCount} 篇为负面内容，${overview.activeIncidentCount} 个风险事件仍待处理。</p></div>
+      <aside><span>分析覆盖率</span><strong>${overview.postCount ? Math.round(overview.analyzedCount / overview.postCount * 1000) / 10 : 0}<small>%</small></strong><p>${overview.failedJobCount ? `${overview.failedJobCount} 个采集任务需要检查` : "采集与分析队列运行正常"}</p></aside>
+    </section>
     <div class="metrics">${metrics.map(([label, value, cls]) => `<div class="metric ${cls}"><span>${label}</span><strong>${value}</strong></div>`).join("")}</div>
     <div class="grid-two">
       <section class="panel"><div class="panel-header"><h2>最近采集任务</h2><button class="button text" data-go="jobs">查看全部</button></div>

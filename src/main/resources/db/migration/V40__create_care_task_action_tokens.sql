@@ -1,3 +1,4 @@
+-- Create signed task action tokens after the historical baseline migrations.
 CREATE TABLE medical_care_task_action_tokens (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     task_instance_id BIGINT NOT NULL,

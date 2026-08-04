@@ -1,3 +1,4 @@
+-- Add lifecycle fields after the historical baseline migrations.
 ALTER TABLE medical_care_task_instances
     ADD COLUMN completion_mode VARCHAR(32) NULL AFTER overdue_notified_at,
     ADD COLUMN reported_at DATETIME(3) NULL AFTER completion_mode,

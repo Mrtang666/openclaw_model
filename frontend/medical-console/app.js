@@ -354,9 +354,12 @@ async function hydratePatientStatus(patient, kind) {
     const tasks = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/tasks`).catch(() => []);
     const alerts = await careApi(`${apiPrefix(kind)}/patients/${patient.id}/alerts`).catch(() => []);
     const checkinRange = recentSevenDayRange();
-    const checkins = await careApi(
-        `${apiPrefix(kind)}/patients/${patient.id}/checkins?from=${checkinRange.from}&to=${checkinRange.to}`
-    ).catch(() => []);
+    const [checkins, recentTasks] = await Promise.all([
+        careApi(`${apiPrefix(kind)}/patients/${patient.id}/checkins?from=${checkinRange.from}&to=${checkinRange.to}`)
+            .catch(() => []),
+        careApi(`${apiPrefix(kind)}/patients/${patient.id}/tasks?from=${checkinRange.from}&to=${checkinRange.to}`)
+            .catch(() => [])
+    ]);
     patient.tasks = (tasks || []).filter((task) => String(task.status || "").toUpperCase() !== "CANCELLED").map((task) => ({
         id: task.id,
         version: task.version ?? 0,
@@ -378,13 +381,46 @@ async function hydratePatientStatus(patient, kind) {
         detail: alert.evidenceText || alert.status || "请查看告警详情"
     }));
     synchronizePatientTaskSummary(patient, status);
-    patient.checkins = (checkins || []).map((item) => ({
+    const dailyCheckinRecords = (checkins || []).map((item) => ({
         date: item.checkinDate || localDate(item.submittedAt),
         time: item.submittedAt ? new Date(item.submittedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--",
         title: item.incidentType || "每日打卡",
-        detail: item.originalText || `睡眠：${item.sleepStatus || "-"}，饮水：${item.hydrationStatus || "-"}`
+        detail: item.originalText || `睡眠：${item.sleepStatus || "-"}，饮水：${item.hydrationStatus || "-"}`,
+        occurredAt: item.submittedAt || ""
     }));
+    patient.checkins = [...dailyCheckinRecords, ...taskCheckinRecords(recentTasks)]
+        .sort((left, right) => String(right.occurredAt || "").localeCompare(String(left.occurredAt || "")));
     return patient;
+}
+
+function taskCheckinRecords(tasks) {
+    return (tasks || []).flatMap((task) => {
+        const status = String(task.status || "").toUpperCase();
+        const completionMode = String(task.completionMode || "").toUpperCase();
+        const occurredAt = task.completedAt || task.reportedAt || "";
+        if (status !== "COMPLETED" && !(status === "OVERDUE" && completionMode === "REPORTED_INCOMPLETE")) {
+            return [];
+        }
+        return [{
+            date: localDate(occurredAt) || task.scheduledFor || "",
+            time: occurredAt
+                ? new Date(occurredAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                : "--:--",
+            title: normalizePlanText(task.title || `任务 ${task.id}`) || `任务 ${task.id}`,
+            detail: taskCheckinDetail(completionMode, task.resultNote),
+            occurredAt
+        }];
+    });
+}
+
+function taskCheckinDetail(completionMode, note) {
+    const prefix = {
+        ON_TIME: "任务打卡：已完成",
+        BACKFILL: "任务补卡：已完成",
+        CLINICAL_CORRECTION: "医护更正：已完成",
+        REPORTED_INCOMPLETE: "患者反馈：未完成"
+    }[completionMode] || "任务状态已更新";
+    return note ? `${prefix}。${note}` : prefix;
 }
 
 function synchronizePatientTaskSummary(patient, status) {

@@ -17,7 +17,7 @@
 ## 非目标
 
 1. 本阶段不做 REST Controller 或前端页面，避免一个 commit 同时混入 API 设计、权限和 UI 决策。
-2. 本阶段不新增数据库 migration，直接复用 `V35__create_agent_trace_tables.sql` 中已有索引。
+2. 本阶段不新增数据库 migration，直接复用 `V45__create_agent_trace_tables.sql` 中已有索引。
 3. 本阶段不做复杂筛选 DSL，只覆盖企业化排障最需要的两个查询入口。
 
 ## 设计方案

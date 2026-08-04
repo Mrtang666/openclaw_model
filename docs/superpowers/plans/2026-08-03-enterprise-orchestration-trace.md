@@ -13,7 +13,7 @@
 ### Task 1: Trace schema and repository
 
 **Files:**
-- Create: `src/main/resources/db/migration/V35__create_agent_trace_tables.sql`
+- Create: `src/main/resources/db/migration/V45__create_agent_trace_tables.sql`
 - Create: `src/main/java/com/example/spring/agent/trace/AgentRunStatus.java`
 - Create: `src/main/java/com/example/spring/agent/trace/AgentRunStepType.java`
 - Create: `src/main/java/com/example/spring/agent/trace/AgentRunStepStatus.java`

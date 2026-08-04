@@ -12,7 +12,7 @@
 
 ## File Structure
 
-- Create `src/main/resources/db/migration/V36__create_agent_trace_access_audit.sql`: audit table.
+- Create `src/main/resources/db/migration/V46__create_agent_trace_access_audit.sql`: audit table.
 - Create `src/main/java/com/example/spring/agent/trace/AgentTraceAccessDecision.java`: access decision DTO.
 - Create `src/main/java/com/example/spring/agent/trace/AgentTraceAccessPolicy.java`: optional API key policy.
 - Create `src/main/java/com/example/spring/agent/trace/AgentTraceAccessAuditEvent.java`: audit event DTO.
@@ -65,7 +65,7 @@ Expected: tests pass.
 ## Task 2: Audit Repository and Service
 
 **Files:**
-- Create: `src/main/resources/db/migration/V36__create_agent_trace_access_audit.sql`
+- Create: `src/main/resources/db/migration/V46__create_agent_trace_access_audit.sql`
 - Create: `src/test/java/com/example/spring/agent/trace/JdbcAgentTraceAccessAuditRepositoryTests.java`
 - Create: `src/test/java/com/example/spring/agent/trace/AgentTraceAccessAuditServiceTests.java`
 - Create: `src/main/java/com/example/spring/agent/trace/AgentTraceAccessAuditEvent.java`
@@ -159,6 +159,6 @@ Expected: only trace access/audit and documentation files changed.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/superpowers/specs/2026-08-03-enterprise-trace-access-audit-design.md docs/superpowers/plans/2026-08-03-enterprise-trace-access-audit.md src/main/resources/db/migration/V36__create_agent_trace_access_audit.sql src/main/java/com/example/spring/agent/trace src/test/java/com/example/spring/agent/trace
+git add docs/superpowers/specs/2026-08-03-enterprise-trace-access-audit-design.md docs/superpowers/plans/2026-08-03-enterprise-trace-access-audit.md src/main/resources/db/migration/V46__create_agent_trace_access_audit.sql src/main/java/com/example/spring/agent/trace src/test/java/com/example/spring/agent/trace
 git commit -m "feat(orchestration): audit trace access"
 ```

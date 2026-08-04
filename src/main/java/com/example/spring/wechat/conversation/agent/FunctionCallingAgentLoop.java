@@ -10,6 +10,7 @@ import com.example.spring.agent.trace.AgentRunHandle;
 import com.example.spring.agent.trace.AgentRunStatus;
 import com.example.spring.agent.trace.AgentRunStepStatus;
 import com.example.spring.agent.trace.AgentRunTraceService;
+import com.example.spring.agent.interrupts.AgentInterruptService;
 import com.example.spring.skill.SkillDefinition;
 import com.example.spring.skill.SkillManager;
 import com.example.spring.wechat.bot.WechatReply;
@@ -84,6 +85,8 @@ public class FunctionCallingAgentLoop {
     private final AgentStopPolicy agentStopPolicy;
     private final ToolCapabilityPolicy toolCapabilityPolicy;
     private final ToolExecutionPolicy toolExecutionPolicy;
+    private final ToolSelectionService toolSelectionService;
+    private final AgentInterruptService interruptService;
     private final int maxLoopRounds;
     private final Clock clock;
     private final ZoneId defaultZoneId;
@@ -98,6 +101,8 @@ public class FunctionCallingAgentLoop {
             ObjectProvider<AgentStopPolicy> agentStopPolicyProvider,
             ObjectProvider<ToolCapabilityPolicy> toolCapabilityPolicyProvider,
             ObjectProvider<ToolExecutionPolicy> toolExecutionPolicyProvider,
+            ObjectProvider<ToolSelectionService> toolSelectionServiceProvider,
+            ObjectProvider<AgentInterruptService> interruptServiceProvider,
             @Value("${agent.tool-calling.max-loop-rounds:5}") int maxLoopRounds,
             Clock clock,
             @Value("${reminder.default-timezone:Asia/Shanghai}") String defaultTimezone) {
@@ -107,6 +112,8 @@ public class FunctionCallingAgentLoop {
                 agentStopPolicyProvider == null ? null : agentStopPolicyProvider.getIfAvailable(),
                 toolCapabilityPolicyProvider == null ? null : toolCapabilityPolicyProvider.getIfAvailable(),
                 toolExecutionPolicyProvider == null ? null : toolExecutionPolicyProvider.getIfAvailable(),
+                toolSelectionServiceProvider == null ? null : toolSelectionServiceProvider.getIfAvailable(),
+                interruptServiceProvider == null ? null : interruptServiceProvider.getIfAvailable(),
                 maxLoopRounds, clock, defaultTimezone);
     }
 
@@ -116,6 +123,7 @@ public class FunctionCallingAgentLoop {
             int maxLoopRounds) {
         this(client, toolRegistry, new ToolCallValidator(), (SkillManager) null,
                 null, new AgentStopPolicy(), new ToolCapabilityPolicy(), new ToolExecutionPolicy(),
+                null, null,
                 maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
     }
 
@@ -126,6 +134,19 @@ public class FunctionCallingAgentLoop {
             AgentRunTraceService traceService) {
         this(client, toolRegistry, new ToolCallValidator(), (SkillManager) null,
                 traceService, new AgentStopPolicy(), new ToolCapabilityPolicy(), new ToolExecutionPolicy(),
+                null, null,
+                maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
+    }
+
+    FunctionCallingAgentLoop(
+            DashScopeFunctionCallingClient client,
+            WechatToolRegistry toolRegistry,
+            int maxLoopRounds,
+            ToolSelectionService toolSelectionService,
+            AgentInterruptService interruptService) {
+        this(client, toolRegistry, new ToolCallValidator(), (SkillManager) null,
+                null, new AgentStopPolicy(), new ToolCapabilityPolicy(), new ToolExecutionPolicy(),
+                toolSelectionService, interruptService,
                 maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
     }
 
@@ -137,6 +158,7 @@ public class FunctionCallingAgentLoop {
             String defaultTimezone) {
         this(client, toolRegistry, new ToolCallValidator(), (SkillManager) null,
                 null, new AgentStopPolicy(), new ToolCapabilityPolicy(), new ToolExecutionPolicy(),
+                null, null,
                 maxLoopRounds, clock, defaultTimezone);
     }
 
@@ -148,6 +170,7 @@ public class FunctionCallingAgentLoop {
             int maxLoopRounds) {
         this(client, toolRegistry, toolCallValidator, skillManager,
                 null, new AgentStopPolicy(), new ToolCapabilityPolicy(), new ToolExecutionPolicy(),
+                null, null,
                 maxLoopRounds, Clock.systemUTC(), "Asia/Shanghai");
     }
 
@@ -160,6 +183,8 @@ public class FunctionCallingAgentLoop {
             AgentStopPolicy agentStopPolicy,
             ToolCapabilityPolicy toolCapabilityPolicy,
             ToolExecutionPolicy toolExecutionPolicy,
+            ToolSelectionService toolSelectionService,
+            AgentInterruptService interruptService,
             int maxLoopRounds,
             Clock clock,
             String defaultTimezone) {
@@ -171,6 +196,8 @@ public class FunctionCallingAgentLoop {
         this.agentStopPolicy = agentStopPolicy == null ? new AgentStopPolicy() : agentStopPolicy;
         this.toolCapabilityPolicy = toolCapabilityPolicy == null ? new ToolCapabilityPolicy() : toolCapabilityPolicy;
         this.toolExecutionPolicy = toolExecutionPolicy == null ? new ToolExecutionPolicy() : toolExecutionPolicy;
+        this.toolSelectionService = toolSelectionService;
+        this.interruptService = interruptService;
         this.maxLoopRounds = Math.max(1, maxLoopRounds);
         this.clock = clock;
         this.defaultZoneId = ZoneId.of(defaultTimezone);
@@ -181,13 +208,19 @@ public class FunctionCallingAgentLoop {
             return Optional.empty();
         }
 
-        List<WechatToolDefinition> toolDefinitions = toolRegistry.definitions();
+        List<WechatToolDefinition> toolDefinitions = selectToolDefinitions(request);
         if (toolDefinitions.isEmpty()) {
             return Optional.empty();
         }
+        boolean interruptRunStarted = false;
+        try {
+        if (interruptService != null) {
+            interruptService.markRunStarted(request.sessionKey());
+            interruptRunStarted = true;
+        }
 
         AgentLoopState state = AgentLoopState.start(
-                buildSystemPrompt(toolDefinitions)
+                buildSystemPrompt(request, toolDefinitions)
                         + runtimeSystemPrompt(clock.instant(), request.conversationMode(), toolNameSet(toolDefinitions)),
                 userPrompt(request),
                 request.historyText());
@@ -196,8 +229,14 @@ public class FunctionCallingAgentLoop {
                 request.sessionKey(), preview(request.userText()));
 
         for (int round = 1; round <= maxLoopRounds; round++) {
+            if (isInterrupted(request.sessionKey())) {
+                return interruptedReply(state, traceHandle, request.sessionKey(), round);
+            }
             log.debug("Function Calling Agent Loop 第{}轮请求模型，userId={}", round, request.sessionKey());
             Optional<FunctionCallingModelResponse> response = client.chat(state.messages(), toolDefinitions);
+            if (isInterrupted(request.sessionKey())) {
+                return interruptedReply(state, traceHandle, request.sessionKey(), round);
+            }
             if (response.isEmpty()) {
                 log.warn("Function Calling Agent Loop 第{}轮模型无响应，userId={}", round, request.sessionKey());
                 return terminalReply(state, AgentLoopStopReason.MODEL_EMPTY, traceHandle);
@@ -219,6 +258,9 @@ public class FunctionCallingAgentLoop {
                     modelResponse.toolCalls().size());
             state.messages().add(FunctionCallingMessage.assistantToolCalls(modelResponse.toolCalls()));
             for (FunctionCallingToolCall toolCall : modelResponse.toolCalls()) {
+                if (isInterrupted(request.sessionKey())) {
+                    return interruptedReply(state, traceHandle, request.sessionKey(), round);
+                }
                 ToolCallValidationResult validation = toolCallValidator.validate(toolCall, toolDefinitions);
                 if (!validation.valid()) {
                     AgentToolExecutionResult validationFailure = invalidToolCallResult(request, toolCall, validation);
@@ -362,6 +404,11 @@ public class FunctionCallingAgentLoop {
         }
 
         return terminalReply(state, AgentLoopStopReason.MAX_ROUNDS, traceHandle);
+        } finally {
+            if (interruptRunStarted && interruptService != null) {
+                interruptService.markRunFinished(request.sessionKey());
+            }
+        }
     }
 
     private Optional<WechatReply> terminalReply(AgentLoopState state, AgentLoopStopReason reason) {
@@ -768,8 +815,40 @@ public class FunctionCallingAgentLoop {
         return prompt.toString();
     }
 
-    private String buildSystemPrompt(List<WechatToolDefinition> toolDefinitions) {
-        Set<String> availableToolNames = toolNameSet(toolDefinitions);
+    private List<WechatToolDefinition> selectToolDefinitions(FunctionCallingAgentRequest request) {
+        List<WechatToolDefinition> definitions = toolRegistry.definitions();
+        if (toolSelectionService == null) {
+            return definitions;
+        }
+        return toolSelectionService.select(request, definitions);
+    }
+
+    private boolean isInterrupted(String sessionKey) {
+        return interruptService != null && interruptService.isInterrupted(sessionKey);
+    }
+
+    private Optional<WechatReply> interruptedReply(
+            AgentLoopState state,
+            AgentRunHandle traceHandle,
+            String sessionKey,
+            int round) {
+        if (state != null) {
+            state.stop(AgentLoopStopReason.INTERRUPTED);
+        }
+        recordPolicyDecisionTrace(
+                traceHandle,
+                round,
+                "",
+                AgentRunStepStatus.SKIPPED,
+                "AGENT_INTERRUPTED",
+                sessionKey == null ? "" : sessionKey,
+                "用户请求取消，Agent 已停止后续步骤",
+                Map.of("session_key", sessionKey == null ? "" : sessionKey));
+        completeTrace(traceHandle, AgentRunStatus.STOPPED, AgentLoopStopReason.INTERRUPTED, "用户已取消任务");
+        return Optional.of(WechatReply.text("已取消当前任务，后续步骤不会继续执行。"));
+    }
+
+    private String buildSystemPrompt(FunctionCallingAgentRequest request, List<WechatToolDefinition> toolDefinitions) {
         StringBuilder prompt = new StringBuilder(SYSTEM_PROMPT);
         if (skillManager != null && toolDefinitions != null && !toolDefinitions.isEmpty()) {
             List<String> selectedSkillNames = skillManager.findByToolNames(
@@ -782,7 +861,9 @@ public class FunctionCallingAgentLoop {
                 prompt.append(System.lineSeparator()).append(skillContext);
             }
         }
-        prompt.append(System.lineSeparator()).append(RAG_SYSTEM_RULES);
+        if (request != null && !request.ragContext().isBlank()) {
+            prompt.append(System.lineSeparator()).append(RAG_SYSTEM_RULES);
+        }
         return prompt.toString();
     }
 

@@ -2,6 +2,8 @@ package com.example.spring.tool.protocol.function;
 
 import com.example.spring.wechat.conversation.tools.WechatToolDefinition;
 import com.example.spring.wechat.conversation.tools.WechatToolParameter;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -15,6 +17,18 @@ import java.util.Map;
  */
 @Component
 public class FunctionCallingToolSchemaConverter {
+
+    private final boolean compactMode;
+
+    public FunctionCallingToolSchemaConverter() {
+        this(false);
+    }
+
+    @Autowired
+    public FunctionCallingToolSchemaConverter(
+            @Value("${agent.tool-calling.compact-schema-enabled:false}") boolean compactMode) {
+        this.compactMode = compactMode;
+    }
 
     public List<Map<String, Object>> convert(List<WechatToolDefinition> definitions) {
         if (definitions == null || definitions.isEmpty()) {
@@ -45,6 +59,9 @@ public class FunctionCallingToolSchemaConverter {
 
     private String descriptionWithCapability(WechatToolDefinition definition) {
         String description = definition.description();
+        if (compactMode) {
+            return description;
+        }
         String capability = definition.capability().toPromptText();
         if (capability.isBlank()) {
             return description;
@@ -84,13 +101,13 @@ public class FunctionCallingToolSchemaConverter {
         if ("array".equalsIgnoreCase(parameter.type())) {
             schema.put("items", Map.of("type", "string"));
         }
-        if (!parameter.description().isBlank()) {
+        if (!compactMode && !parameter.description().isBlank()) {
             schema.put("description", parameter.description());
         }
         if (!parameter.allowedValues().isEmpty()) {
             schema.put("enum", parameter.allowedValues());
         }
-        if (!parameter.example().isBlank()) {
+        if (!compactMode && !parameter.example().isBlank()) {
             schema.put("example", parameter.example());
         }
         return schema;

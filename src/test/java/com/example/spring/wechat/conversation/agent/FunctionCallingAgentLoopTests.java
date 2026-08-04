@@ -9,6 +9,7 @@ import com.example.spring.agent.trace.AgentRunHandle;
 import com.example.spring.agent.trace.AgentRunStatus;
 import com.example.spring.agent.trace.AgentRunStepStatus;
 import com.example.spring.agent.trace.AgentRunTraceService;
+import com.example.spring.agent.interrupts.AgentInterruptService;
 import com.example.spring.skill.SkillDefinition;
 import com.example.spring.skill.SkillManager;
 import com.example.spring.skill.SkillReference;
@@ -43,6 +44,79 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class FunctionCallingAgentLoopTests {
+
+    @Test
+    void stopsBeforeExecutingToolsWhenInterruptArrivesAfterModelRound() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        AgentInterruptService interruptService = new AgentInterruptService();
+        FakeWeatherTool weather = new FakeWeatherTool();
+        WechatToolRegistry registry = new WechatToolRegistry(List.of(weather));
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client,
+                registry,
+                5,
+                null,
+                interruptService);
+        when(client.chat(anyList(), anyList())).thenAnswer(invocation -> {
+            interruptService.requestInterrupt("user-1", "cancel");
+            return Optional.of(new FunctionCallingModelResponse(
+                    "",
+                    List.of(new FunctionCallingToolCall(
+                            "call_weather_1",
+                            "weather",
+                            Map.of("city", "Hangzhou")))));
+        });
+
+        WechatReply reply = loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "Check Hangzhou weather and send it later",
+                "No previous context",
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                }))
+                .orElseThrow();
+
+        assertThat(reply.text()).contains("取消");
+        assertThat(weather.callCount).isZero();
+        assertThat(interruptService.isInterrupted("user-1")).isFalse();
+    }
+
+    @Test
+    void onlySendsSelectedToolsToModelWhenToolSelectionIsEnabled() {
+        DashScopeFunctionCallingClient client = mock(DashScopeFunctionCallingClient.class);
+        WechatToolRegistry registry = new WechatToolRegistry(List.of(new FakeWeatherTool(), new FakeImageTool()));
+        FunctionCallingAgentLoop loop = new FunctionCallingAgentLoop(
+                client,
+                registry,
+                5,
+                new ToolSelectionService(true, 1),
+                null);
+        when(client.chat(anyList(), anyList())).thenReturn(Optional.of(new FunctionCallingModelResponse("ok", List.of())));
+
+        loop.run(new FunctionCallingAgentRequest(
+                "user-1",
+                "Check Hangzhou weather",
+                "No previous context",
+                List.of(),
+                (userText, prompt) -> {
+                },
+                (userText, prompt) -> {
+                },
+                (toolName, arguments, resultSummary, status) -> {
+                }))
+                .orElseThrow();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<com.example.spring.wechat.conversation.tools.WechatToolDefinition>> toolsCaptor =
+                ArgumentCaptor.forClass(List.class);
+        verify(client).chat(anyList(), toolsCaptor.capture());
+        assertThat(toolsCaptor.getValue()).extracting(com.example.spring.wechat.conversation.tools.WechatToolDefinition::name)
+                .containsExactly("weather");
+    }
 
     @Test
     void tracesFinalAnswerRun() {

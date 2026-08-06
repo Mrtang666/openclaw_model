@@ -1,6 +1,7 @@
 package com.example.spring.wechat.conversation.tools;
 
 import com.example.spring.chat.ChatService;
+import com.example.spring.wechat.bot.WechatBotService;
 import com.example.spring.wechat.bot.WechatReply;
 import com.example.spring.wechat.care.exception.CareException;
 import com.example.spring.wechat.care.model.CareActor;
@@ -46,6 +47,7 @@ public class CareAgentWechatTool implements WechatTool {
     private final ChatService chatService;
     private final Clock clock;
     private final Map<String, String> pendingDraftIdsBySession = new ConcurrentHashMap<>();
+    private volatile ObjectProvider<WechatBotService> wechatBotServiceProvider;
 
     public CareAgentWechatTool(
             MedicalIdentityRepository identityRepository,
@@ -68,6 +70,11 @@ public class CareAgentWechatTool implements WechatTool {
         this.notificationSenderProvider = notificationSenderProvider;
         this.chatService = chatService;
         this.clock = clock;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void configureWechatBotService(ObjectProvider<WechatBotService> wechatBotServiceProvider) {
+        this.wechatBotServiceProvider = wechatBotServiceProvider;
     }
 
     @Override
@@ -169,6 +176,11 @@ public class CareAgentWechatTool implements WechatTool {
             return "昵称修改失败，请稍后重试。";
         }
         MedicalUser user = updated.get();
+        ObjectProvider<WechatBotService> provider = wechatBotServiceProvider;
+        WechatBotService wechatBotService = provider == null ? null : provider.getIfAvailable();
+        if (wechatBotService != null) {
+            wechatBotService.updateMedicalDisplayName(request.sessionKey(), actor.role(), user.displayName());
+        }
         return """
                 昵称已更新为：%s
                 当前医疗身份：%s
@@ -342,6 +354,8 @@ public class CareAgentWechatTool implements WechatTool {
         }
         try {
             return chatService.reply("""
+                    Preserve the doctor's original action and direction exactly. Do not turn fluid restriction into hydration,
+                    infer a task from a keyword, or add an execution task that was not explicitly requested.
                     请把医生输入的照护方案整理成专业、清晰、可审核的草稿。
                     不要新增药物剂量、诊断或医疗承诺；缺少信息时标注“待医生确认”。
                     输出包含：目标、执行任务、提醒频率、患者确认方式、风险提示。

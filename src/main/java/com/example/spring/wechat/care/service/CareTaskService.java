@@ -76,7 +76,8 @@ public class CareTaskService {
         CareTaskInstance task = find(taskId);
         authorizationService.require(actor, task.patientUserId(), CarePermissions.PATIENT_TASK_BACKFILL,
                 "BACKFILL_CARE_TASK", "CARE_TASK", Long.toString(taskId), command.requestId());
-        if (task.status() != com.example.spring.wechat.care.model.CareTaskStatus.OVERDUE) {
+        if (task.status() != com.example.spring.wechat.care.model.CareTaskStatus.OVERDUE
+                && task.status() != com.example.spring.wechat.care.model.CareTaskStatus.MISSED) {
             throw new CareException(CareErrorCode.CONFLICT, "当前任务不在补卡窗口内");
         }
         if (!repository.completeByBackfill(

@@ -73,7 +73,7 @@ def collect(
     _quiet_third_party_logging()
 
     try:
-        api = _bootstrap_api(cookies)
+        api = _bootstrap_with_retry(cookies)
     except Exception as exception:
         message = redact(exception)
         if _is_auth_expired(message):
@@ -196,6 +196,32 @@ def _bootstrap_api(cookies: str) -> Any:
 
     auth = XHSPcAuth.from_cookie(cookies)
     return XHS_Apis(auth).bootstrap()
+
+
+def _bootstrap_with_retry(cookies: str) -> Any:
+    """Retry transient bootstrap failures such as DNS/connect timeouts."""
+    attempts = _bounded_int_env("XHS_BOOTSTRAP_MAX_ATTEMPTS", 3, 1, 5)
+    delay_seconds = _bounded_int_env("XHS_BOOTSTRAP_RETRY_DELAY_SECONDS", 1, 0, 10)
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return _bootstrap_api(cookies)
+        except Exception as exception:
+            last_error = exception
+            message = redact(exception, 500)
+            if _is_auth_expired(message) or attempt + 1 >= attempts:
+                raise
+            if delay_seconds:
+                time.sleep(delay_seconds)
+    raise RuntimeError("bootstrap failed") from last_error
+
+
+def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return max(minimum, min(value, maximum))
 
 
 def _is_auth_expired(message: str) -> bool:

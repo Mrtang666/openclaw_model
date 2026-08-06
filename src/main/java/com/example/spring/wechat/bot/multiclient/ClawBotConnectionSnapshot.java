@@ -15,5 +15,22 @@ public record ClawBotConnectionSnapshot(
         Instant lastActivityAt,
         int queuedMessages,
         int activeMessages,
-        String lastError) {
+        String lastError,
+        String requestedRole) {
+
+    public ClawBotConnectionSnapshot(
+            String connectionId,
+            String displayName,
+            WechatBotState state,
+            ClawBotProcessingState processingState,
+            String botId,
+            String loginSessionId,
+            Instant createdAt,
+            Instant lastActivityAt,
+            int queuedMessages,
+            int activeMessages,
+            String lastError) {
+        this(connectionId, displayName, state, processingState, botId, loginSessionId,
+                createdAt, lastActivityAt, queuedMessages, activeMessages, lastError, "");
+    }
 }

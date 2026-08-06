@@ -55,6 +55,27 @@ class SpiderWorkerAuthenticationTests(unittest.TestCase):
         self.assertEqual(result["errorCode"], "BOOTSTRAP_FAILED")
         self.assertIn("response format changed", result["errorMessage"])
 
+    def test_retries_transient_bootstrap_failure(self) -> None:
+        api = _FakeApi()
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "XHS_COOKIES": "test-cookie",
+                    "XHS_BOOTSTRAP_MAX_ATTEMPTS": "2",
+                    "XHS_BOOTSTRAP_RETRY_DELAY_SECONDS": "0",
+                },
+                clear=True,
+            ),
+            patch(
+                "xhs_sidecar.spider_worker._bootstrap_api",
+                side_effect=[RuntimeError("curl: (28) Resolving timed out"), api],
+            ),
+        ):
+            result = self._collect()
+
+        self.assertEqual(result["status"], "SUCCEEDED")
+
 
 class SpiderWorkerCollectionReliabilityTests(unittest.TestCase):
     def setUp(self) -> None:

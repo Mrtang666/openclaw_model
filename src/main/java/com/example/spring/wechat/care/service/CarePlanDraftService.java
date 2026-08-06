@@ -466,7 +466,7 @@ public class CarePlanDraftService {
 
     private List<CarePlanService.TaskCommand> taskCommands(String text) {
         List<CarePlanService.TaskCommand> tasks = new ArrayList<>();
-        String source = clean(text);
+        String source = removeConfirmationOnlyCheckin(clean(text));
         List<CarePlanTimeParser.TimedTask> timedTasks = timeParser.extractTimedTasks(source);
         if (!timedTasks.isEmpty()) {
             for (CarePlanTimeParser.TimedTask task : timedTasks) {
@@ -642,6 +642,17 @@ public class CarePlanDraftService {
         return "DAILY_CHECKIN";
     }
 
+    private String removeConfirmationOnlyCheckin(String source) {
+        if (containsAny(source,
+                "\u5b89\u5168\u786e\u8ba4",
+                "\u786e\u8ba4\u5b89\u5168",
+                "\u5b89\u5168\u6253\u5361",
+                "\u62a5\u5e73\u5b89")) {
+            return source;
+        }
+        return source.replace("\u6253\u5361", "");
+    }
+
     private String relevantText(String source, String... anchors) {
         String cleanSource = clean(source);
         String[] clauses = cleanSource.split("[\\r\\n。；;]");
@@ -651,7 +662,24 @@ public class CarePlanDraftService {
                 matches.add(clean(clause));
             }
         }
-        return matches.isEmpty() ? cleanSource : String.join("\n", matches);
+        if (matches.isEmpty()) {
+            return cleanSource;
+        }
+        String scoped = String.join("\n", matches);
+        if (timeParser.extractTimePoints(scoped).isEmpty()) {
+            List<String> timedClauses = new ArrayList<>();
+            for (String clause : clauses) {
+                String candidate = clean(clause);
+                if (!candidate.isBlank() && !timedClauses.contains(candidate)
+                        && !timeParser.extractTimePoints(candidate).isEmpty()) {
+                    timedClauses.add(candidate);
+                }
+            }
+            if (timedClauses.size() == 1) {
+                scoped = scoped + "\n" + timedClauses.get(0);
+            }
+        }
+        return scoped;
     }
 
     private String frequencyText(String text, String... anchors) {

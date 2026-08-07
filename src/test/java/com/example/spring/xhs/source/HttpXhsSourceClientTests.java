@@ -58,6 +58,9 @@ class HttpXhsSourceClientTests {
                 .andExpect(header("X-Collector-Api-Key", "secret"))
                 .andExpect(jsonPath("$.query").value("品牌 A"))
                 .andExpect(jsonPath("$.limit").value(20))
+                .andExpect(jsonPath("$.sortMode").value("GENERAL"))
+                .andExpect(jsonPath("$.timeRange").value("ANY"))
+                .andExpect(jsonPath("$.noteType").value("ALL"))
                 .andRespond(withSuccess("{\"jobId\":\"external-1\"}", MediaType.APPLICATION_JSON));
 
         XhsCollectorSubmission result = client.submitSearch(

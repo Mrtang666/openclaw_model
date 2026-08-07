@@ -74,6 +74,35 @@ public class DashScopeImageUnderstandingClient implements ImageUnderstandingClie
     }
 
     @Override
+    public Response replyWithUsage(ImageAnalysisRequest request) {
+        validateConfiguration();
+        long started = System.nanoTime();
+        try {
+            JsonNode response = restClient.post()
+                    .uri("/chat/completions")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .headers(headers -> headers.setBearerAuth(apiKey))
+                    .body(requestBody(request, false))
+                    .retrieve()
+                    .body(JsonNode.class);
+            String content = response == null ? "" : response.path("choices").path(0)
+                    .path("message").path("content").asText("").strip();
+            if (content.isBlank()) {
+                throw new ImageUnderstandingException("图片模型未返回有效回复");
+            }
+            JsonNode usage = response.path("usage");
+            return new Response(content, model, usage.path("prompt_tokens").asInt(0),
+                    usage.path("completion_tokens").asInt(0), usage.path("total_tokens").asInt(0),
+                    java.time.Duration.ofNanos(System.nanoTime() - started).toMillis());
+        } catch (ImageUnderstandingException exception) {
+            throw exception;
+        } catch (RestClientException exception) {
+            throw new ImageUnderstandingException("百炼图片接口暂时不可用", exception);
+        }
+    }
+
+    @Override
     public void streamReply(ImageAnalysisRequest request, ReplyEmitter emitter) {
         if (emitter == null) {
             throw new ImageUnderstandingException("缺少流式输出处理器");
@@ -89,7 +118,7 @@ public class DashScopeImageUnderstandingClient implements ImageUnderstandingClie
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.TEXT_EVENT_STREAM)
                     .headers(headers -> headers.setBearerAuth(apiKey))
-                    .body(requestBody(request))
+                    .body(requestBody(request, true))
                     .exchange((request1, response) -> {
                         if (response.getStatusCode().isError()) {
                             throw new ImageUnderstandingException("百炼图片接口返回错误：" + responseError(response));
@@ -161,12 +190,12 @@ public class DashScopeImageUnderstandingClient implements ImageUnderstandingClie
         }
     }
 
-    private Map<String, Object> requestBody(ImageAnalysisRequest request) {
+    private Map<String, Object> requestBody(ImageAnalysisRequest request, boolean stream) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", model);
         body.put("messages", messages(request));
         body.put("extra_body", Map.of("enable_thinking", enableThinking));
-        body.put("stream", true);
+        body.put("stream", stream);
         return body;
     }
 

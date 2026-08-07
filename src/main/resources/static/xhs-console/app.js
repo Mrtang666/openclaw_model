@@ -136,8 +136,9 @@ const renderers = {
 };
 
 async function renderOverview() {
-  const [overview, jobs, incidents] = await Promise.all([
+  const [overview, coverage, jobs, incidents] = await Promise.all([
     api(`/overview${query({ projectKey: state.projectKey })}`),
+    api(`/coverage-metrics${query({ projectKey: state.projectKey, days: 7 })}`),
     api(`/jobs${query({ projectKey: state.projectKey, limit: 6 })}`),
     api(`/incidents${query({ projectKey: state.projectKey, limit: 6 })}`),
   ]);
@@ -152,11 +153,19 @@ async function renderOverview() {
       <aside><span>分析覆盖率</span><strong>${overview.postCount ? Math.round(overview.analyzedCount / overview.postCount * 1000) / 10 : 0}<small>%</small></strong><p>${overview.failedJobCount ? `${overview.failedJobCount} 个采集任务需要检查` : "采集与分析队列运行正常"}</p></aside>
     </section>
     <div class="metrics">${metrics.map(([label, value, cls]) => `<div class="metric ${cls}"><span>${label}</span><strong>${value}</strong></div>`).join("")}</div>
+    <section class="panel"><div class="panel-header"><h2>采集与识别覆盖</h2><span class="muted">搜索为近 ${coverage.days} 天，内容完整度为当前存量</span></div><div class="panel-body"><div class="detail-meta">
+      <div><span>搜索执行</span><strong>${coverage.searchExecutions}</strong><small>${coverage.searchStrategies} 种策略</small></div>
+      <div><span>唯一命中帖子</span><strong>${coverage.uniquePostsFound}</strong><small>入库率 ${coverage.importRate}%</small></div>
+      <div><span>异常搜索</span><strong>${coverage.partialSearches + coverage.failedSearches}</strong><small>部分 ${coverage.partialSearches} · 失败 ${coverage.failedSearches}</small></div>
+      <div><span>评论采集覆盖</span><strong>${coverage.commentCoverageRate}%</strong><small>${coverage.collectedComments} / ${coverage.expectedComments}</small></div>
+      <div><span>图片分析完成</span><strong>${coverage.imageAnalysisRate}%</strong><small>待处理 ${coverage.imagesPending} · 失败 ${coverage.imagesFailed}</small></div>
+      <div><span>评论模型复核</span><strong>${coverage.commentsReviewed}</strong><small>待复核 ${coverage.commentsPending} · 负面 ${coverage.negativeComments}</small></div>
+    </div></div></section>
     <div class="grid-two">
       <section class="panel"><div class="panel-header"><h2>最近采集任务</h2><button class="button text" data-go="jobs">查看全部</button></div>
         <div class="table-wrap">${jobs.length ? jobTable(jobs) : empty("暂无采集任务")}</div></section>
       <section class="panel"><div class="panel-header"><h2>高风险事件</h2><button class="button text" data-go="incidents">查看全部</button></div>
-        <div class="panel-body">${incidents.length ? `<div class="summary-list">${incidents.map(incident => `<div class="summary-item"><div><strong>${escapeHtml(incident.title)}</strong><div class="muted">${escapeHtml(incident.riskCategory)} · ${escapeHtml(incident.status)}</div></div><span class="tag ${riskClass(incident.riskLevel)}">${incident.riskScore}</span></div>`).join("")}</div>` : empty("暂无风险事件")}</div></section>
+        <div class="panel-body">${incidents.length ? `<div class="summary-list overview-risk-list">${incidents.map(incident => `<div class="summary-item overview-risk-item"><div class="overview-risk-copy"><strong>${escapeHtml(incident.title)}</strong><div class="muted">${escapeHtml(incident.riskCategory)} · ${escapeHtml(incident.status)}</div></div><span class="tag ${riskClass(incident.riskLevel)}">${incident.riskScore}</span></div>`).join("")}</div>` : empty("暂无风险事件")}</div></section>
     </div>`;
   content.querySelectorAll("[data-go]").forEach(button => button.addEventListener("click", () => setView(button.dataset.go)));
 }
@@ -283,7 +292,58 @@ async function collectProject(projectKey, button) {
 
 async function renderJobs() {
   const jobs = await api(`/jobs${query({ projectKey: state.projectKey, limit: 100 })}`);
-  content.innerHTML = `<section class="panel"><div class="panel-header"><h2>任务历史</h2><span class="muted">运行中的任务会自动刷新</span></div><div class="table-wrap">${jobs.length ? jobTable(jobs) : empty("暂无采集任务")}</div></section>`;
+  const collector = state.projectKey ? `<section class="panel"><div class="panel-header"><h2>高级采集</h2></div><div class="panel-body"><form id="advanced-collection-form" class="toolbar">
+    <label class="grow">搜索关键词<input name="query" required maxlength="200" placeholder="输入品牌、产品或场景词"></label>
+    <label>数量<input name="limit" type="number" min="1" max="100" value="20"></label>
+    <label>每帖评论上限<input name="commentLimit" type="number" min="0" max="1000" value="100"></label>
+    <label>排序<select name="sortMode"><option value="GENERAL">综合</option><option value="LATEST">最新</option><option value="LIKES">点赞最多</option><option value="COMMENTS">评论最多</option><option value="COLLECTS">收藏最多</option></select></label>
+    <label>时间<select name="timeRange"><option value="ANY">不限</option><option value="DAY">一天内</option><option value="WEEK">一周内</option><option value="HALF_YEAR">半年内</option></select></label>
+    <label>类型<select name="noteType"><option value="ALL">不限</option><option value="IMAGE">图文</option><option value="VIDEO">视频</option></select></label>
+    <button class="button primary" type="submit">开始采集</button>
+    <button class="button secondary" type="button" id="coverage-collection">全面采集</button>
+  </form></div></section>` : "";
+  content.innerHTML = collector + `<section class="panel"><div class="panel-header"><h2>任务历史</h2><span class="muted">运行中的任务会自动刷新</span></div><div class="table-wrap">${jobs.length ? jobTable(jobs) : empty("暂无采集任务")}</div></section>`;
+  document.querySelector("#advanced-collection-form")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = event.submitter;
+    button.disabled = true;
+    try {
+      const data = new FormData(event.currentTarget);
+      const result = await api(`/projects/${encodeURIComponent(state.projectKey)}/collections`, {
+        method: "POST",
+        body: JSON.stringify({
+          query: data.get("query"),
+          limit: Number(data.get("limit")),
+          sortMode: data.get("sortMode"),
+          timeRange: data.get("timeRange"),
+          noteType: data.get("noteType"),
+          commentLimit: Number(data.get("commentLimit")),
+        }),
+      });
+      showNotice(`采集任务已提交：${result.jobKey}`, true);
+      await renderJobs();
+    } catch (error) {
+      showNotice(error.message);
+      button.disabled = false;
+    }
+  });
+  document.querySelector("#coverage-collection")?.addEventListener("click", async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const limit = Number(document.querySelector("#advanced-collection-form [name=limit]").value);
+      const result = await api(`/projects/${encodeURIComponent(state.projectKey)}/collection-plans`, {
+        method: "POST",
+        body: JSON.stringify({ limit }),
+      });
+      const suffix = result.errors?.length ? `，${result.errors.length} 个策略未提交` : "";
+      showNotice(`已提交 ${result.submittedCount} 个覆盖采集任务${suffix}`, true);
+      await renderJobs();
+    } catch (error) {
+      showNotice(error.message);
+      button.disabled = false;
+    }
+  });
   if (jobs.some(job => ["PENDING", "SUBMITTED", "RUNNING"].includes(job.status))) {
     clearTimeout(renderJobs.timer);
     renderJobs.timer = setTimeout(() => state.view === "jobs" && renderJobs(), 4000);
@@ -291,20 +351,45 @@ async function renderJobs() {
 }
 
 function jobTable(jobs) {
-  return `<table><thead><tr><th>状态</th><th>项目</th><th>采集关键词</th><th>结果数</th><th>开始时间</th><th>完成时间</th><th>错误</th></tr></thead><tbody>${jobs.map(job => `<tr><td><span class="tag ${jobClass(job.status)}">${jobStatus(job.status)}</span></td><td>${escapeHtml(job.projectName)}</td><td class="title-cell">${escapeHtml(job.query)}</td><td>${job.recordCount}</td><td>${formatDate(job.startedAt)}</td><td>${formatDate(job.finishedAt)}</td><td class="title-cell muted">${escapeHtml(job.errorMessage || job.errorCode || "-")}</td></tr>`).join("")}</tbody></table>`;
+  return `<table><thead><tr><th>状态</th><th>完整度</th><th>项目</th><th>关键词与策略</th><th>采集统计</th><th>开始时间</th><th>完成时间</th><th>错误</th></tr></thead><tbody>${jobs.map(job => `<tr><td><span class="tag ${jobClass(job.status)}">${jobStatus(job.status)}</span></td><td><span class="tag ${completenessClass(job.completenessStatus)}">${completenessStatus(job.completenessStatus)}</span></td><td>${escapeHtml(job.projectName)}</td><td class="title-cell">${escapeHtml(job.query)}<br><span class="muted">${collectionStrategy(job)}</span></td><td class="muted">原始 ${job.rawCount ?? 0} / 入库 ${job.importedCount ?? job.recordCount ?? 0}<br>评论 ${job.commentCount ?? 0} / 跳过 ${job.skippedCount ?? 0}</td><td>${formatDate(job.startedAt)}</td><td>${formatDate(job.finishedAt)}</td><td class="title-cell muted">${escapeHtml(job.errorMessage || job.errorCode || "-")}</td></tr>`).join("")}</tbody></table>`;
+}
+
+function collectionStrategy(job) {
+  const sort = ({ GENERAL: "综合", LATEST: "最新", LIKES: "点赞", COMMENTS: "评论", COLLECTS: "收藏" })[job.sortMode] || job.sortMode;
+  const time = ({ ANY: "不限时间", DAY: "一天内", WEEK: "一周内", HALF_YEAR: "半年内" })[job.timeRange] || job.timeRange;
+  const type = ({ ALL: "全部类型", IMAGE: "图文", VIDEO: "视频" })[job.noteType] || job.noteType;
+  return `${sort} · ${time} · ${type} · 评论上限 ${job.requestedCommentLimit ?? 100}`;
+}
+
+function completenessStatus(status) {
+  return ({ FULL: "完整", PARTIAL: "部分完整", FAILED: "失败", NOT_STARTED: "未开始" })[status] || status || "未开始";
+}
+
+function completenessClass(status) {
+  return status === "FULL" ? "succeeded" : status === "FAILED" ? "failed" : status === "PARTIAL" ? "partial" : "watch";
 }
 
 async function renderOpinions() {
-  content.innerHTML = `<section class="panel"><div class="panel-header"><h2>筛选条件</h2></div><div class="panel-body"><form id="opinion-filter" class="toolbar">
-    <label class="grow">标题或内容关键词<input name="keyword" placeholder="输入关键词"></label>
+  content.innerHTML = `<section class="panel"><div class="panel-header"><h2>筛选条件</h2></div><div class="panel-body"><form id="opinion-filter" class="opinion-filter">
+    <label class="opinion-keyword">标题或内容关键词<input name="keyword" placeholder="输入关键词"></label>
     <label>情感<select name="sentiment"><option value="">全部</option><option value="NEGATIVE">负面</option><option value="NEUTRAL">中性</option><option value="POSITIVE">正面</option></select></label>
     <label>最低风险分<input name="minimumRiskScore" type="number" min="0" max="100" value="0"></label>
-    <button class="button primary" type="submit">查询</button></form></div></section><section id="opinion-results" class="panel"><div class="loading-state">正在加载数据...</div></section>`;
+    <button class="button primary opinion-submit" type="submit">查询</button>
+    <fieldset class="opinion-flags"><legend>反馈类型</legend>
+      <label><input name="commentNegativeOnly" type="checkbox"><span>评论存在负面反馈</span></label>
+      <label><input name="consultationNegativeOnly" type="checkbox"><span>咨询帖含负面评论</span></label>
+      <label><input name="imageNegativeOnly" type="checkbox"><span>图片存在负面反馈</span></label>
+    </fieldset>
+    <div class="opinion-date-controls">
+      <label>发布时间起始<input name="publishedFrom" type="datetime-local"></label>
+      <label>发布时间结束<input name="publishedTo" type="datetime-local"></label>
+      <label>排序字段<select name="sortBy"><option value="publishedAt">发布时间</option><option value="riskScore">风险分</option><option value="analyzedAt">分析时间</option><option value="likedCount">点赞数</option><option value="commentCount">评论数</option></select></label>
+      <label>排序方向<select name="sortDirection"><option value="DESC">降序</option><option value="ASC">升序</option></select></label>
+      <div class="opinion-date-actions"><button class="button secondary" type="button" data-opinion-range="today">今日</button><button class="button secondary" type="button" data-opinion-range="7d">近7天</button><button class="button secondary" type="button" data-opinion-reset="true">重置日期</button></div>
+    </div>
+  </form></div></section><section id="opinion-results" class="panel"><div class="loading-state">正在加载数据...</div></section>`;
   const form = document.querySelector("#opinion-filter");
-  const dateControls = document.createElement("div");
-  dateControls.className = "full option-row opinion-date-controls";
-  dateControls.innerHTML = `<label>发布时间起始<input name="publishedFrom" type="datetime-local"></label><label>发布时间结束<input name="publishedTo" type="datetime-local"></label><label>排序字段<select name="sortBy"><option value="publishedAt">发布时间</option><option value="riskScore">风险分</option><option value="analyzedAt">分析时间</option><option value="likedCount">点赞数</option><option value="commentCount">评论数</option></select></label><label>排序方向<select name="sortDirection"><option value="DESC">降序</option><option value="ASC">升序</option></select></label><button class="button secondary" type="button" data-opinion-range="today">今日</button><button class="button secondary" type="button" data-opinion-range="7d">近7天</button><button class="button secondary" type="button" data-opinion-reset="true">重置日期</button>`;
-  form.appendChild(dateControls);
+  const dateControls = form.querySelector(".opinion-date-controls");
   dateControls.querySelectorAll("[data-opinion-range]").forEach(button => button.addEventListener("click", () => setOpinionRange(form, button.dataset.opinionRange)));
   dateControls.querySelector("[data-opinion-reset]").addEventListener("click", () => {
     form.elements.publishedFrom.value = "";
@@ -341,11 +426,29 @@ async function loadOpinions(data, page = 1) {
   opinionRequestController?.abort();
   opinionRequestController = new AbortController();
   try {
-    const result = await api(`/opinions${query({ projectKey: state.projectKey, keyword: data.get("keyword"), sentiment: data.get("sentiment"), minimumRiskScore: data.get("minimumRiskScore"), publishedFrom: isoDateTime(data.get("publishedFrom")), publishedTo: isoDateTime(data.get("publishedTo")), sortBy: data.get("sortBy") || "publishedAt", sortDirection: data.get("sortDirection") || "DESC", page, pageSize: 50 })}`, { signal: opinionRequestController.signal });
+    const result = await api(`/opinions${query({ projectKey: state.projectKey, keyword: data.get("keyword"), sentiment: data.get("sentiment"), commentNegativeOnly: data.get("commentNegativeOnly") === "on", consultationNegativeOnly: data.get("consultationNegativeOnly") === "on", imageNegativeOnly: data.get("imageNegativeOnly") === "on", minimumRiskScore: data.get("minimumRiskScore"), publishedFrom: isoDateTime(data.get("publishedFrom")), publishedTo: isoDateTime(data.get("publishedTo")), sortBy: data.get("sortBy") || "publishedAt", sortDirection: data.get("sortDirection") || "DESC", page, pageSize: 20 })}`, { signal: opinionRequestController.signal });
     const rows = result.items || [];
-    results.innerHTML = `<div class="panel-header"><h2>分析结果</h2><span class="muted">${rows.length} 条</span></div><div class="table-wrap">${rows.length ? `<table><thead><tr><th>风险</th><th>情感</th><th>帖子标题</th><th>作者</th><th>互动</th><th>发布时间</th><th>原帖</th></tr></thead><tbody>${rows.map(row => `<tr data-post="${row.postId}"><td><span class="tag ${riskClass(row.riskLevel)}">${row.riskScore} · ${riskLabel(row.riskLevel)}</span></td><td><span class="tag ${String(row.sentiment).toLowerCase()}">${sentimentLabel(row.sentiment)}</span></td><td class="title-cell"><button class="button text" data-detail="${row.postId}">${escapeHtml(row.title || "无标题")}</button></td><td>${escapeHtml(row.authorDisplayName)}</td><td>${row.likedCount} 赞 · ${row.commentCount} 评</td><td>${formatDate(row.publishedAt)}</td><td><a class="button text" href="${postOpenUrl(row.postId)}" target="_blank" rel="noopener noreferrer">打开原帖</a></td></tr>`).join("")}</tbody></table>` : empty("没有符合条件的舆情数据")}</div>`;
+    results.innerHTML = `<div class="panel-header"><h2>分析结果</h2><span class="muted">共 ${result.total} 条 · 每页 20 条</span></div><div class="table-wrap">${rows.length ? `<table><thead><tr><th>风险</th><th>情感</th><th>帖子标题</th><th>作者</th><th>互动</th><th>发布时间</th><th>原帖</th></tr></thead><tbody>${rows.map(row => `<tr data-post="${row.postId}"><td><span class="tag ${riskClass(row.riskLevel)}">${row.riskScore} · ${riskLabel(row.riskLevel)}</span></td><td><span class="tag ${String(row.sentiment).toLowerCase()}">${sentimentLabel(row.sentiment)}</span></td><td class="title-cell"><button class="button text" data-detail="${row.postId}">${escapeHtml(row.title || "无标题")}</button></td><td>${escapeHtml(row.authorDisplayName)}</td><td>${row.likedCount} 赞 · ${row.commentCount} 评</td><td>${formatDate(row.publishedAt)}</td><td><a class="button text" href="${postOpenUrl(row.postId)}" target="_blank" rel="noopener noreferrer">打开原帖</a></td></tr>`).join("")}</tbody></table>` : empty("没有符合条件的舆情数据")}</div>`;
     results.insertAdjacentHTML("beforeend", `<div class="pagination"><span class="muted">共 ${result.total} 条 · 第 ${result.page}/${result.totalPages} 页</span><div class="inline-actions"><button class="button secondary" data-opinion-page="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><button class="button secondary" data-opinion-page="${result.page + 1}" ${result.page >= result.totalPages ? "disabled" : ""}>下一页</button></div></div>`);
     results.querySelectorAll("[data-opinion-page]").forEach(button => button.addEventListener("click", () => loadOpinions(data, Number(button.dataset.opinionPage))));
+    rows.forEach(row => {
+      const titleCell = results.querySelector(`[data-post="${row.postId}"] .title-cell`);
+      if (!titleCell) return;
+      if (row.negativeCommentCount) {
+        const badge = document.createElement("span");
+        badge.className = `tag ${row.consultation ? "warning" : "negative"}`;
+        badge.textContent = row.consultation
+          ? `\u54a8\u8be2\u5e16\u8d1f\u8bc4 ${row.negativeCommentCount}`
+          : `\u8d1f\u8bc4 ${row.negativeCommentCount}`;
+        titleCell.prepend(badge);
+      }
+      if (row.negativeImageCount) {
+        const badge = document.createElement("span");
+        badge.className = "tag negative";
+        badge.textContent = `\u8d1f\u9762\u56fe\u7247 ${row.negativeImageCount} \u00b7 ${row.highestImageRiskScore}\u5206`;
+        titleCell.prepend(badge);
+      }
+    });
     results.querySelectorAll("[data-detail]").forEach(button => button.addEventListener("click", () => openPost(button.dataset.detail)));
   } catch (error) {
     if (error.name !== "AbortError") results.innerHTML = empty(error.message);
@@ -379,6 +482,53 @@ async function openPost(postId) {
       </section>
       <h3>已采集评论</h3>${post.comments.length ? post.comments.map(comment => `<article class="comment"><header><span>${escapeHtml(comment.authorDisplayName)}</span><span>${comment.likedCount} 赞 · ${formatDate(comment.publishedAt)}</span></header><p>${escapeHtml(comment.content)}</p></article>`).join("") : `<p class="muted">暂无评论数据</p>`}`;
     document.querySelectorAll("[data-analysis-feedback]").forEach(button => button.addEventListener("click", () => submitPostFeedback(post.postId, button.dataset.analysisFeedback, button)));
+    if (post.images?.length) {
+      const gallery = document.createElement("section");
+      gallery.className = "post-image-section";
+      const heading = document.createElement("h3");
+      heading.textContent = "\u5e16\u5b50\u56fe\u7247";
+      const grid = document.createElement("div");
+      grid.className = "post-image-grid";
+      post.images.forEach((item, index) => {
+        const link = document.createElement("a");
+        link.href = item.imageUrl;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.title = item.summary || (item.analysisStatus === "PENDING" ? "\u5f85\u5206\u6790" : "");
+        if (item.sentiment === "NEGATIVE") link.classList.add("negative-image");
+        const image = document.createElement("img");
+        image.src = item.imageUrl;
+        image.alt = `\u5e16\u5b50\u56fe\u7247 ${index + 1}`;
+        image.loading = "lazy";
+        image.referrerPolicy = "no-referrer";
+        link.appendChild(image);
+        const status = document.createElement("span");
+        status.className = "image-risk-label";
+        status.textContent = item.analysisStatus === "SUCCEEDED"
+          ? (item.sentiment === "NEGATIVE" ? `\u8d1f\u9762 ${item.riskScore}\u5206` : "\u672a\u89c1\u8d1f\u9762")
+          : ({ PENDING: "\u5f85\u5206\u6790", FAILED: "\u5206\u6790\u5931\u8d25" })[item.analysisStatus] || "\u5f85\u5206\u6790";
+        link.appendChild(status);
+        grid.appendChild(link);
+      });
+      gallery.append(heading, grid);
+      document.querySelector("#drawer-content .detail-meta")?.after(gallery);
+    }
+    document.querySelectorAll("#drawer-content .comment").forEach((article, index) => {
+      const comment = post.comments[index];
+      if (!comment?.negative) return;
+      const badge = document.createElement("span");
+      badge.className = "tag negative";
+      badge.textContent = comment.analysisMethod === "LLM"
+        ? `\u6a21\u578b\u590d\u6838\u8d1f\u9762 \u00b7 ${comment.riskScore}\u5206 \u00b7 ${Math.round(comment.confidence * 100)}%`
+        : `\u89c4\u5219\u521d\u7b5b\u8d1f\u9762 \u00b7 ${comment.riskScore}\u5206`;
+      article.querySelector("header span")?.append(" ", badge);
+      if (comment.analysisSummary) {
+        const summary = document.createElement("p");
+        summary.className = "muted comment-analysis-summary";
+        summary.textContent = comment.analysisSummary;
+        article.appendChild(summary);
+      }
+    });
   } catch (error) { document.querySelector("#drawer-content").innerHTML = empty(error.message); }
 }
 
@@ -446,10 +596,10 @@ async function loadReport(date) {
   try {
     const report = await api(`/reports/daily${query({ projectKey: state.projectKey, date })}`);
     target.innerHTML = `<div class="panel-body"><div class="report-hero"><div><h2>${escapeHtml(report.projectName || report.projectKey)} 舆情日报</h2><p class="muted">${escapeHtml(report.projectKey)} · ${escapeHtml(report.reportDate)}</p></div><div><span class="muted">平均风险分</span><strong>${report.averageRiskScore}</strong></div></div>
-      <div class="metrics" style="margin-top:16px"><div class="metric"><span>新增帖子</span><strong>${report.collectedPosts}</strong></div><div class="metric"><span>已分析</span><strong>${report.analyzedPosts}</strong></div><div class="metric warning"><span>负面帖子</span><strong>${report.negativePosts}</strong></div><div class="metric danger"><span>高风险</span><strong>${report.highRiskPosts}</strong></div><div class="metric"><span>新增事件</span><strong>${report.newIncidents}</strong></div><div class="metric"><span>已解决</span><strong>${report.resolvedIncidents}</strong></div></div>
+      <div class="metrics" style="margin-top:16px"><div class="metric"><span>新增帖子</span><strong>${report.collectedPosts}</strong></div><div class="metric"><span>已分析</span><strong>${report.analyzedPosts}</strong></div><div class="metric warning"><span>负面帖子</span><strong>${report.negativePosts}</strong></div><div class="metric warning"><span>含负面评论</span><strong>${report.negativeCommentPosts || 0}</strong></div><div class="metric warning"><span>含负面图片</span><strong>${report.negativeImagePosts || 0}</strong></div><div class="metric danger"><span>高风险</span><strong>${report.highRiskPosts}</strong></div><div class="metric"><span>新增事件</span><strong>${report.newIncidents}</strong></div><div class="metric"><span>已解决</span><strong>${report.resolvedIncidents}</strong></div></div>
       <h3>风险类别</h3>${report.categories.length ? `<div class="term-list">${report.categories.map(category => `<span class="tag">${escapeHtml(category.riskCategory)} · ${category.postCount}</span>`).join("")}</div>` : `<p class="muted">当日暂无风险分类数据</p>`}
       <h3>重点风险事件</h3>${report.topActiveIncidents.length ? `<div class="summary-list">${report.topActiveIncidents.map(item => `<div class="summary-item"><div><strong>${escapeHtml(item.title)}</strong><p class="muted">${escapeHtml(item.riskCategory)} · ${incidentStatus(item.status)} · ${item.postCount} 条帖子</p></div><span class="tag ${riskClass(item.riskLevel)}">${item.riskScore}</span></div>`).join("")}</div>` : `<p class="muted">当前没有未解决的风险事件</p>`}
-      <h3>当日高风险笔记</h3>${report.topRiskPosts.length ? `<div class="table-wrap"><table><thead><tr><th>风险分</th><th>标题</th><th>类别</th><th>摘要</th><th>原帖</th></tr></thead><tbody>${report.topRiskPosts.map(post => `<tr><td>${post.riskScore}</td><td class="title-cell">${escapeHtml(post.title || "无标题")}</td><td>${escapeHtml(post.riskCategory)}</td><td class="title-cell muted">${escapeHtml(post.summary)}</td><td><a class="button text" href="${postOpenUrl(post.postId)}" target="_blank" rel="noopener noreferrer">打开原帖</a></td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">当日暂无已分析笔记</p>`}</div>`;
+      <h3>当日高风险笔记</h3>${report.topRiskPosts.length ? `<div class="table-wrap"><table><thead><tr><th>风险分</th><th>标题</th><th>类别</th><th>风险来源</th><th>摘要</th><th>原帖</th></tr></thead><tbody>${report.topRiskPosts.map(post => `<tr><td>${post.riskScore}</td><td class="title-cell">${escapeHtml(post.title || "无标题")}</td><td>${escapeHtml(post.riskCategory)}</td><td><strong>${escapeHtml(post.riskSource || "正文")}</strong>${post.negativeCommentCount ? `<div class="muted">负面评论 ${post.negativeCommentCount} 条 · 最高 ${post.highestCommentRiskScore} 分</div>` : ""}${post.negativeImageCount ? `<div class="muted">负面图片 ${post.negativeImageCount} 张 · 最高 ${post.highestImageRiskScore} 分</div>` : ""}</td><td class="title-cell muted">${escapeHtml(post.summary)}</td><td><a class="button text" href="${postOpenUrl(post.postId)}" target="_blank" rel="noopener noreferrer">打开原帖</a></td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">当日暂无已分析笔记</p>`}</div>`;
   } catch (error) { target.innerHTML = empty(error.message); }
 }
 
@@ -482,9 +632,10 @@ async function renderScheduledReports() {
     content.innerHTML = empty("请先在顶部选择一个项目");
     return;
   }
-  const [schedules, runs] = await Promise.all([
+  const [schedules, runs, negativeDeliveries] = await Promise.all([
     api(`/report-schedules${query({ projectKey: state.projectKey })}`),
     api(`/report-runs${query({ projectKey: state.projectKey, limit: 30 })}`),
+    api(`/negative-email-deliveries${query({ projectKey: state.projectKey, limit: 50 })}`),
   ]);
   content.innerHTML = `
     <section class="panel">
@@ -518,18 +669,24 @@ async function renderScheduledReports() {
     <section class="panel">
       <div class="panel-header"><h2>运行历史</h2><span class="muted">运行中的任务会自动刷新</span></div>
       <div class="table-wrap">${runs.length ? scheduledRunTable(runs) : empty("暂无报告运行记录")}</div>
+    </section>
+    <section class="panel">
+      <div class="panel-header"><h2>即时负面邮件</h2><span class="muted">最近 ${negativeDeliveries.length} 条发送记录</span></div>
+      <div class="table-wrap">${negativeDeliveries.length ? negativeEmailTable(negativeDeliveries) : empty("暂无即时负面邮件记录")}</div>
     </section>`;
   const scheduledForm = document.querySelector("#scheduled-report-form");
   const negativeSettings = document.createElement("div");
   negativeSettings.className = "full option-row negative-email-settings";
-  negativeSettings.innerHTML = `<label><input name="negativeEmailEnabled" type="checkbox"> 发现负面帖子后立即发送邮件</label><label>最低风险分<input name="negativeEmailMinimumRiskScore" type="number" min="0" max="100" value="60"></label><label><input name="negativeEmailHighRiskOnly" type="checkbox"> 仅高风险帖子</label><label>重复发送冷却（分钟）<input name="negativeEmailCooldownMinutes" type="number" min="1" max="1440" value="30"></label><span class="muted full">使用上方邮箱接收人；邮件包含帖子分析摘要、风险证据和 Word 附件。</span>`;
+  negativeSettings.innerHTML = `<label><input name="negativeEmailEnabled" type="checkbox"> 发现负面帖子后立即发送邮件</label><label>最低风险分<input name="negativeEmailMinimumRiskScore" type="number" min="0" max="100" value="60"></label><label><input name="negativeEmailHighRiskOnly" type="checkbox"> 仅高风险帖子</label><label>重复发送冷却（分钟）<input name="negativeEmailCooldownMinutes" type="number" min="1" max="1440" value="30"></label><span class="muted full">正文、评论或图片任一路确认负面且达到阈值后触发；使用上方邮箱接收人，邮件附带风险来源和 Word 帖子报告。</span>`;
   scheduledForm.querySelector(".form-actions").before(negativeSettings);
   scheduledForm.addEventListener("submit", createScheduledReport);
   content.querySelectorAll("[data-report-run]").forEach(button => button.addEventListener("click", () => runScheduledReport(button)));
   content.querySelectorAll("[data-report-toggle]").forEach(button => button.addEventListener("click", () => toggleScheduledReport(button, schedules)));
   content.querySelectorAll("[data-report-delete]").forEach(button => button.addEventListener("click", () => deleteScheduledReport(button)));
   content.querySelectorAll("[data-delivery-retry]").forEach(button => button.addEventListener("click", () => retryReportDelivery(button)));
-  if (runs.some(run => ["QUEUED", "COLLECTING", "ANALYZING", "GENERATING", "DELIVERING"].includes(run.status))) {
+  content.querySelectorAll("[data-negative-email-retry]").forEach(button => button.addEventListener("click", () => retryNegativeEmail(button)));
+  if (runs.some(run => ["QUEUED", "COLLECTING", "ANALYZING", "GENERATING", "DELIVERING"].includes(run.status))
+      || negativeDeliveries.some(item => ["PENDING", "PROCESSING"].includes(item.status))) {
     setTimeout(() => { if (state.view === "scheduled-reports") renderCurrent(); }, 5000);
   }
 }
@@ -681,8 +838,40 @@ async function renderSystem() {
   ]);
   const fallbackRate = metrics.calls ? Math.round(metrics.fallbackCalls * 100 / metrics.calls) : 0;
   const cacheRate = metrics.calls ? Math.round(metrics.cacheCalls * 100 / metrics.calls) : 0;
+  const imageCacheRate = metrics.imageCalls ? Math.round((metrics.imageCacheCalls || 0) * 100 / metrics.imageCalls) : 0;
   content.innerHTML = `<section class="panel"><div class="panel-header"><h2>服务检查</h2><span class="tag ${health.status === "UP" ? "normal" : "warning"}">${health.status}</span></div><div class="panel-body"><div class="detail-meta"><div><span>管理接口</span><strong>正常</strong></div><div><span>数据库</span><strong>${health.databaseUp ? "正常" : "异常"}</strong></div><div><span>采集配置</span><strong>${health.collectorEnabled ? "已启用" : "未启用"}</strong></div><div><span>采集 Sidecar</span><strong>${health.collectorUp ? "正常" : "异常"}</strong></div><div><span>运行中任务</span><strong>${health.runningJobs}</strong></div><div><span>检查时间</span><strong>${formatDate(health.checkedAt)}</strong></div></div><p class="muted">${escapeHtml(health.collectorMessage)}</p></div></section>
-    <section class="panel"><div class="panel-header"><h2>近 7 天模型消耗</h2><span class="muted">${state.projectKey ? "当前项目" : "全部项目"}</span></div><div class="panel-body"><div class="detail-meta"><div><span>分析执行</span><strong>${metrics.calls}</strong></div><div><span>输入 Token</span><strong>${metrics.promptTokens}</strong></div><div><span>输出 Token</span><strong>${metrics.completionTokens}</strong></div><div><span>总 Token</span><strong>${metrics.totalTokens}</strong></div><div><span>平均耗时</span><strong>${metrics.averageDurationMs} ms</strong></div><div><span>缓存命中率</span><strong>${cacheRate}%</strong></div><div><span>规则降级率</span><strong>${fallbackRate}%</strong></div></div></div></section>`;
+    <section class="panel"><div class="panel-header"><h2>近 7 天正文分析消耗</h2><span class="muted">${state.projectKey ? "当前项目" : "全部项目"}</span></div><div class="panel-body"><div class="detail-meta"><div><span>分析执行</span><strong>${metrics.calls}</strong></div><div><span>输入 Token</span><strong>${metrics.promptTokens}</strong></div><div><span>输出 Token</span><strong>${metrics.completionTokens}</strong></div><div><span>总 Token</span><strong>${metrics.totalTokens}</strong></div><div><span>平均耗时</span><strong>${metrics.averageDurationMs} ms</strong></div><div><span>缓存命中率</span><strong>${cacheRate}%</strong></div><div><span>规则降级率</span><strong>${fallbackRate}%</strong></div></div></div></section>
+    <section class="panel"><div class="panel-header"><h2>近 7 天评论模型复核消耗</h2><span class="muted">全局批次统计</span></div><div class="panel-body"><div class="detail-meta"><div><span>模型批次</span><strong>${metrics.commentCalls || 0}</strong></div><div><span>复核评论</span><strong>${metrics.reviewedComments || 0}</strong></div><div><span>输入 Token</span><strong>${metrics.commentPromptTokens || 0}</strong></div><div><span>输出 Token</span><strong>${metrics.commentCompletionTokens || 0}</strong></div><div><span>总 Token</span><strong>${metrics.commentTotalTokens || 0}</strong></div><div><span>平均耗时</span><strong>${metrics.commentAverageDurationMs || 0} ms</strong></div><div><span>失败批次</span><strong>${metrics.commentFailedCalls || 0}</strong></div></div><p class="muted">评论可跨项目合并为一个批次，因此 Token 按全局批次展示，避免拆分后重复计算。</p></div></section>
+    <section class="panel"><div class="panel-header"><h2>近 7 天图片分析消耗</h2><span class="muted">${state.projectKey ? "当前项目" : "全部项目"}</span></div><div class="panel-body"><div class="detail-meta"><div><span>图片执行</span><strong>${metrics.imageCalls || 0}</strong></div><div><span>输入 Token</span><strong>${metrics.imagePromptTokens || 0}</strong></div><div><span>输出 Token</span><strong>${metrics.imageCompletionTokens || 0}</strong></div><div><span>总 Token</span><strong>${metrics.imageTotalTokens || 0}</strong></div><div><span>平均耗时</span><strong>${metrics.imageAverageDurationMs || 0} ms</strong></div><div><span>缓存命中率</span><strong>${imageCacheRate}%</strong></div><div><span>失败执行</span><strong>${metrics.imageFailedCalls || 0}</strong></div></div></div></section>`;
+}
+
+function negativeEmailTable(deliveries) {
+  return `<table><thead><tr><th>状态</th><th>风险</th><th>帖子</th><th>接收邮箱</th><th>尝试</th><th>创建/发送时间</th><th>说明</th><th>操作</th></tr></thead><tbody>${deliveries.map(item => `<tr>
+    <td><span class="tag ${item.status === "SENT" ? "succeeded" : item.status === "FAILED" ? "failed" : "running"}">${negativeEmailStatus(item.status)}</span></td>
+    <td><strong>${item.riskScore}</strong><div class="muted">${negativeRiskSource(item.riskSource)} · ${escapeHtml(item.riskCategory || "其他")}</div></td>
+    <td class="title-cell"><strong>${escapeHtml(item.title || "无标题")}</strong><div class="muted">#${item.postId}</div></td>
+    <td>${escapeHtml(item.recipientEmail)}</td><td>${item.attemptCount}</td>
+    <td>${formatDate(item.createdAt)}${item.sentAt ? `<div class="muted">发送 ${formatDate(item.sentAt)}</div>` : ""}</td>
+    <td class="title-cell muted">${escapeHtml(item.lastError || "-")}</td>
+    <td><div class="inline-actions"><a class="button text" href="${postOpenUrl(item.postId)}" target="_blank" rel="noopener noreferrer">原帖</a>${item.status === "FAILED" ? `<button class="button secondary" data-negative-email-retry="${item.id}">重试</button>` : ""}</div></td>
+  </tr>`).join("")}</tbody></table>`;
+}
+
+function negativeEmailStatus(status) {
+  return ({ SENT: "已发送", FAILED: "失败", PENDING: "等待发送", PROCESSING: "发送中" })[status] || escapeHtml(status);
+}
+
+function negativeRiskSource(source) {
+  return String(source || "POST").replaceAll("POST", "正文").replaceAll("COMMENT", "评论").replaceAll("IMAGE", "图片").replaceAll("+", " / ");
+}
+
+async function retryNegativeEmail(button) {
+  button.disabled = true;
+  try {
+    await api(`/negative-email-deliveries/${button.dataset.negativeEmailRetry}/retry${query({ projectKey: state.projectKey })}`, { method: "POST", body: "{}" });
+    showNotice("即时负面邮件已重新排队", true);
+    await renderScheduledReports();
+  } catch (error) { showNotice(error.message); } finally { button.disabled = false; }
 }
 
 async function renderAuthorization() {

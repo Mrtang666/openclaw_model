@@ -1,6 +1,7 @@
 package com.example.spring.xhs.repository;
 
 import com.example.spring.xhs.model.XhsCollectionJob;
+import com.example.spring.xhs.model.XhsImportResult;
 import com.example.spring.xhs.model.XhsSourceType;
 import com.example.spring.xhs.source.XhsCollectionStatus;
 
@@ -12,7 +13,28 @@ public interface XhsCollectionJobRepository {
 
     void create(String jobKey, long projectId, XhsSourceType sourceType, String query, Instant now);
 
+    default void create(String jobKey, long projectId, XhsSourceType sourceType, String query,
+                        int requestedLimit, String cursor, Instant now) {
+        create(jobKey, projectId, sourceType, query, now);
+    }
+
+    default void create(String jobKey, long projectId, XhsSourceType sourceType, String query,
+                        int requestedLimit, String cursor, String sortMode,
+                        String timeRange, String noteType, Instant now) {
+        create(jobKey, projectId, sourceType, query, requestedLimit, cursor, now);
+    }
+
+    default void create(String jobKey, long projectId, XhsSourceType sourceType, String query,
+                        int requestedLimit, String cursor, String sortMode,
+                        String timeRange, String noteType, int commentLimit, Instant now) {
+        create(jobKey, projectId, sourceType, query, requestedLimit, cursor,
+                sortMode, timeRange, noteType, now);
+    }
+
     void markSubmitted(String jobKey, String externalJobId);
+
+    default void recordImportStats(String jobKey, XhsImportResult result) {
+    }
 
     List<XhsCollectionJob> findPending(int limit);
 

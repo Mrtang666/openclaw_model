@@ -37,7 +37,7 @@ class XhsCollectionCoordinatorTests {
         XhsOpinionRepository opinions = mock(XhsOpinionRepository.class);
         when(opinions.ensureProject(anyString(), anyString(), any())).thenReturn(9L);
         XhsJsonImportService importer = mock(XhsJsonImportService.class);
-        when(importer.importJson(anyString(), anyString(), any())).thenReturn(
+        when(importer.importJson(anyString(), anyString(), anyString(), anyString(), any())).thenReturn(
                 new XhsImportResult("project-a", XhsSourceType.SPIDER_XHS_LAB, 1, 0, 0));
         XhsCollectionCoordinator coordinator = coordinator(source, opinions, jobs, importer, 5);
 
@@ -69,7 +69,7 @@ class XhsCollectionCoordinatorTests {
         FakeJobRepository jobs = new FakeJobRepository();
         jobs.pending = List.of(job("local-1", 1));
         XhsJsonImportService importer = mock(XhsJsonImportService.class);
-        when(importer.importJson(anyString(), anyString(), any())).thenReturn(
+        when(importer.importJson(anyString(), anyString(), anyString(), anyString(), any())).thenReturn(
                 new XhsImportResult("project-a", XhsSourceType.SPIDER_XHS_LAB, 3, 0, 0));
         source.result = new XhsCollectorJobResult(
                 XhsCollectionStatus.SUCCEEDED, false, "cursor-2", objectMapper.createArrayNode(),

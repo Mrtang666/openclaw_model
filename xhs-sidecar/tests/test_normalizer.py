@@ -21,6 +21,10 @@ class NormalizerTests(unittest.TestCase):
                     "share_count": "1",
                 },
                 "tag_list": [{"name": "护肤"}],
+                "image_list": [
+                    {"url_default": "https://sns-img-qc.xhscdn.com/one.jpg"},
+                    {"info_list": [{"url": "https://sns-img-qc.xhscdn.com/two.jpg"}]},
+                ],
             },
         }
         comments = [
@@ -49,6 +53,13 @@ class NormalizerTests(unittest.TestCase):
         )
         self.assertEqual(len(result["authorId"]), 64)
         self.assertEqual(len(result["comments"][0]["authorId"]), 64)
+        self.assertEqual(
+            result["images"],
+            [
+                {"url": "https://sns-img-qc.xhscdn.com/one.jpg"},
+                {"url": "https://sns-img-qc.xhscdn.com/two.jpg"},
+            ],
+        )
         self.assertNotIn("raw-user", serialized)
         self.assertNotIn("raw-comment-user", serialized)
         self.assertNotIn("raw-name", serialized)

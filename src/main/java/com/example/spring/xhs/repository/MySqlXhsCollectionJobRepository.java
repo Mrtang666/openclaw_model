@@ -1,6 +1,7 @@
 package com.example.spring.xhs.repository;
 
 import com.example.spring.xhs.model.XhsCollectionJob;
+import com.example.spring.xhs.model.XhsImportResult;
 import com.example.spring.xhs.model.XhsSourceType;
 import com.example.spring.xhs.source.XhsCollectionStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -32,6 +33,28 @@ public class MySqlXhsCollectionJobRepository implements XhsCollectionJobReposito
 
     @Override
     public void create(String jobKey, long projectId, XhsSourceType sourceType, String query, Instant now) {
+        create(jobKey, projectId, sourceType, query, 20, "", now);
+    }
+
+    @Override
+    public void create(String jobKey, long projectId, XhsSourceType sourceType, String query,
+                       int requestedLimit, String cursor, Instant now) {
+        create(jobKey, projectId, sourceType, query, requestedLimit, cursor,
+                "GENERAL", "ANY", "ALL", now);
+    }
+
+    @Override
+    public void create(String jobKey, long projectId, XhsSourceType sourceType, String query,
+                       int requestedLimit, String cursor, String sortMode,
+                       String timeRange, String noteType, Instant now) {
+        create(jobKey, projectId, sourceType, query, requestedLimit, cursor,
+                sortMode, timeRange, noteType, 100, now);
+    }
+
+    @Override
+    public void create(String jobKey, long projectId, XhsSourceType sourceType, String query,
+                       int requestedLimit, String cursor, String sortMode,
+                       String timeRange, String noteType, int commentLimit, Instant now) {
         jdbcTemplate.update("""
                         INSERT INTO xhs_collection_jobs(
                             job_key, project_id, source_type, query_text, status, complete,
@@ -39,6 +62,18 @@ public class MySqlXhsCollectionJobRepository implements XhsCollectionJobReposito
                         VALUES (?, ?, ?, ?, 'PENDING', 0, 0, 0, ?)
                         """,
                 jobKey, projectId, sourceType.name(), query, Timestamp.from(now));
+        jdbcTemplate.update("""
+                INSERT INTO xhs_search_executions(
+                    job_key, project_id, keyword_value, keyword_type, query_mode, sort_mode,
+                    time_range, note_type, cursor_start, requested_limit, requested_comment_limit,
+                    status, completeness_status,
+                    started_at, created_at, updated_at)
+                VALUES (?, ?, ?, 'MANUAL', 'STANDARD', ?, ?, ?, ?, ?, ?, 'PENDING',
+                        'NOT_STARTED', ?, ?, ?)
+                """, jobKey, projectId, query, sortMode, timeRange, noteType, nullable(cursor),
+                Math.max(1, Math.min(requestedLimit, 100)),
+                Math.max(0, Math.min(commentLimit, 1000)), Timestamp.from(now),
+                Timestamp.from(now), Timestamp.from(now));
     }
 
     @Override
@@ -49,6 +84,26 @@ public class MySqlXhsCollectionJobRepository implements XhsCollectionJobReposito
                         WHERE job_key = ? AND status = 'PENDING'
                         """,
                 externalJobId, jobKey);
+        jdbcTemplate.update("""
+                UPDATE xhs_search_executions SET status = 'SUBMITTED',
+                    completeness_status = 'NOT_STARTED', updated_at = CURRENT_TIMESTAMP(3)
+                WHERE job_key = ?
+                """, jobKey);
+    }
+
+    @Override
+    public void recordImportStats(String jobKey, XhsImportResult result) {
+        if (result == null) {
+            return;
+        }
+        jdbcTemplate.update("""
+                UPDATE xhs_search_executions
+                SET raw_count = ?, imported_count = ?, comment_count = ?, skipped_count = ?,
+                    completeness_status = CASE WHEN skipped_count > 0 THEN 'PARTIAL' ELSE completeness_status END,
+                    updated_at = CURRENT_TIMESTAMP(3)
+                WHERE job_key = ?
+                """, result.postCount() + result.skippedCount(), result.postCount(),
+                result.commentCount(), result.skippedCount(), jobKey);
     }
 
     @Override
@@ -77,6 +132,7 @@ public class MySqlXhsCollectionJobRepository implements XhsCollectionJobReposito
                         WHERE job_key = ? AND status IN ('SUBMITTED', 'RUNNING')
                         """,
                 status.name(), jobKey);
+        updateSearchRunning(jobKey, status, null);
     }
 
     @Override
@@ -129,6 +185,7 @@ public class MySqlXhsCollectionJobRepository implements XhsCollectionJobReposito
                     last_polled_at = CURRENT_TIMESTAMP(3), next_poll_at = ?
                 WHERE job_key = ? AND status IN ('SUBMITTED', 'RUNNING')
                 """, status.name(), error, error, Timestamp.from(nextPollAt), jobKey);
+        updateSearchRunning(jobKey, status, error);
     }
 
     @Override
@@ -146,6 +203,7 @@ public class MySqlXhsCollectionJobRepository implements XhsCollectionJobReposito
                   AND status IN ('SUBMITTED', 'RUNNING')
                 """, status.name(), error, error, Timestamp.from(nextPollAt),
                 claim.job().jobKey(), claim.token());
+        updateSearchRunning(claim.job().jobKey(), status, error);
     }
 
     @Override
@@ -167,6 +225,7 @@ public class MySqlXhsCollectionJobRepository implements XhsCollectionJobReposito
                         """,
                 status.name(), complete, Math.max(0, recordCount), nullable(nextCursor),
                 nullable(errorCode), nullable(errorMessage), Timestamp.from(finishedAt), jobKey);
+        finishSearch(jobKey, status, complete, nextCursor, errorCode, errorMessage, finishedAt);
     }
 
     @Override
@@ -184,6 +243,28 @@ public class MySqlXhsCollectionJobRepository implements XhsCollectionJobReposito
                 """, status.name(), complete, Math.max(0, recordCount), nullable(nextCursor),
                 nullable(errorCode), nullable(errorMessage), Timestamp.from(finishedAt),
                 claim.job().jobKey(), claim.token());
+        finishSearch(claim.job().jobKey(), status, complete, nextCursor, errorCode, errorMessage, finishedAt);
+    }
+
+    private void updateSearchRunning(String jobKey, XhsCollectionStatus status, String error) {
+        jdbcTemplate.update("""
+                UPDATE xhs_search_executions
+                SET status = ?, completeness_status = 'PARTIAL', error_message = ?,
+                    updated_at = CURRENT_TIMESTAMP(3) WHERE job_key = ?
+                """, status.name(), error, jobKey);
+    }
+
+    private void finishSearch(String jobKey, XhsCollectionStatus status, boolean complete,
+                              String nextCursor, String errorCode, String errorMessage,
+                              Instant finishedAt) {
+        String completeness = complete && status == XhsCollectionStatus.SUCCEEDED ? "FULL"
+                : status == XhsCollectionStatus.FAILED ? "FAILED" : "PARTIAL";
+        jdbcTemplate.update("""
+                UPDATE xhs_search_executions
+                SET status = ?, completeness_status = ?, cursor_end = ?, error_code = ?,
+                    error_message = ?, finished_at = ?, updated_at = ? WHERE job_key = ?
+                """, status.name(), completeness, nullable(nextCursor), nullable(errorCode),
+                nullable(errorMessage), Timestamp.from(finishedAt), Timestamp.from(finishedAt), jobKey);
     }
 
     private XhsCollectionJob mapJob(ResultSet rs, int rowNumber) throws SQLException {

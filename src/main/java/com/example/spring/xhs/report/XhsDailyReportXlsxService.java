@@ -54,6 +54,8 @@ public class XhsDailyReportXlsxService {
                 {"采集帖子", Integer.toString(report.collectedPosts())},
                 {"已分析", Integer.toString(report.analyzedPosts())},
                 {"负面帖子", Integer.toString(report.negativePosts())},
+                {"含负面评论帖子", Integer.toString(report.negativeCommentPosts())},
+                {"含负面图片帖子", Integer.toString(report.negativeImagePosts())},
                 {"高风险帖子", Integer.toString(report.highRiskPosts())},
                 {"新增事件", Integer.toString(report.newIncidents())},
                 {"活跃事件", Integer.toString(report.activeIncidents())},
@@ -104,7 +106,9 @@ public class XhsDailyReportXlsxService {
     private void posts(XSSFWorkbook workbook, List<XhsReportPostSummary> values,
                        XhsConsoleUrlService consoleUrlService, CellStyle header) {
         Sheet sheet = workbook.createSheet("高风险笔记");
-        header(sheet, header, "帖子编号", "标题", "情感", "风险类别", "风险分", "摘要", "发布时间", "原帖入口");
+        header(sheet, header, "帖子编号", "标题", "情感", "风险类别", "有效风险分", "主要风险来源",
+                "正文风险分", "负面评论数", "评论最高风险分", "负面图片数", "图片最高风险分",
+                "摘要", "发布时间", "原帖入口");
         for (int index = 0; index < values.size(); index++) {
             XhsReportPostSummary value = values.get(index);
             Row row = sheet.createRow(index + 1);
@@ -113,14 +117,20 @@ public class XhsDailyReportXlsxService {
             cell(row, 2, value.sentiment());
             cell(row, 3, value.riskCategory());
             number(row, 4, value.riskScore());
-            cell(row, 5, value.summary());
-            cell(row, 6, value.publishedAt() == null ? "" : TIME.format(value.publishedAt()));
-            Cell linkCell = cell(row, 7, "打开原帖");
+            cell(row, 5, value.riskSource());
+            number(row, 6, value.bodyRiskScore());
+            number(row, 7, value.negativeCommentCount());
+            number(row, 8, value.highestCommentRiskScore());
+            number(row, 9, value.negativeImageCount());
+            number(row, 10, value.highestImageRiskScore());
+            cell(row, 11, value.summary());
+            cell(row, 12, value.publishedAt() == null ? "" : TIME.format(value.publishedAt()));
+            Cell linkCell = cell(row, 13, "打开原帖");
             Hyperlink link = workbook.getCreationHelper().createHyperlink(HyperlinkType.URL);
             link.setAddress(consoleUrlService.postOpenUrl(value.postId()));
             linkCell.setHyperlink(link);
         }
-        widths(sheet, 14, 48, 14, 24, 12, 64, 22, 28);
+        widths(sheet, 14, 48, 14, 24, 14, 20, 14, 14, 18, 14, 18, 64, 22, 28);
     }
 
     private CellStyle headerStyle(XSSFWorkbook workbook) {

@@ -3,6 +3,7 @@ package com.example.spring.xhs.console;
 import com.example.spring.xhs.analysis.XhsIncidentView;
 import com.example.spring.xhs.incident.XhsIncidentStatus;
 import com.example.spring.xhs.ingestion.XhsCollectionCoordinator;
+import com.example.spring.xhs.link.XhsImageUrlPolicy;
 import com.example.spring.xhs.report.XhsDailyReport;
 import com.example.spring.xhs.report.XhsDailyReportService;
 import com.example.spring.xhs.report.XhsReportArtifactStorage;
@@ -30,6 +31,18 @@ public class XhsConsoleService {
 
     private static final Pattern PROJECT_KEY = Pattern.compile("[A-Za-z0-9][A-Za-z0-9_-]{0,127}");
     private static final List<String> PROJECT_STATUSES = List.of("ACTIVE", "PAUSED");
+    private static final List<String> GENERIC_COLLECTION_TERMS = List.of(
+            "避雷", "踩雷", "排雷", "差评", "吐槽", "不推荐", "劝退", "黑榜", "翻车",
+            "帖子", "笔记", "测评", "小红书");
+    private static final String EFFECTIVE_RISK = """
+            GREATEST(a.risk_score, COALESCE(ca.highest_comment_risk_score, 0),
+                     COALESCE(ia.highest_image_risk_score, 0))
+            """.strip();
+    private static final String EFFECTIVE_SENTIMENT = """
+            CASE WHEN COALESCE(ca.negative_comment_count, 0) > 0
+                       OR COALESCE(ia.negative_image_count, 0) > 0
+                 THEN 'NEGATIVE' ELSE a.sentiment END
+            """.strip();
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
@@ -69,7 +82,7 @@ public class XhsConsoleService {
     public AnalysisMetrics analysisMetrics(String projectKey, int days) {
         String filter = projectKey == null || projectKey.isBlank() ? null : projectKey(projectKey);
         Instant since = Instant.now().minusSeconds(Math.max(1, Math.min(days, 90)) * 86400L);
-        return jdbcTemplate.queryForObject("""
+        AnalysisMetrics body = jdbcTemplate.queryForObject("""
                 SELECT COUNT(*) calls,
                        COALESCE(SUM(e.prompt_tokens), 0) prompt_tokens,
                        COALESCE(SUM(e.completion_tokens), 0) completion_tokens,
@@ -86,6 +99,104 @@ public class XhsConsoleService {
                 rs.getLong("total_tokens"), rs.getLong("average_duration_ms"), rs.getLong("fallback_calls"),
                 rs.getLong("cache_calls")),
                 Timestamp.from(since), filter, filter);
+        CommentModelMetrics comments = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) calls,
+                       COALESCE(SUM(comment_count), 0) comment_count,
+                       COALESCE(SUM(prompt_tokens), 0) prompt_tokens,
+                       COALESCE(SUM(completion_tokens), 0) completion_tokens,
+                       COALESCE(SUM(total_tokens), 0) total_tokens,
+                       COALESCE(ROUND(AVG(duration_ms)), 0) average_duration_ms,
+                       COALESCE(SUM(status = 'FAILED'), 0) failed_calls
+                FROM xhs_comment_analysis_executions
+                WHERE created_at >= ?
+                """, (rs, row) -> new CommentModelMetrics(
+                rs.getLong("calls"), rs.getLong("comment_count"), rs.getLong("prompt_tokens"),
+                rs.getLong("completion_tokens"), rs.getLong("total_tokens"),
+                rs.getLong("average_duration_ms"), rs.getLong("failed_calls")), Timestamp.from(since));
+        AnalysisMetrics safeBody = body == null ? AnalysisMetrics.empty() : body;
+        CommentModelMetrics safeComments = comments == null ? CommentModelMetrics.empty() : comments;
+        ImageModelMetrics images = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) calls,
+                       COALESCE(SUM(e.prompt_tokens), 0) prompt_tokens,
+                       COALESCE(SUM(e.completion_tokens), 0) completion_tokens,
+                       COALESCE(SUM(e.total_tokens), 0) total_tokens,
+                       COALESCE(ROUND(AVG(e.duration_ms)), 0) average_duration_ms,
+                       COALESCE(SUM(e.status = 'FAILED'), 0) failed_calls,
+                       COALESCE(SUM(e.status = 'CACHE'), 0) cache_calls
+                FROM xhs_image_analysis_executions e
+                JOIN xhs_posts p ON p.id = e.post_id
+                JOIN xhs_monitor_projects pr ON pr.id = p.project_id
+                WHERE e.created_at >= ? AND (? IS NULL OR pr.project_key = ?)
+                """, (rs, row) -> new ImageModelMetrics(
+                rs.getLong("calls"), rs.getLong("prompt_tokens"), rs.getLong("completion_tokens"),
+                rs.getLong("total_tokens"), rs.getLong("average_duration_ms"),
+                rs.getLong("failed_calls"), rs.getLong("cache_calls")),
+                Timestamp.from(since), filter, filter);
+        return safeBody.withModels(safeComments, images == null ? ImageModelMetrics.empty() : images);
+    }
+
+    public CoverageMetrics coverageMetrics(String projectKey, int days) {
+        String filter = projectKey == null || projectKey.isBlank() ? null : projectKey(projectKey);
+        Instant since = Instant.now().minusSeconds(Math.max(1, Math.min(days, 90)) * 86400L);
+        SearchCoverage search = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) executions,
+                       COALESCE(SUM(se.status = 'SUCCEEDED'), 0) succeeded,
+                       COALESCE(SUM(se.status = 'PARTIAL'), 0) partial,
+                       COALESCE(SUM(se.status = 'FAILED'), 0) failed,
+                       (SELECT COUNT(DISTINCT h.post_id)
+                        FROM xhs_post_search_hits h
+                        JOIN xhs_search_executions he ON he.id = h.search_execution_id
+                        JOIN xhs_monitor_projects hp ON hp.id = he.project_id
+                        WHERE he.started_at >= ? AND (? IS NULL OR hp.project_key = ?)) unique_posts,
+                       COALESCE(SUM(se.raw_count), 0) raw_count,
+                       COALESCE(SUM(se.imported_count), 0) imported_count,
+                       COUNT(DISTINCT CONCAT(se.sort_mode, ':', se.time_range, ':', se.note_type)) strategies
+                FROM xhs_search_executions se
+                JOIN xhs_monitor_projects p ON p.id = se.project_id
+                WHERE se.started_at >= ? AND (? IS NULL OR p.project_key = ?)
+                """, (rs, row) -> new SearchCoverage(
+                rs.getInt("executions"), rs.getInt("succeeded"), rs.getInt("partial"),
+                rs.getInt("failed"), rs.getInt("unique_posts"), rs.getLong("raw_count"),
+                rs.getLong("imported_count"), rs.getInt("strategies")),
+                Timestamp.from(since), filter, filter, Timestamp.from(since), filter, filter);
+        CollectionCoverage collection = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) tracked_posts,
+                       COALESCE(SUM(c.comments_status = 'FULL'), 0) comments_full,
+                       COALESCE(SUM(c.comments_status = 'PARTIAL'), 0) comments_partial,
+                       COALESCE(SUM(c.comments_status = 'FAILED'), 0) comments_failed,
+                       COALESCE(SUM(c.collected_comment_count), 0) collected_comments,
+                       COALESCE(SUM(c.expected_comment_count), 0) expected_comments,
+                       COALESCE(SUM(c.discovered_image_count), 0) discovered_images
+                FROM xhs_post_collection_completeness c
+                JOIN xhs_posts po ON po.id = c.post_id
+                JOIN xhs_monitor_projects p ON p.id = po.project_id
+                WHERE (? IS NULL OR p.project_key = ?)
+                """, (rs, row) -> new CollectionCoverage(
+                rs.getInt("tracked_posts"), rs.getInt("comments_full"), rs.getInt("comments_partial"),
+                rs.getInt("comments_failed"), rs.getLong("collected_comments"),
+                rs.getLong("expected_comments"), rs.getLong("discovered_images")), filter, filter);
+        AssetCoverage assets = jdbcTemplate.queryForObject("""
+                SELECT COUNT(DISTINCT i.id) image_count,
+                       COUNT(DISTINCT CASE WHEN i.analysis_status = 'SUCCEEDED' THEN i.id END) images_analyzed,
+                       COUNT(DISTINCT CASE WHEN i.analysis_status = 'PENDING' THEN i.id END) images_pending,
+                       COUNT(DISTINCT CASE WHEN i.analysis_status = 'FAILED' THEN i.id END) images_failed,
+                       COUNT(DISTINCT CASE WHEN i.sentiment = 'NEGATIVE' THEN i.id END) negative_images,
+                       COUNT(DISTINCT ca.id) comments_analyzed,
+                       COUNT(DISTINCT CASE WHEN ca.analysis_method = 'LLM'
+                           AND ca.analysis_status = 'SUCCEEDED' THEN ca.id END) comments_reviewed,
+                       COUNT(DISTINCT CASE WHEN ca.analysis_status = 'PENDING' THEN ca.id END) comments_pending,
+                       COUNT(DISTINCT CASE WHEN ca.is_negative THEN ca.id END) negative_comments
+                FROM xhs_monitor_projects p
+                LEFT JOIN xhs_posts po ON po.project_id = p.id
+                LEFT JOIN xhs_post_images i ON i.post_id = po.id
+                LEFT JOIN xhs_comment_analysis_results ca ON ca.post_id = po.id
+                WHERE (? IS NULL OR p.project_key = ?)
+                """, (rs, row) -> new AssetCoverage(
+                rs.getInt("image_count"), rs.getInt("images_analyzed"), rs.getInt("images_pending"),
+                rs.getInt("images_failed"), rs.getInt("negative_images"),
+                rs.getInt("comments_analyzed"), rs.getInt("comments_reviewed"),
+                rs.getInt("comments_pending"), rs.getInt("negative_comments")), filter, filter);
+        return CoverageMetrics.of(search, collection, assets, Math.max(1, Math.min(days, 90)));
     }
 
     @Transactional
@@ -137,6 +248,8 @@ public class XhsConsoleService {
                 WHERE s.project_id = ?
                 """, (rs, row) -> rs.getString("storage_key"), projectId);
         reportStorageKeys.forEach(reportArtifactStorage::delete);
+        // Remove post/project delivery records before deleting schedules and posts.
+        jdbcTemplate.update("DELETE FROM xhs_negative_post_deliveries WHERE project_id = ?", projectId);
         jdbcTemplate.update("""
                 DELETE d FROM xhs_report_deliveries d
                 JOIN xhs_report_runs r ON r.id = d.run_id
@@ -190,6 +303,16 @@ public class XhsConsoleService {
                 WHERE p.project_id = ?
                 """, projectId);
         jdbcTemplate.update("""
+                DELETE e FROM xhs_analysis_executions e
+                JOIN xhs_posts p ON p.id = e.post_id
+                WHERE p.project_id = ?
+                """, projectId);
+        jdbcTemplate.update("""
+                DELETE f FROM xhs_analysis_feedback f
+                JOIN xhs_posts p ON p.id = f.post_id
+                WHERE p.project_id = ?
+                """, projectId);
+        jdbcTemplate.update("""
                 DELETE c FROM xhs_comments c
                 JOIN xhs_posts p ON p.id = c.post_id
                 WHERE p.project_id = ?
@@ -214,9 +337,14 @@ public class XhsConsoleService {
         return jdbcTemplate.queryForObject("""
                 SELECT
                     COUNT(DISTINCT p.id) post_count,
-                    COUNT(DISTINCT a.post_id) analyzed_count,
-                    COUNT(DISTINCT CASE WHEN a.sentiment = 'NEGATIVE' THEN a.post_id END) negative_count,
-                    COUNT(DISTINCT CASE WHEN a.risk_score >= 60 THEN a.post_id END) high_risk_count,
+                    COUNT(DISTINCT CASE WHEN a.post_id IS NOT NULL OR ca.post_id IS NOT NULL OR ia.post_id IS NOT NULL
+                        THEN p.id END) analyzed_count,
+                    COUNT(DISTINCT CASE WHEN a.sentiment = 'NEGATIVE'
+                        OR COALESCE(ca.negative_count, 0) > 0 OR COALESCE(ia.negative_count, 0) > 0
+                        THEN p.id END) negative_count,
+                    COUNT(DISTINCT CASE WHEN GREATEST(COALESCE(a.risk_score, 0),
+                        COALESCE(ca.maximum_risk_score, 0), COALESCE(ia.maximum_risk_score, 0)) >= 60
+                        THEN p.id END) high_risk_count,
                     COUNT(DISTINCT CASE WHEN i.status <> 'RESOLVED' THEN i.id END) active_incident_count,
                     (SELECT COUNT(*) FROM xhs_collection_jobs j
                      JOIN xhs_monitor_projects jp ON jp.id = j.project_id
@@ -224,6 +352,16 @@ public class XhsConsoleService {
                 FROM xhs_monitor_projects pr
                 LEFT JOIN xhs_posts p ON p.project_id = pr.id
                 LEFT JOIN xhs_analysis_results a ON a.post_id = p.id
+                LEFT JOIN (
+                    SELECT post_id, SUM(is_negative) negative_count,
+                           MAX(CASE WHEN is_negative THEN risk_score ELSE 0 END) maximum_risk_score
+                    FROM xhs_comment_analysis_results GROUP BY post_id
+                ) ca ON ca.post_id = p.id
+                LEFT JOIN (
+                    SELECT post_id, SUM(sentiment = 'NEGATIVE') negative_count,
+                           MAX(CASE WHEN sentiment = 'NEGATIVE' THEN risk_score ELSE 0 END) maximum_risk_score
+                    FROM xhs_post_images WHERE analysis_status = 'SUCCEEDED' GROUP BY post_id
+                ) ia ON ia.post_id = p.id
                 LEFT JOIN xhs_incidents i ON i.project_id = pr.id
                 WHERE (? IS NULL OR pr.project_key = ?)
                 """, (rs, row) -> new OverviewView(
@@ -233,18 +371,63 @@ public class XhsConsoleService {
     }
 
     public String startCollection(String projectKey, String query, int limit) {
+        return startCollection(projectKey, query, limit, "GENERAL", "ANY", "ALL");
+    }
+
+    public String startCollection(String projectKey, String query, int limit,
+                                  String sortMode, String timeRange, String noteType) {
+        return startCollection(projectKey, query, limit, sortMode, timeRange, noteType, 100);
+    }
+
+    public String startCollection(String projectKey, String query, int limit,
+                                  String sortMode, String timeRange, String noteType,
+                                  int commentLimit) {
         ProjectView project = project(projectKey(projectKey));
         if (!"ACTIVE".equals(project.status())) {
             throw new IllegalStateException("项目已暂停，不能启动采集");
         }
-        String actualQuery = query == null || query.isBlank()
-                ? String.join(" ", project.terms())
-                : query.strip();
+        String actualQuery = normalizeCollectionQuery(project, query);
         if (actualQuery.isBlank()) {
             throw new IllegalArgumentException("请先配置项目关键词或输入本次采集关键词");
         }
         return collectionCoordinator.start(new XhsCollectionRequest(
-                project.projectKey(), project.name(), actualQuery, limit, ""));
+                project.projectKey(), project.name(), actualQuery, limit, "",
+                sortMode, timeRange, noteType, commentLimit));
+    }
+
+    public CollectionPlanResult startCoverageCollection(String projectKey, int limit) {
+        ProjectView project = project(projectKey(projectKey));
+        if (!"ACTIVE".equals(project.status())) {
+            throw new IllegalStateException("项目已暂停，不能启动采集");
+        }
+        List<String> terms = project.terms().stream()
+                .filter(term -> !isGenericCollectionQuery(term))
+                .limit(5)
+                .toList();
+        if (terms.isEmpty()) {
+            terms = List.of(project.name());
+        }
+        List<String> jobKeys = new ArrayList<>();
+        List<String> errors = new ArrayList<>();
+        for (String term : terms) {
+            List<CollectionStrategy> strategies = List.of(
+                    new CollectionStrategy(term, "GENERAL", "ANY", "ALL", 100),
+                    new CollectionStrategy(term, "LATEST", "DAY", "ALL", 100),
+                    new CollectionStrategy(appendRiskKeyword(term), "COMMENTS", "HALF_YEAR", "ALL", 300));
+            for (CollectionStrategy strategy : strategies) {
+                try {
+                    jobKeys.add(startCollection(project.projectKey(), strategy.query(), limit,
+                            strategy.sortMode(), strategy.timeRange(), strategy.noteType(),
+                            strategy.commentLimit()));
+                } catch (RuntimeException exception) {
+                    errors.add(strategy.query() + ": " + exceptionMessage(exception));
+                }
+            }
+        }
+        if (jobKeys.isEmpty() && !errors.isEmpty()) {
+            throw new IllegalStateException(errors.get(0));
+        }
+        return new CollectionPlanResult(jobKeys, errors, terms.size(), jobKeys.size());
     }
 
     public List<JobView> jobs(String projectKey, int limit) {
@@ -252,9 +435,19 @@ public class XhsConsoleService {
         return jdbcTemplate.query("""
                 SELECT j.job_key, p.project_key, p.name project_name, j.query_text, j.status,
                        j.complete, j.record_count, j.attempt_count, j.error_code, j.error_message,
-                       j.started_at, j.finished_at
+                       j.started_at, j.finished_at,
+                       COALESCE(se.completeness_status, 'NOT_STARTED') completeness_status,
+                       COALESCE(se.raw_count, 0) raw_count,
+                       COALESCE(se.imported_count, j.record_count, 0) imported_count,
+                       COALESCE(se.comment_count, 0) comment_count,
+                       COALESCE(se.skipped_count, 0) skipped_count,
+                       COALESCE(se.sort_mode, 'GENERAL') sort_mode,
+                       COALESCE(se.time_range, 'ANY') time_range,
+                       COALESCE(se.note_type, 'ALL') strategy_note_type,
+                       COALESCE(se.requested_comment_limit, 100) requested_comment_limit
                 FROM xhs_collection_jobs j
                 JOIN xhs_monitor_projects p ON p.id = j.project_id
+                LEFT JOIN xhs_search_executions se ON se.job_key = j.job_key
                 WHERE (? IS NULL OR p.project_key = ?)
                 ORDER BY j.started_at DESC, j.id DESC
                 LIMIT ?
@@ -262,9 +455,11 @@ public class XhsConsoleService {
     }
 
     public OpinionPage opinions(
-            String projectKey, String keyword, String sentiment, Instant publishedFrom, Instant publishedTo,
+            String projectKey, String keyword, String sentiment, boolean commentNegativeOnly,
+            boolean consultationNegativeOnly, boolean imageNegativeOnly,
+            Instant publishedFrom, Instant publishedTo,
             String sortBy, String sortDirection, int minimumRiskScore, int page, int pageSize) {
-        StringBuilder where = new StringBuilder(" WHERE a.risk_score >= ?");
+        StringBuilder where = new StringBuilder(" WHERE " + EFFECTIVE_RISK + " >= ?");
         List<Object> arguments = new ArrayList<>();
         arguments.add(Math.max(0, Math.min(minimumRiskScore, 100)));
         if (projectKey != null && !projectKey.isBlank()) {
@@ -279,8 +474,22 @@ public class XhsConsoleService {
             arguments.add(like);
         }
         if (sentiment != null && !sentiment.isBlank()) {
-            where.append(" AND a.sentiment = ?");
+            where.append(" AND ").append(EFFECTIVE_SENTIMENT).append(" = ?");
             arguments.add(sentiment.strip().toUpperCase(Locale.ROOT));
+        }
+        if (commentNegativeOnly) {
+            where.append(" AND COALESCE(ca.negative_comment_count, 0) > 0");
+        }
+        if (consultationNegativeOnly) {
+            where.append("""
+                     AND COALESCE(ca.negative_comment_count, 0) > 0
+                     AND (p.note_type LIKE '%\u54a8\u8be2%' OR p.title LIKE '%\u5417%'
+                          OR p.title LIKE '%\u600e\u4e48%' OR p.title LIKE '%\u6c42\u63a8\u8350%'
+                          OR p.title LIKE '%\u8bf7\u95ee%')
+                    """);
+        }
+        if (imageNegativeOnly) {
+            where.append(" AND COALESCE(ia.negative_image_count, 0) > 0");
         }
         if (publishedFrom != null) {
             where.append(" AND p.published_at >= ?");
@@ -296,21 +505,44 @@ public class XhsConsoleService {
                 JOIN xhs_analysis_results a ON a.id = (
                     SELECT a2.id FROM xhs_analysis_results a2
                     WHERE a2.post_id = p.id ORDER BY a2.analyzed_at DESC, a2.id DESC LIMIT 1)
+                LEFT JOIN (
+                    SELECT post_id,
+                           SUM(CASE WHEN is_negative THEN 1 ELSE 0 END) negative_comment_count,
+                           MAX(CASE WHEN is_negative THEN risk_score ELSE 0 END) highest_comment_risk_score
+                    FROM xhs_comment_analysis_results GROUP BY post_id
+                ) ca ON ca.post_id = p.id
+                LEFT JOIN (
+                    SELECT post_id,
+                           SUM(CASE WHEN sentiment = 'NEGATIVE' THEN 1 ELSE 0 END) negative_image_count,
+                           MAX(CASE WHEN sentiment = 'NEGATIVE' THEN risk_score ELSE 0 END) highest_image_risk_score
+                    FROM xhs_post_images WHERE analysis_status = 'SUCCEEDED' GROUP BY post_id
+                ) ia ON ia.post_id = p.id
                 """;
         Integer totalValue = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) " + joins + where, Integer.class, arguments.toArray());
-        int safePageSize = Math.max(10, Math.min(pageSize <= 0 ? 50 : pageSize, 100));
+        int safePageSize = 20;
         int safePage = Math.max(1, page);
         int total = totalValue == null ? 0 : totalValue;
         int totalPages = Math.max(1, (total + safePageSize - 1) / safePageSize);
         safePage = Math.min(safePage, totalPages);
         StringBuilder sql = new StringBuilder("""
                 SELECT p.id, pr.project_key, p.title, p.author_key, p.source_url, p.published_at,
-                       a.summary, a.sentiment, a.risk_category, a.risk_score, a.analyzed_at,
+                       a.summary,
+                """).append(EFFECTIVE_SENTIMENT).append("""
+                 AS sentiment, a.risk_category,
+                """).append(EFFECTIVE_RISK).append("""
+                 AS risk_score, a.analyzed_at,
                        COALESCE(m.liked_count, 0) liked_count,
                        COALESCE(m.collected_count, 0) collected_count,
                        COALESCE(m.comment_count, 0) comment_count,
-                       COALESCE(m.share_count, 0) share_count
+                       COALESCE(m.share_count, 0) share_count,
+                       COALESCE(ca.negative_comment_count, 0) negative_comment_count,
+                       COALESCE(ca.highest_comment_risk_score, 0) highest_comment_risk_score,
+                       COALESCE(ia.negative_image_count, 0) negative_image_count,
+                       COALESCE(ia.highest_image_risk_score, 0) highest_image_risk_score,
+                       CASE WHEN p.note_type LIKE '%\u54a8\u8be2%' OR p.title LIKE '%\u5417%'
+                                 OR p.title LIKE '%\u600e\u4e48%' OR p.title LIKE '%\u6c42\u63a8\u8350%'
+                                 OR p.title LIKE '%\u8bf7\u95ee%' THEN TRUE ELSE FALSE END consultation
                 """).append(joins).append("""
                 LEFT JOIN xhs_metric_snapshots m ON m.id = (
                     SELECT m2.id FROM xhs_metric_snapshots m2
@@ -329,7 +561,7 @@ public class XhsConsoleService {
 
     private String opinionSort(String sortBy) {
         return switch (sortBy == null ? "" : sortBy.strip()) {
-            case "riskScore" -> "a.risk_score";
+            case "riskScore" -> EFFECTIVE_RISK;
             case "analyzedAt" -> "a.analyzed_at";
             case "likedCount" -> "COALESCE(m.liked_count, 0)";
             case "commentCount" -> "COALESCE(m.comment_count, 0)";
@@ -363,12 +595,38 @@ public class XhsConsoleService {
         }
         PostDetail post = posts.get(0);
         List<CommentView> comments = jdbcTemplate.query("""
-                SELECT id, author_key, content, liked_count, published_at
-                FROM xhs_comments WHERE post_id = ?
-                ORDER BY liked_count DESC, published_at DESC LIMIT 50
+                SELECT c.id, c.author_key, c.content, c.liked_count, c.published_at,
+                       COALESCE(a.sentiment, 'NEUTRAL') comment_sentiment,
+                       COALESCE(a.risk_score, 0) comment_risk_score,
+                       COALESCE(a.is_negative, FALSE) comment_negative,
+                       COALESCE(a.analysis_method, 'RULE') comment_analysis_method,
+                       COALESCE(a.confidence, 0) comment_confidence,
+                       COALESCE(a.summary, '') comment_summary,
+                       COALESCE(a.analysis_status, 'PENDING') comment_analysis_status
+                FROM xhs_comments c
+                LEFT JOIN xhs_comment_analysis_results a
+                    ON a.post_id = c.post_id AND a.source_comment_id = c.source_comment_id
+                WHERE c.post_id = ?
+                ORDER BY a.is_negative DESC, a.risk_score DESC, c.liked_count DESC,
+                         c.published_at DESC LIMIT 50
                 """, (rs, row) -> new CommentView(rs.getLong("id"), anonymousAuthor(rs.getString("author_key")),
-                        rs.getString("content"), rs.getLong("liked_count"), instant(rs, "published_at")), postId);
-        return post.withComments(comments);
+                        rs.getString("content"), rs.getLong("liked_count"), instant(rs, "published_at"),
+                        rs.getString("comment_sentiment"), rs.getInt("comment_risk_score"),
+                        rs.getBoolean("comment_negative"), rs.getString("comment_analysis_method"),
+                        rs.getDouble("comment_confidence"), rs.getString("comment_summary"),
+                        rs.getString("comment_analysis_status")), postId);
+        List<ImageView> images = jdbcTemplate.query("""
+                SELECT id, image_url, image_order, analysis_status, sentiment,
+                       risk_score, summary, evidence_json
+                FROM xhs_post_images WHERE post_id = ?
+                ORDER BY image_order, id LIMIT 20
+                """, (rs, row) -> new ImageView(rs.getLong("id"),
+                        XhsImageUrlPolicy.sanitize(rs.getString("image_url")),
+                        rs.getInt("image_order"), rs.getString("analysis_status"),
+                        rs.getString("sentiment"), rs.getInt("risk_score"),
+                        rs.getString("summary"), json(rs.getString("evidence_json"))), postId)
+                .stream().filter(image -> !image.imageUrl().isBlank()).toList();
+        return post.withAssets(comments, images);
     }
 
     @Transactional
@@ -586,6 +844,40 @@ public class XhsConsoleService {
                 .distinct().limit(50).toList();
     }
 
+    static String normalizeCollectionQuery(ProjectView project, String query) {
+        String candidate = query == null || query.isBlank()
+                ? String.join(" ", project.terms()).strip()
+                : query.strip();
+        if (candidate.isBlank()) {
+            return "";
+        }
+        if (!isGenericCollectionQuery(candidate)) {
+            return candidate;
+        }
+        String productTerm = project.terms().stream()
+                .filter(term -> !isGenericCollectionQuery(term))
+                .findFirst()
+                .orElse(project.name());
+        return productTerm.strip() + " " + candidate;
+    }
+
+    static boolean isGenericCollectionQuery(String query) {
+        if (query == null || query.isBlank()) {
+            return true;
+        }
+        String meaningfulText = query.strip().toLowerCase(Locale.ROOT)
+                .replaceAll("[\\p{P}\\p{S}\\s]+", "");
+        for (String term : GENERIC_COLLECTION_TERMS) {
+            meaningfulText = meaningfulText.replace(term, "");
+        }
+        return meaningfulText.isBlank();
+    }
+
+    private static String appendRiskKeyword(String term) {
+        String normalized = term.strip();
+        return normalized.contains("避雷") ? normalized : normalized + " 避雷";
+    }
+
     private ProjectView mapProject(ResultSet rs, int row) throws SQLException {
         String terms = rs.getString("terms");
         return new ProjectView(rs.getLong("id"), rs.getString("project_key"), rs.getString("name"),
@@ -598,7 +890,11 @@ public class XhsConsoleService {
         return new JobView(rs.getString("job_key"), rs.getString("project_key"), rs.getString("project_name"),
                 rs.getString("query_text"), rs.getString("status"), rs.getBoolean("complete"),
                 rs.getInt("record_count"), rs.getInt("attempt_count"), rs.getString("error_code"),
-                rs.getString("error_message"), instant(rs, "started_at"), instant(rs, "finished_at"));
+                rs.getString("error_message"), instant(rs, "started_at"), instant(rs, "finished_at"),
+                rs.getString("completeness_status"), rs.getInt("raw_count"), rs.getInt("imported_count"),
+                rs.getInt("comment_count"), rs.getInt("skipped_count"),
+                rs.getString("sort_mode"), rs.getString("time_range"),
+                rs.getString("strategy_note_type"), rs.getInt("requested_comment_limit"));
     }
 
     private OpinionRow mapOpinion(ResultSet rs, int row) throws SQLException {
@@ -606,7 +902,10 @@ public class XhsConsoleService {
                 anonymousAuthor(rs.getString("author_key")), rs.getString("summary"), rs.getString("sentiment"),
                 rs.getString("risk_category"), rs.getInt("risk_score"), riskLevel(rs.getInt("risk_score")),
                 rs.getLong("liked_count"), rs.getLong("collected_count"), rs.getLong("comment_count"),
-                rs.getLong("share_count"), safeSourceUrl(rs.getString("source_url")), instant(rs, "published_at"),
+                rs.getLong("share_count"), rs.getBoolean("consultation"),
+                rs.getInt("negative_comment_count"), rs.getInt("highest_comment_risk_score"),
+                rs.getInt("negative_image_count"), rs.getInt("highest_image_risk_score"),
+                safeSourceUrl(rs.getString("source_url")), instant(rs, "published_at"),
                 instant(rs, "analyzed_at"));
     }
 
@@ -618,7 +917,7 @@ public class XhsConsoleService {
                 nullableDouble(rs, "confidence"), rs.getString("summary"), json(rs.getString("evidence_json")),
                 json(rs.getString("explanation_json")), rs.getLong("liked_count"), rs.getLong("collected_count"),
                 rs.getLong("comment_count"), rs.getLong("share_count"), instant(rs, "published_at"),
-                instant(rs, "last_collected_at"), instant(rs, "analyzed_at"), List.of());
+                instant(rs, "last_collected_at"), instant(rs, "analyzed_at"), List.of(), List.of());
     }
 
     private JsonNode json(String value) {
@@ -698,6 +997,12 @@ public class XhsConsoleService {
         return Math.max(1, Math.min(value <= 0 ? fallback : value, 100));
     }
 
+    private String exceptionMessage(RuntimeException exception) {
+        String value = exception == null || exception.getMessage() == null
+                ? "collection submission failed" : exception.getMessage().strip();
+        return value.length() <= 300 ? value : value.substring(0, 300);
+    }
+
     private String riskLevel(int score) {
         return score >= 80 ? "CRITICAL" : score >= 60 ? "WARNING" : score >= 40 ? "WATCH" : "NORMAL";
     }
@@ -711,25 +1016,126 @@ public class XhsConsoleService {
     }
 
     public record AnalysisMetrics(long calls, long promptTokens, long completionTokens,
-                                  long totalTokens, long averageDurationMs, long fallbackCalls, long cacheCalls) {
+                                  long totalTokens, long averageDurationMs, long fallbackCalls, long cacheCalls,
+                                  long commentCalls, long reviewedComments, long commentPromptTokens,
+                                  long commentCompletionTokens, long commentTotalTokens,
+                                  long commentAverageDurationMs, long commentFailedCalls,
+                                  long imageCalls, long imagePromptTokens, long imageCompletionTokens,
+                                  long imageTotalTokens, long imageAverageDurationMs,
+                                  long imageFailedCalls, long imageCacheCalls) {
+        public AnalysisMetrics(long calls, long promptTokens, long completionTokens,
+                               long totalTokens, long averageDurationMs, long fallbackCalls, long cacheCalls) {
+            this(calls, promptTokens, completionTokens, totalTokens, averageDurationMs, fallbackCalls, cacheCalls,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        }
+
+        private static AnalysisMetrics empty() {
+            return new AnalysisMetrics(0, 0, 0, 0, 0, 0, 0);
+        }
+
+        private AnalysisMetrics withModels(CommentModelMetrics value, ImageModelMetrics images) {
+            return new AnalysisMetrics(calls, promptTokens, completionTokens, totalTokens,
+                    averageDurationMs, fallbackCalls, cacheCalls, value.calls(), value.commentCount(),
+                    value.promptTokens(), value.completionTokens(), value.totalTokens(),
+                    value.averageDurationMs(), value.failedCalls(), images.calls(), images.promptTokens(),
+                    images.completionTokens(), images.totalTokens(), images.averageDurationMs(),
+                    images.failedCalls(), images.cacheCalls());
+        }
+    }
+
+    public record CoverageMetrics(int days, int searchExecutions, int successfulSearches,
+                                  int partialSearches, int failedSearches, int searchStrategies,
+                                  int uniquePostsFound, long rawPosts, long importedPosts, int importRate,
+                                  int trackedPosts, int commentsFull, int commentsPartial, int commentsFailed,
+                                  long collectedComments, long expectedComments, int commentCoverageRate,
+                                  long discoveredImages, int imageCount, int imagesAnalyzed, int imagesPending,
+                                  int imagesFailed, int negativeImages, int imageAnalysisRate,
+                                  int commentsAnalyzed, int commentsReviewed, int commentsPending,
+                                  int negativeComments) {
+        private static CoverageMetrics of(
+                SearchCoverage search, CollectionCoverage collection, AssetCoverage assets, int days) {
+            SearchCoverage s = search == null ? SearchCoverage.empty() : search;
+            CollectionCoverage c = collection == null ? CollectionCoverage.empty() : collection;
+            AssetCoverage a = assets == null ? AssetCoverage.empty() : assets;
+            return new CoverageMetrics(days, s.executions(), s.succeeded(), s.partial(), s.failed(),
+                    s.strategies(), s.uniquePosts(), s.rawCount(), s.importedCount(),
+                    percent(s.importedCount(), s.rawCount()), c.trackedPosts(), c.commentsFull(),
+                    c.commentsPartial(), c.commentsFailed(), c.collectedComments(), c.expectedComments(),
+                    percent(c.collectedComments(), c.expectedComments()), c.discoveredImages(),
+                    a.imageCount(), a.imagesAnalyzed(), a.imagesPending(), a.imagesFailed(), a.negativeImages(),
+                    percent(a.imagesAnalyzed(), a.imageCount()), a.commentsAnalyzed(), a.commentsReviewed(),
+                    a.commentsPending(), a.negativeComments());
+        }
+
+        private static int percent(long value, long total) {
+            return total <= 0 ? 0 : (int) Math.min(100, Math.round(value * 100.0 / total));
+        }
+    }
+
+    private record CommentModelMetrics(long calls, long commentCount, long promptTokens,
+                                       long completionTokens, long totalTokens,
+                                       long averageDurationMs, long failedCalls) {
+        private static CommentModelMetrics empty() { return new CommentModelMetrics(0, 0, 0, 0, 0, 0, 0); }
+    }
+
+    private record ImageModelMetrics(long calls, long promptTokens, long completionTokens,
+                                     long totalTokens, long averageDurationMs,
+                                     long failedCalls, long cacheCalls) {
+        private static ImageModelMetrics empty() { return new ImageModelMetrics(0, 0, 0, 0, 0, 0, 0); }
+    }
+
+    private record SearchCoverage(int executions, int succeeded, int partial, int failed,
+                                  int uniquePosts, long rawCount, long importedCount, int strategies) {
+        private static SearchCoverage empty() { return new SearchCoverage(0, 0, 0, 0, 0, 0, 0, 0); }
+    }
+
+    private record CollectionCoverage(int trackedPosts, int commentsFull, int commentsPartial,
+                                      int commentsFailed, long collectedComments,
+                                      long expectedComments, long discoveredImages) {
+        private static CollectionCoverage empty() { return new CollectionCoverage(0, 0, 0, 0, 0, 0, 0); }
+    }
+
+    private record AssetCoverage(int imageCount, int imagesAnalyzed, int imagesPending, int imagesFailed,
+                                 int negativeImages, int commentsAnalyzed, int commentsReviewed,
+                                 int commentsPending, int negativeComments) {
+        private static AssetCoverage empty() { return new AssetCoverage(0, 0, 0, 0, 0, 0, 0, 0, 0); }
     }
 
     public record JobView(String jobKey, String projectKey, String projectName, String query, String status,
                           boolean complete, int recordCount, int attemptCount, String errorCode,
-                          String errorMessage, Instant startedAt, Instant finishedAt) {
+                          String errorMessage, Instant startedAt, Instant finishedAt,
+                          String completenessStatus, int rawCount, int importedCount, int commentCount,
+                          int skippedCount, String sortMode, String timeRange, String noteType,
+                          int requestedCommentLimit) {
     }
 
     public record OpinionRow(long postId, String projectKey, String title, String authorDisplayName, String summary,
                              String sentiment, String riskCategory, int riskScore, String riskLevel,
                              long likedCount, long collectedCount, long commentCount, long shareCount,
+                             boolean consultation, int negativeCommentCount, int highestCommentRiskScore,
+                             int negativeImageCount, int highestImageRiskScore,
                              String sourceUrl, Instant publishedAt, Instant analyzedAt) {
     }
 
     public record OpinionPage(List<OpinionRow> items, int page, int pageSize, int total, int totalPages) {
     }
 
+    public record CollectionPlanResult(List<String> jobKeys, List<String> errors,
+                                       int keywordCount, int submittedCount) {
+    }
+
+    private record CollectionStrategy(String query, String sortMode, String timeRange,
+                                      String noteType, int commentLimit) {
+    }
+
     public record CommentView(long commentId, String authorDisplayName, String content, long likedCount,
-                              Instant publishedAt) {
+                              Instant publishedAt, String sentiment, int riskScore, boolean negative,
+                              String analysisMethod, double confidence, String analysisSummary,
+                              String analysisStatus) {
+    }
+
+    public record ImageView(long imageId, String imageUrl, int imageOrder, String analysisStatus,
+                            String sentiment, int riskScore, String summary, JsonNode evidence) {
     }
 
     public record AnalysisFeedback(long id, long postId, String feedbackType, String note,
@@ -742,11 +1148,12 @@ public class XhsConsoleService {
                              Double confidence, String summary, JsonNode evidence, JsonNode explanation,
                              long likedCount, long collectedCount, long commentCount, long shareCount,
                              Instant publishedAt, Instant collectedAt, Instant analyzedAt,
-                             List<CommentView> comments) {
-        PostDetail withComments(List<CommentView> value) {
+                             List<CommentView> comments, List<ImageView> images) {
+        PostDetail withAssets(List<CommentView> commentValues, List<ImageView> imageValues) {
             return new PostDetail(postId, projectKey, title, content, authorDisplayName, sourceUrl, noteType, tags,
                     sentiment, sentimentScore, riskCategory, riskScore, confidence, summary, evidence, explanation,
-                    likedCount, collectedCount, commentCount, shareCount, publishedAt, collectedAt, analyzedAt, value);
+                    likedCount, collectedCount, commentCount, shareCount, publishedAt, collectedAt, analyzedAt,
+                    commentValues, imageValues);
         }
     }
 

@@ -60,6 +60,10 @@ public class HttpXhsSourceClient implements XhsSourceClient {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("query", request.query());
         body.put("limit", request.limit());
+        body.put("sortMode", request.sortMode());
+        body.put("timeRange", request.timeRange());
+        body.put("noteType", request.noteType());
+        body.put("commentLimit", request.commentLimit());
         if (!request.cursor().isBlank()) {
             body.put("cursor", request.cursor());
         }

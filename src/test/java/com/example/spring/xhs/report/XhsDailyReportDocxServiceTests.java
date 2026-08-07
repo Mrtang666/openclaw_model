@@ -27,12 +27,13 @@ class XhsDailyReportDocxServiceTests {
         XhsDailyReport report = new XhsDailyReport(
                 "brand-a", "品牌 A", LocalDate.of(2026, 7, 29),
                 Instant.parse("2026-07-28T16:00:00Z"), Instant.parse("2026-07-29T16:00:00Z"),
-                12, 10, 4, 2, 1, 3, 1, 48,
+                12, 10, 4, 2, 1, 2, 1, 3, 1, 48,
                 List.of(new XhsRiskCategorySummary("产品质量", 2, 70, 88)),
                 List.of(new XhsIncidentView(7, "brand-a", "过敏反馈", "产品质量", "OPEN",
                         88, "CRITICAL", 2, Instant.now(), Instant.now())),
                 List.of(new XhsReportPostSummary(42, "使用后发红", "用户反馈使用后不适",
-                        "NEGATIVE", "产品质量", 88, Instant.now())));
+                        "NEGATIVE", "评论负面反馈", 88, "评论", 55,
+                        3, 88, 1, 70, Instant.now())));
 
         XhsDailyReportDocxService.ReportDocument generated =
                 new XhsDailyReportDocxService().generate(report, urls);
@@ -43,7 +44,8 @@ class XhsDailyReportDocxServiceTests {
         try (XWPFDocument document = new XWPFDocument(new ByteArrayInputStream(generated.bytes()));
              XWPFWordExtractor extractor = new XWPFWordExtractor(document)) {
             assertThat(extractor.getText())
-                    .contains("品牌 A 小红书舆情分析报告", "核心指标", "产品质量", "过敏反馈", "使用后发红");
+                    .contains("品牌 A 小红书舆情分析报告", "核心指标", "含负面评论", "含负面图片",
+                            "评论负面反馈", "负面评论 3 条（最高 88 分）", "使用后发红");
             assertThat(document.getDocument().getBody().isSetSectPr()).isTrue();
             assertThat(document.getTables()).allSatisfy(table ->
                     assertThat(table.getCTTbl().getTblPr().getTblW().getW().toString()).isEqualTo("9360"));

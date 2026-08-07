@@ -25,7 +25,7 @@ class XhsJsonImportServiceTests {
                 repository,
                 new XhsAuthorKeyHasher("test-secret"));
 
-        var result = service.importJson("brand-a", "品牌 A", json("""
+        var result = service.importJson("brand-a", "品牌 A", "job-1", "品牌 A", json("""
                 {
                   "source": "SPIDER_XHS_LAB",
                   "collectedAt": "2026-07-28T02:00:00Z",
@@ -43,6 +43,7 @@ class XhsJsonImportServiceTests {
                     "collected_count": "320",
                     "comment_count": 18,
                     "share_count": "2K",
+                    "images": [{"url":"https://sns-img-qc.xhscdn.com/1.jpg"},{"url":"https://sns-img-qc.xhscdn.com/2.jpg"}],
                     "comments": [{
                       "comment_id": "comment-1",
                       "user_id": "comment-user",
@@ -79,6 +80,11 @@ class XhsJsonImportServiceTests {
         assertThat(repository.comments).extracting(XhsCommentImport::sourceCommentId)
                 .containsExactly("comment-1", "comment-2");
         assertThat(repository.metricPostIds).containsExactly(101L);
+        assertThat(repository.searchHits).containsExactly(new SearchHit(101L, "job-1", "品牌 A"));
+        assertThat(repository.completeness).containsExactly(new Completeness(101L, 18L, 2, 2));
+        assertThat(repository.images).containsExactly(
+                "101:0:https://sns-img-qc.xhscdn.com/1.jpg",
+                "101:1:https://sns-img-qc.xhscdn.com/2.jpg");
     }
 
     @Test
@@ -111,6 +117,9 @@ class XhsJsonImportServiceTests {
         private final List<XhsPostImport> posts = new ArrayList<>();
         private final List<XhsCommentImport> comments = new ArrayList<>();
         private final List<Long> metricPostIds = new ArrayList<>();
+        private final List<SearchHit> searchHits = new ArrayList<>();
+        private final List<Completeness> completeness = new ArrayList<>();
+        private final List<String> images = new ArrayList<>();
 
         @Override
         public long ensureProject(String projectKey, String projectName, Instant now) {
@@ -132,5 +141,30 @@ class XhsJsonImportServiceTests {
         public void saveMetricSnapshot(long postId, XhsPostImport post) {
             metricPostIds.add(postId);
         }
+
+        @Override
+        public void recordSearchHit(long postId, String jobKey, String keyword, Instant hitAt) {
+            searchHits.add(new SearchHit(postId, jobKey, keyword));
+        }
+
+        @Override
+        public void updateCollectionCompleteness(long postId, long expectedCommentCount,
+                                                 int collectedCommentCount, int discoveredImageCount,
+                                                 Instant collectedAt) {
+            completeness.add(new Completeness(
+                    postId, expectedCommentCount, collectedCommentCount, discoveredImageCount));
+        }
+
+        @Override
+        public void recordPostImage(long postId, int imageOrder, String imageUrl, Instant collectedAt) {
+            images.add(postId + ":" + imageOrder + ":" + imageUrl);
+        }
+    }
+
+    private record SearchHit(long postId, String jobKey, String keyword) {
+    }
+
+    private record Completeness(long postId, long expectedCommentCount,
+                                int collectedCommentCount, int discoveredImageCount) {
     }
 }

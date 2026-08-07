@@ -66,7 +66,9 @@ public class XhsCollectionCoordinator {
         Instant now = Instant.now();
         long projectId = opinionRepository.ensureProject(request.projectKey(), request.projectName(), now);
         String jobKey = UUID.randomUUID().toString();
-        jobRepository.create(jobKey, projectId, XhsSourceType.SPIDER_XHS_LAB, request.query(), now);
+        jobRepository.create(jobKey, projectId, XhsSourceType.SPIDER_XHS_LAB, request.query(),
+                request.limit(), request.cursor(), request.sortMode(),
+                request.timeRange(), request.noteType(), request.commentLimit(), now);
         try {
             String externalJobId = sourceClient.submitSearch(request).externalJobId();
             jobRepository.markSubmitted(jobKey, externalJobId);
@@ -109,7 +111,10 @@ public class XhsCollectionCoordinator {
             XhsImportResult imported = importService.importJson(
                     job.projectKey(),
                     job.projectName(),
+                    job.jobKey(),
+                    job.query(),
                     new ByteArrayInputStream(importPayload(result).getBytes(StandardCharsets.UTF_8)));
+            jobRepository.recordImportStats(job.jobKey(), imported);
             XhsCollectionStatus finalStatus = result.complete()
                     ? XhsCollectionStatus.SUCCEEDED
                     : XhsCollectionStatus.PARTIAL;

@@ -3,7 +3,7 @@ name = "openclaw-xhs-sidecar"
 version = "0.1.0"
 description = "Isolated Spider_XHS HTTP adapter for OpenClaw"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["qrcode[pil]>=7.4,<9"]
 
 [project.scripts]
 openclaw-xhs-sidecar = "xhs_sidecar.server:main"

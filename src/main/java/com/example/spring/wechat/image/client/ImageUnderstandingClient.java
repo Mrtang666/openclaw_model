@@ -11,6 +11,14 @@ public interface ImageUnderstandingClient {
 
     String reply(ImageAnalysisRequest request);
 
+    default Response replyWithUsage(ImageAnalysisRequest request) {
+        return new Response(reply(request), "", 0, 0, 0, 0);
+    }
+
     void streamReply(ImageAnalysisRequest request, ReplyEmitter emitter);
+
+    record Response(String content, String model, int promptTokens, int completionTokens,
+                    int totalTokens, long durationMs) {
+    }
 }
 

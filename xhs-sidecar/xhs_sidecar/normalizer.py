@@ -36,8 +36,33 @@ def normalize_note(
         "collected_count": interaction.get("collected_count", 0),
         "comment_count": interaction.get("comment_count", 0),
         "share_count": interaction.get("share_count", 0),
+        "images": normalize_images(card.get("image_list") or item.get("image_list")),
         "comments": normalize_comments(comments, note_id, author_hash_key),
     }
+
+
+def normalize_images(images: object) -> list[dict[str, str]]:
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for image in _mappings(images):
+        url = _text(
+            image.get("url_default")
+            or image.get("url_pre")
+            or image.get("url")
+        )
+        if not url:
+            for variant in _mappings(image.get("info_list")):
+                url = _text(
+                    variant.get("url")
+                    or variant.get("url_default")
+                    or variant.get("url_pre")
+                )
+                if url:
+                    break
+        if url and url not in seen:
+            seen.add(url)
+            result.append({"url": url})
+    return result
 
 
 def normalize_comments(

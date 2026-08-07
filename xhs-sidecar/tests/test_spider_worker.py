@@ -110,14 +110,31 @@ class SpiderWorkerCollectionReliabilityTests(unittest.TestCase):
         self.assertEqual(result["status"], "SUCCEEDED")
         self.assertTrue(result["complete"])
 
+    def test_forwards_search_sort_time_and_note_type(self) -> None:
+        api = _FakeApi()
+        with (
+            patch.dict(os.environ, {"XHS_COOKIES": "test-cookie"}, clear=True),
+            patch("xhs_sidecar.spider_worker._bootstrap_api", return_value=api),
+            patch("xhs_sidecar.spider_worker.normalize_note", return_value={"sourcePostId": "note-1"}),
+        ):
+            result = collect(
+                self.spider_root, "brand", 1, "", False, 0,
+                sort_mode="LATEST", time_range="WEEK", note_type="VIDEO"
+            )
+
+        self.assertEqual(result["status"], "SUCCEEDED")
+        self.assertEqual(api.search_filters, (1, 1, 2))
+
 
 class _FakeApi:
     def __init__(self, detail_failures: int = 0, comment_success: bool = True) -> None:
         self.detail_failures = detail_failures
         self.comment_success = comment_success
         self.detail_calls = 0
+        self.search_filters = ()
 
-    def search_some_note(self, query: str, limit: int):
+    def search_some_note(self, query: str, limit: int, *filters):
+        self.search_filters = filters
         return True, "", [{"model_type": "note", "id": "note-1", "xsec_token": "token"}]
 
     def get_note_info(self, request_url: str):

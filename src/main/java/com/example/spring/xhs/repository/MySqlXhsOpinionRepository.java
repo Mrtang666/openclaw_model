@@ -9,6 +9,10 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 
 @Repository
 public class MySqlXhsOpinionRepository implements XhsOpinionRepository {
@@ -132,6 +136,100 @@ public class MySqlXhsOpinionRepository implements XhsOpinionRepository {
                 post.metrics().collectedCount(),
                 post.metrics().commentCount(),
                 post.metrics().shareCount());
+    }
+
+    @Override
+    public void recordSearchHit(long postId, String jobKey, String keyword, Instant hitAt) {
+        if (jobKey == null || jobKey.isBlank()) {
+            return;
+        }
+        Instant now = hitAt == null ? Instant.now() : hitAt;
+        jdbcTemplate.update("""
+                INSERT INTO xhs_post_search_hits(
+                    post_id, search_execution_id, keyword_value, first_hit_at, last_hit_at)
+                SELECT ?, e.id, ?, ?, ? FROM xhs_search_executions e WHERE e.job_key = ?
+                ON DUPLICATE KEY UPDATE last_hit_at = VALUES(last_hit_at)
+                """, postId, keyword == null ? "" : keyword.strip(), Timestamp.from(now),
+                Timestamp.from(now), jobKey.strip());
+    }
+
+    @Override
+    public void updateCollectionCompleteness(long postId, long expectedCommentCount,
+                                             int collectedCommentCount, int discoveredImageCount,
+                                             Instant collectedAt) {
+        long expected = Math.max(0, expectedCommentCount);
+        int collected = Math.max(0, collectedCommentCount);
+        int images = Math.max(0, discoveredImageCount);
+        String commentsStatus = expected == 0 || collected >= expected ? "FULL" : "PARTIAL";
+        String imagesStatus = images > 0 ? "DISCOVERED" : "NOT_REQUESTED";
+        Instant now = collectedAt == null ? Instant.now() : collectedAt;
+        jdbcTemplate.update("""
+                INSERT INTO xhs_post_collection_completeness(
+                    post_id, detail_status, comments_status, images_status,
+                    expected_comment_count, collected_comment_count, discovered_image_count,
+                    last_collected_at, updated_at)
+                VALUES (?, 'FULL', ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    detail_status = 'FULL', comments_status = VALUES(comments_status),
+                    images_status = VALUES(images_status),
+                    expected_comment_count = VALUES(expected_comment_count),
+                    collected_comment_count = VALUES(collected_comment_count),
+                    discovered_image_count = VALUES(discovered_image_count),
+                    last_collected_at = VALUES(last_collected_at), updated_at = VALUES(updated_at)
+                """, postId, commentsStatus, imagesStatus, expected, collected, images,
+                Timestamp.from(now), Timestamp.from(now));
+    }
+
+    @Override
+    public void recordCommentAnalysis(long postId, String sourceCommentId, String sentiment,
+                                      int riskScore, boolean negative, Instant analyzedAt) {
+        if (sourceCommentId == null || sourceCommentId.isBlank()) {
+            return;
+        }
+        jdbcTemplate.update("""
+                INSERT INTO xhs_comment_analysis_results(
+                    post_id, source_comment_id, sentiment, risk_score, is_negative,
+                    analysis_method, analysis_status, analyzed_at)
+                VALUES (?, ?, ?, ?, ?, 'RULE', ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    sentiment = IF(analysis_method = 'RULE', VALUES(sentiment), sentiment),
+                    risk_score = IF(analysis_method = 'RULE', VALUES(risk_score), risk_score),
+                    is_negative = IF(analysis_method = 'RULE', VALUES(is_negative), is_negative),
+                    analysis_status = IF(analysis_method = 'RULE',
+                        IF(VALUES(is_negative), 'PENDING', 'SKIPPED'), analysis_status),
+                    analyzed_at = IF(analysis_method = 'RULE', VALUES(analyzed_at), analyzed_at)
+                """, postId, sourceCommentId.strip(),
+                sentiment == null || sentiment.isBlank() ? "NEUTRAL" : sentiment,
+                Math.max(0, Math.min(riskScore, 100)), negative,
+                negative ? "PENDING" : "SKIPPED",
+                Timestamp.from(analyzedAt == null ? Instant.now() : analyzedAt));
+    }
+
+    @Override
+    public void recordPostImage(long postId, int imageOrder, String imageUrl, Instant collectedAt) {
+        if (imageUrl == null || imageUrl.isBlank()) {
+            return;
+        }
+        Instant now = collectedAt == null ? Instant.now() : collectedAt;
+        jdbcTemplate.update("""
+                INSERT INTO xhs_post_images(
+                    post_id, image_hash, image_url, image_order, analysis_status,
+                    first_collected_at, last_collected_at)
+                VALUES (?, ?, ?, ?, 'PENDING', ?, ?)
+                ON DUPLICATE KEY UPDATE image_url = VALUES(image_url),
+                    image_order = VALUES(image_order),
+                    last_collected_at = VALUES(last_collected_at)
+                """, postId, sha256(imageUrl), imageUrl, Math.max(0, imageOrder),
+                Timestamp.from(now), Timestamp.from(now));
+    }
+
+    private String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
     }
 
     private String json(Object value) {

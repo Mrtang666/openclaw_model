@@ -6,6 +6,7 @@ import com.example.spring.xhs.model.XhsMetrics;
 import com.example.spring.xhs.model.XhsPostImport;
 import com.example.spring.xhs.model.XhsSourceType;
 import com.example.spring.xhs.link.XhsAccessUrlPolicy;
+import com.example.spring.xhs.link.XhsImageUrlPolicy;
 import com.example.spring.xhs.repository.XhsOpinionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -23,6 +24,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -50,6 +52,12 @@ public class XhsJsonImportService {
 
     @Transactional
     public XhsImportResult importJson(String projectKey, String projectName, InputStream inputStream) {
+        return importJson(projectKey, projectName, "", "", inputStream);
+    }
+
+    @Transactional
+    public XhsImportResult importJson(String projectKey, String projectName, String jobKey,
+                                      String keyword, InputStream inputStream) {
         if (inputStream == null) {
             throw new IllegalArgumentException("导入文件不能为空");
         }
@@ -69,20 +77,66 @@ public class XhsJsonImportService {
                 XhsPostImport post = toPost(postNode, sourceType, batchCollectedAt);
                 long postId = repository.upsertPost(projectId, post);
                 repository.saveMetricSnapshot(postId, post);
+                repository.recordSearchHit(postId, jobKey, keyword, batchCollectedAt);
                 postCount++;
+                int postCommentCount = 0;
                 for (JsonNode commentNode : commentNodes(postNode)) {
                     try {
-                        repository.upsertComment(postId, toComment(commentNode, post.sourcePostId(), batchCollectedAt));
+                        XhsCommentImport comment = toComment(commentNode, post.sourcePostId(), batchCollectedAt);
+                        repository.upsertComment(postId, comment);
+                        XhsCommentRiskClassifier.Result commentRisk =
+                                XhsCommentRiskClassifier.classify(comment.content());
+                        repository.recordCommentAnalysis(postId, comment.sourceCommentId(),
+                                commentRisk.sentiment(), commentRisk.riskScore(),
+                                commentRisk.negative(), batchCollectedAt);
                         commentCount++;
+                        postCommentCount++;
                     } catch (IllegalArgumentException ignored) {
                         skippedCount++;
                     }
                 }
+                List<String> images = imageUrls(postNode);
+                for (int imageOrder = 0; imageOrder < images.size(); imageOrder++) {
+                    repository.recordPostImage(
+                            postId, imageOrder, images.get(imageOrder), batchCollectedAt);
+                }
+                repository.updateCollectionCompleteness(postId, post.metrics().commentCount(),
+                        postCommentCount, images.size(), batchCollectedAt);
             } catch (IllegalArgumentException ignored) {
                 skippedCount++;
             }
         }
         return new XhsImportResult(projectKey.strip(), sourceType, postCount, commentCount, skippedCount);
+    }
+
+    private List<String> imageUrls(JsonNode post) {
+        JsonNode images = first(post, "images", "image_list", "imageList");
+        if (images == null || !images.isArray()) {
+            return List.of();
+        }
+        LinkedHashSet<String> values = new LinkedHashSet<>();
+        for (JsonNode image : images) {
+            String value = image.isTextual() ? image.asText("") :
+                    text(image, "url", "url_default", "urlDefault", "url_pre", "urlPre");
+            addImageUrl(values, value);
+            JsonNode variants = first(image, "info_list", "infoList");
+            if (variants != null && variants.isArray()) {
+                for (JsonNode variant : variants) {
+                    addImageUrl(values, text(variant, "url", "url_default", "url_pre"));
+                    if (!values.isEmpty()) {
+                        break;
+                    }
+                }
+            }
+        }
+        return List.copyOf(values);
+    }
+
+    private void addImageUrl(Set<String> values, String value) {
+        String safe = XhsImageUrlPolicy.sanitize(value);
+        if (!safe.isBlank()) {
+            values.add(safe);
+        }
     }
 
     private XhsPostImport toPost(JsonNode node, XhsSourceType sourceType, Instant collectedAt) {

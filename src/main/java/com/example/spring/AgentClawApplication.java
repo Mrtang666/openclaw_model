@@ -18,6 +18,8 @@ import com.example.spring.xhs.config.XhsAnalysisProperties;
 import com.example.spring.xhs.config.XhsAlertProperties;
 import com.example.spring.xhs.config.XhsConsoleProperties;
 import com.example.spring.xhs.config.XhsScheduledReportProperties;
+import com.example.spring.xhs.config.XhsImageAnalysisProperties;
+import com.example.spring.xhs.config.XhsCommentAnalysisProperties;
 import com.example.spring.wechat.care.config.CareProperties;
 import com.example.spring.wechat.care.config.CareTaskProperties;
 import com.example.spring.wechat.email.config.EmailProperties;
@@ -47,6 +49,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         XhsAlertProperties.class,
         XhsConsoleProperties.class,
         XhsScheduledReportProperties.class,
+        XhsImageAnalysisProperties.class,
+        XhsCommentAnalysisProperties.class,
         CareProperties.class,
         CareTaskProperties.class,
         EmailProperties.class,

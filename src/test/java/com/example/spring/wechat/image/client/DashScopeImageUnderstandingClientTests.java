@@ -93,6 +93,33 @@ class DashScopeImageUnderstandingClientTests {
         server.verify();
     }
 
+    @Test
+    void returnsTokenUsageForNonStreamingAnalysis() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        DashScopeImageUnderstandingClient client = new DashScopeImageUnderstandingClient(
+                builder, new ObjectMapper(), "test-key",
+                "https://dashscope.example.com/compatible-mode/v1", "qwen-vl-test", false);
+        server.expect(requestTo("https://dashscope.example.com/compatible-mode/v1/chat/completions"))
+                .andExpect(method(POST))
+                .andExpect(jsonPath("$.stream").value(false))
+                .andRespond(withSuccess("""
+                        {"choices":[{"message":{"content":"{\\"negative\\":false}"}}],
+                         "usage":{"prompt_tokens":120,"completion_tokens":15,"total_tokens":135}}
+                        """, MediaType.APPLICATION_JSON));
+
+        ImageUnderstandingClient.Response response = client.replyWithUsage(new ImageAnalysisRequest(
+                "分析图片", List.of(new WechatIncomingImage(
+                ImageSourceType.TEXT_URL, "https://example.com/demo.png"))));
+
+        assertThat(response.content()).isEqualTo("{\"negative\":false}");
+        assertThat(response.model()).isEqualTo("qwen-vl-test");
+        assertThat(response.promptTokens()).isEqualTo(120);
+        assertThat(response.completionTokens()).isEqualTo(15);
+        assertThat(response.totalTokens()).isEqualTo(135);
+        server.verify();
+    }
+
     private byte[] samplePngBytes() throws IOException {
         BufferedImage image = new BufferedImage(2, 2, BufferedImage.TYPE_INT_RGB);
         image.setRGB(0, 0, Color.RED.getRGB());

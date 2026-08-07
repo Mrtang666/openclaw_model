@@ -30,8 +30,14 @@ def main() -> int:
                 query=str(request["query"]),
                 limit=int(request["limit"]),
                 cursor=str(request.get("cursor", "")),
+                sort_mode=str(request.get("sortMode", "GENERAL")),
+                time_range=str(request.get("timeRange", "ANY")),
+                note_type=str(request.get("noteType", "ALL")),
                 collect_comments=arguments.collect_comments,
-                comment_limit=arguments.comment_limit,
+                comment_limit=min(
+                    arguments.comment_limit,
+                    max(0, int(request.get("commentLimit", arguments.comment_limit))),
+                ),
                 detail_max_attempts=arguments.detail_max_attempts,
                 detail_retry_delay_ms=arguments.detail_retry_delay_ms,
             )
@@ -55,6 +61,9 @@ def collect(
     comment_limit: int,
     detail_max_attempts: int = 3,
     detail_retry_delay_ms: int = 800,
+    sort_mode: str = "GENERAL",
+    time_range: str = "ANY",
+    note_type: str = "ALL",
 ) -> dict[str, Any]:
     cookies = (os.getenv("XHS_COOKIES") or os.getenv("COOKIES") or "").strip()
     if not cookies:
@@ -86,7 +95,14 @@ def collect(
                 "",
             )
         return _result("FAILED", False, [], "BOOTSTRAP_FAILED", message, "")
-    success, message, search_items = api.search_some_note(query, offset + limit)
+    sort_choice = {"GENERAL": 0, "LATEST": 1, "LIKES": 2,
+                   "COMMENTS": 3, "COLLECTS": 4}.get(sort_mode.upper(), 0)
+    time_choice = {"ANY": 0, "DAY": 1, "WEEK": 2,
+                   "HALF_YEAR": 3}.get(time_range.upper(), 0)
+    type_choice = {"ALL": 0, "VIDEO": 1, "IMAGE": 2}.get(note_type.upper(), 0)
+    success, message, search_items = api.search_some_note(
+        query, offset + limit, sort_choice, type_choice, time_choice
+    )
     if not success:
         _persist_api_cookie(api)
         return _result("FAILED", False, [], "SEARCH_FAILED", redact(message), "")

@@ -17,6 +17,10 @@ class SearchRequest:
     query: str
     limit: int
     cursor: str = ""
+    sort_mode: str = "GENERAL"
+    time_range: str = "ANY"
+    note_type: str = "ALL"
+    comment_limit: int = 100
 
     @classmethod
     def parse(cls, value: Any) -> "SearchRequest":
@@ -36,7 +40,27 @@ class SearchRequest:
             raise ValueError("limit must be an integer") from exception
         if limit < 1 or limit > 100:
             raise ValueError("limit must be between 1 and 100")
-        return cls(query=query, limit=limit, cursor=cursor)
+        sort_mode = _choice(value.get("sortMode", value.get("sort_mode")), "GENERAL",
+                            {"GENERAL", "LATEST", "LIKES", "COMMENTS", "COLLECTS"}, "sortMode")
+        time_range = _choice(value.get("timeRange", value.get("time_range")), "ANY",
+                             {"ANY", "DAY", "WEEK", "HALF_YEAR"}, "timeRange")
+        note_type = _choice(value.get("noteType", value.get("note_type")), "ALL",
+                            {"ALL", "VIDEO", "IMAGE"}, "noteType")
+        try:
+            comment_limit = int(value.get("commentLimit", value.get("comment_limit", 100)))
+        except (TypeError, ValueError) as exception:
+            raise ValueError("commentLimit must be an integer") from exception
+        if comment_limit < 0 or comment_limit > 1000:
+            raise ValueError("commentLimit must be between 0 and 1000")
+        return cls(query=query, limit=limit, cursor=cursor, sort_mode=sort_mode,
+                   time_range=time_range, note_type=note_type, comment_limit=comment_limit)
+
+
+def _choice(value: object, fallback: str, allowed: set[str], field: str) -> str:
+    normalized = str(value or fallback).strip().upper()
+    if normalized not in allowed:
+        raise ValueError(f"{field} must be one of {', '.join(sorted(allowed))}")
+    return normalized
 
 
 @dataclass

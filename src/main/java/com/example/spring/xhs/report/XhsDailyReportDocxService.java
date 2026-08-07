@@ -167,12 +167,14 @@ public class XhsDailyReportDocxService {
     }
 
     private void metricTable(XWPFDocument document, XhsDailyReport report) {
-        XWPFTable table = document.createTable(4, 4);
+        XWPFTable table = document.createTable(5, 4);
         configureTable(table, new int[]{1750, 2930, 1750, 2930});
         metricRow(table, 0, "采集帖子", report.collectedPosts(), "已分析", report.analyzedPosts());
         metricRow(table, 1, "负面帖子", report.negativePosts(), "高风险帖子", report.highRiskPosts());
-        metricRow(table, 2, "新增事件", report.newIncidents(), "活跃事件", report.activeIncidents());
-        metricRow(table, 3, "已解决事件", report.resolvedIncidents(), "平均风险分", report.averageRiskScore());
+        metricRow(table, 2, "含负面评论", report.negativeCommentPosts(),
+                "含负面图片", report.negativeImagePosts());
+        metricRow(table, 3, "新增事件", report.newIncidents(), "活跃事件", report.activeIncidents());
+        metricRow(table, 4, "已解决事件", report.resolvedIncidents(), "平均风险分", report.averageRiskScore());
         afterTable(document, 60);
     }
 
@@ -225,11 +227,11 @@ public class XhsDailyReportDocxService {
 
     private void postTable(XWPFDocument document, List<XhsReportPostSummary> posts,
                            XhsConsoleUrlService consoleUrlService) {
-        XWPFTable table = document.createTable(Math.max(1, posts.size()) + 1, 5);
-        configureTable(table, new int[]{2350, 1100, 1750, 900, 3260});
-        header(table, "笔记标题", "情感", "风险类别", "风险分", "摘要");
+        XWPFTable table = document.createTable(Math.max(1, posts.size()) + 1, 6);
+        configureTable(table, new int[]{1900, 950, 1450, 800, 1600, 2660});
+        header(table, "笔记标题", "情感", "风险类别", "风险分", "风险来源", "摘要");
         if (posts.isEmpty()) {
-            emptyRow(table, 1, "统计周期内暂无已分析笔记", 5);
+            emptyRow(table, 1, "统计周期内暂无已分析笔记", 6);
         } else {
             for (int index = 0; index < posts.size(); index++) {
                 XhsReportPostSummary item = posts.get(index);
@@ -240,10 +242,24 @@ public class XhsDailyReportDocxService {
                 centeredCell(table, row, 1, safe(item.sentiment()));
                 valueCell(table, row, 2, safe(item.riskCategory()), false);
                 centeredCell(table, row, 3, Integer.toString(item.riskScore()));
-                valueCell(table, row, 4, safe(item.summary()), false);
+                valueCell(table, row, 4, riskDetails(item), false);
+                valueCell(table, row, 5, safe(item.summary()), false);
             }
         }
         afterTable(document, 80);
+    }
+
+    private String riskDetails(XhsReportPostSummary item) {
+        StringBuilder details = new StringBuilder(safe(item.riskSource()));
+        if (item.negativeCommentCount() > 0) {
+            details.append("\n负面评论 ").append(item.negativeCommentCount())
+                    .append(" 条（最高 ").append(item.highestCommentRiskScore()).append(" 分）");
+        }
+        if (item.negativeImageCount() > 0) {
+            details.append("\n负面图片 ").append(item.negativeImageCount())
+                    .append(" 张（最高 ").append(item.highestImageRiskScore()).append(" 分）");
+        }
+        return details.toString();
     }
 
     private void heading(XWPFDocument document, String text) {

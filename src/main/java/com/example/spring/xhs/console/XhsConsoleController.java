@@ -10,6 +10,7 @@ import com.example.spring.xhs.schedule.XhsReportScheduleRequest;
 import com.example.spring.xhs.schedule.XhsReportScheduleService;
 import com.example.spring.xhs.schedule.XhsReportScheduleView;
 import com.example.spring.xhs.schedule.XhsScheduledReportDeliveryService;
+import com.example.spring.xhs.schedule.XhsNegativePostEmailService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ContentDisposition;
@@ -45,6 +46,7 @@ public class XhsConsoleController {
     private final XhsScheduledReportDeliveryService reportDeliveryService;
     private final XhsReportArtifactService reportArtifactService;
     private final XhsAuthorizationService authorizationService;
+    private final XhsNegativePostEmailService negativePostEmailService;
 
     public XhsConsoleController(
             XhsConsoleService service,
@@ -55,7 +57,8 @@ public class XhsConsoleController {
             XhsReportScheduleService reportScheduleService,
             XhsScheduledReportDeliveryService reportDeliveryService,
             XhsReportArtifactService reportArtifactService,
-            XhsAuthorizationService authorizationService) {
+            XhsAuthorizationService authorizationService,
+            XhsNegativePostEmailService negativePostEmailService) {
         this.service = service;
         this.healthService = healthService;
         this.postLinkService = postLinkService;
@@ -65,6 +68,7 @@ public class XhsConsoleController {
         this.reportDeliveryService = reportDeliveryService;
         this.reportArtifactService = reportArtifactService;
         this.authorizationService = authorizationService;
+        this.negativePostEmailService = negativePostEmailService;
     }
 
     @GetMapping("/health")
@@ -77,6 +81,13 @@ public class XhsConsoleController {
             @RequestParam(required = false) String projectKey,
             @RequestParam(defaultValue = "7") int days) {
         return service.analysisMetrics(projectKey, days);
+    }
+
+    @GetMapping("/coverage-metrics")
+    public XhsConsoleService.CoverageMetrics coverageMetrics(
+            @RequestParam(required = false) String projectKey,
+            @RequestParam(defaultValue = "7") int days) {
+        return service.coverageMetrics(projectKey, days);
     }
 
     @GetMapping("/authorization")
@@ -147,8 +158,20 @@ public class XhsConsoleController {
     public Map<String, String> collect(
             @PathVariable String projectKey,
             @RequestBody(required = false) CollectionRequest request) {
-        CollectionRequest body = request == null ? new CollectionRequest("", 20) : request;
-        return Map.of("jobKey", service.startCollection(projectKey, body.query(), body.limit()));
+        CollectionRequest body = request == null
+                ? new CollectionRequest("", 20, "GENERAL", "ANY", "ALL", 100) : request;
+        return Map.of("jobKey", service.startCollection(projectKey, body.query(), body.limit(),
+                body.sortMode(), body.timeRange(), body.noteType(),
+                body.commentLimit() <= 0 ? 100 : body.commentLimit()));
+    }
+
+    @PostMapping("/projects/{projectKey}/collection-plans")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public XhsConsoleService.CollectionPlanResult collectCoverage(
+            @PathVariable String projectKey,
+            @RequestBody(required = false) CoverageCollectionRequest request) {
+        int limit = request == null ? 20 : request.limit();
+        return service.startCoverageCollection(projectKey, limit);
     }
 
     @GetMapping("/jobs")
@@ -163,14 +186,19 @@ public class XhsConsoleController {
             @RequestParam(required = false) String projectKey,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String sentiment,
+            @RequestParam(defaultValue = "false") boolean commentNegativeOnly,
+            @RequestParam(defaultValue = "false") boolean consultationNegativeOnly,
+            @RequestParam(defaultValue = "false") boolean imageNegativeOnly,
             @RequestParam(required = false) Instant publishedFrom,
             @RequestParam(required = false) Instant publishedTo,
             @RequestParam(defaultValue = "publishedAt") String sortBy,
             @RequestParam(defaultValue = "DESC") String sortDirection,
             @RequestParam(defaultValue = "0") int minimumRiskScore,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "50") int pageSize) {
-        return service.opinions(projectKey, keyword, sentiment, publishedFrom, publishedTo,
+            @RequestParam(defaultValue = "20") int pageSize) {
+        return service.opinions(projectKey, keyword, sentiment, commentNegativeOnly,
+                consultationNegativeOnly, imageNegativeOnly,
+                publishedFrom, publishedTo,
                 sortBy, sortDirection, minimumRiskScore, page, pageSize);
     }
 
@@ -283,6 +311,20 @@ public class XhsConsoleController {
         reportDeliveryService.retry(deliveryId);
     }
 
+    @GetMapping("/negative-email-deliveries")
+    public List<XhsNegativePostEmailService.DeliveryView> negativeEmailDeliveries(
+            @RequestParam(required = false) String projectKey,
+            @RequestParam(defaultValue = "50") int limit) {
+        return negativePostEmailService.history(projectKey, limit);
+    }
+
+    @PostMapping("/negative-email-deliveries/{deliveryId}/retry")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public void retryNegativeEmailDelivery(
+            @PathVariable long deliveryId, @RequestParam String projectKey) {
+        negativePostEmailService.retry(deliveryId, projectKey);
+    }
+
     @GetMapping("/report-artifacts/{artifactId}/download")
     public ResponseEntity<byte[]> downloadReportArtifact(@PathVariable long artifactId) {
         XhsReportArtifactService.Download document = reportArtifactService.download(artifactId);
@@ -329,7 +371,11 @@ public class XhsConsoleController {
     public record ProjectRequest(String projectKey, String name, String status, List<String> terms) {
     }
 
-    public record CollectionRequest(String query, int limit) {
+    public record CollectionRequest(String query, int limit, String sortMode,
+                                    String timeRange, String noteType, int commentLimit) {
+    }
+
+    public record CoverageCollectionRequest(int limit) {
     }
 
     public record DeleteProjectRequest(String confirmation) {

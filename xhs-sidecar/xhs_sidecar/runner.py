@@ -30,7 +30,10 @@ class SubprocessSpiderRunner:
 
     def run(self, request: SearchRequest) -> dict[str, Any]:
         return self._invoke(
-            {"operation": "search", "query": request.query, "limit": request.limit, "cursor": request.cursor},
+            {"operation": "search", "query": request.query, "limit": request.limit,
+             "cursor": request.cursor, "sortMode": request.sort_mode,
+             "timeRange": request.time_range, "noteType": request.note_type,
+             "commentLimit": min(request.comment_limit, self._config.comment_limit)},
             include_comments=True,
         )
 
